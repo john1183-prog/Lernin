@@ -54,8 +54,10 @@ const GRADE_LABELS = {
 // Card shape translation
 // ts-fsrs works in Date objects and its own State enum. db.js stores
 // epoch-ms numbers and the string states 'new'|'learning'|'review'|
-// 'relearning'|'suspended' (see DEFAULT_FSRS_FIELDS in db.js). These two
-// small converters are the only place that mapping lives.
+// 'relearning' (see DEFAULT_FSRS_FIELDS in db.js) plus a separate
+// `suspended` boolean for leech tracking — `state` never holds 'suspended'
+// itself. These two small converters are the only place the state mapping
+// lives.
 // ---------------------------------------------------------------------------
 
 const STATE_LABELS = {
@@ -65,6 +67,14 @@ const STATE_LABELS = {
   [State.Relearning]: 'relearning'
 };
 
+// Suspension (leech state) is app-level metadata layered on top of ts-fsrs's
+// own state machine — ts-fsrs's State enum has no "suspended" concept. It is
+// tracked via a separate `suspended` boolean on the stored record (see
+// DEFAULT_FSRS_FIELDS in db.js), NOT by overloading the FSRS `state` string.
+// toStoredCard() therefore only ever writes the real underlying FSRS state
+// here; gradeCard() is responsible for setting `suspended`/`leech` alongside
+// it, and reverseState() below must be able to reconstruct that same
+// underlying state regardless of whether the card is currently suspended.
 function toStoredCard(fsrsCard) {
   return {
     state: STATE_LABELS[fsrsCard.state] ?? 'new',
@@ -100,6 +110,16 @@ function reverseState(label) {
     case 'learning': return State.Learning;
     case 'review': return State.Review;
     case 'relearning': return State.Relearning;
+    // 'suspended' is app-level metadata, not a ts-fsrs state — a suspended
+    // card is always suspended out of learning/review/relearning, never out
+    // of New (a brand-new card can't be a leech yet). Treating it as Review
+    // here is a safe, conservative reconstruction: if reverseState() is ever
+    // called on a card whose real underlying FSRS state wasn't separately
+    // tracked, this avoids silently resetting real learning progress back to
+    // New. In the normal path (see fromStoredCard()), the caller resolves the
+    // real underlying state from record.state directly and this branch is
+    // effectively unreachable.
+    case 'suspended': return State.Review;
     default: return State.New;
   }
 }
@@ -126,10 +146,17 @@ export function gradeCard(cardRecord, grade, now = new Date()) {
   const fsrsUpdate = toStoredCard(result.card);
 
   // Leech check happens here, not in study.js — study.js just renders
-  // whatever `state` comes back.
+  // whatever comes back. Suspension is layered on as its own field rather
+  // than overwriting `state`: ts-fsrs has no "suspended" state of its own,
+  // so stomping `state` with a string it doesn't recognize would corrupt the
+  // card's real learning/review/relearning progress the next time it's read
+  // back through fromStoredCard()/reverseState(). `state` therefore always
+  // reflects what ts-fsrs actually computed; `suspended`/`leech` are the
+  // app-level flags that say whether the card should currently be excluded
+  // from study sessions.
   const leech = fsrsUpdate.lapses >= LEECH_LAPSE_THRESHOLD;
   if (leech) {
-    fsrsUpdate.state = 'suspended';
+    fsrsUpdate.suspended = true;
     fsrsUpdate.leech = true;
   }
 

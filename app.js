@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getSuspendedCards, resetLeech, deleteCard } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -102,6 +102,7 @@ function buildMapOverlayControls() {
 
 async function buildDeckCard(deck) {
   const due = await getCardsDueTodayOrEarlier({ deckId: deck.id });
+  const leeches = await getSuspendedCards(deck.id);
 
   const wrapper = document.createElement('div');
   wrapper.className = 'deck-card-wrapper';
@@ -126,7 +127,23 @@ async function buildDeckCard(deck) {
   wrapper.appendChild(card);
   wrapper.appendChild(buildImportButton(deck.id));
 
+  if (leeches.length > 0) {
+    wrapper.appendChild(buildLeechButton(deck, leeches.length));
+  }
+
   return wrapper;
+}
+
+function buildLeechButton(deck, count) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-leech-btn';
+  btn.textContent = `Leeches (${count})`;
+  btn.setAttribute('aria-label', `View ${count} leeched card${count === 1 ? '' : 's'} in ${deck.title}`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation(); // don't also trigger the parent card's study-entry click
+    renderLeechView(deck);
+  });
+  return btn;
 }
 
 function buildImportButton(deckId) {
@@ -174,6 +191,93 @@ function buildImportButton(deckId) {
   container.appendChild(importBtn);
   container.appendChild(fileInput);
   return container;
+}
+
+// ---------------------------------------------------------------------------
+// Leech review — a minimal maintenance surface (plain list, no canvas.js
+// involvement). Reached via the "Leeches (N)" affordance on a deck card.
+// ---------------------------------------------------------------------------
+
+async function renderLeechView(deck) {
+  const leeches = await getSuspendedCards(deck.id);
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'leech-view';
+
+  const header = document.createElement('div');
+  header.className = 'leech-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'leech-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = `Leeches in ${deck.title} (${leeches.length})`;
+  header.appendChild(heading);
+
+  wrap.appendChild(header);
+
+  if (leeches.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'leech-view-empty';
+    empty.textContent = 'No leeches left in this deck.';
+    wrap.appendChild(empty);
+    root.appendChild(wrap);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'leech-view-list';
+
+  for (const card of leeches) {
+    list.appendChild(buildLeechRow(deck, card));
+  }
+
+  wrap.appendChild(list);
+  root.appendChild(wrap);
+}
+
+function buildLeechRow(deck, card) {
+  const row = document.createElement('div');
+  row.className = 'leech-row';
+
+  const content = document.createElement('div');
+  content.className = 'leech-row-content';
+  content.innerHTML = `
+    <div class="leech-row-front">${escapeHtml(card.front)}</div>
+    <div class="leech-row-back">${escapeHtml(card.back)}</div>
+    <div class="leech-row-lapses">Lapses: ${card.lapses}</div>
+  `;
+  row.appendChild(content);
+
+  const actions = document.createElement('div');
+  actions.className = 'leech-row-actions';
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'leech-row-reset-btn';
+  resetBtn.textContent = 'Reset';
+  resetBtn.addEventListener('click', async () => {
+    await resetLeech(card.id);
+    showToast('Card reset — back in the regular queue.');
+    await renderLeechView(deck);
+  });
+  actions.appendChild(resetBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'leech-row-delete-btn';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', async () => {
+    await deleteCard(card.id);
+    showToast('Card deleted.');
+    await renderLeechView(deck);
+  });
+  actions.appendChild(deleteBtn);
+
+  row.appendChild(actions);
+  return row;
 }
 
 function buildEmptyDecksState() {
@@ -257,6 +361,12 @@ async function openDeckModal() {
 
 function escapeAttr(str) {
   return (str ?? '').replace(/"/g, '&quot;');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
 }
 
 /**

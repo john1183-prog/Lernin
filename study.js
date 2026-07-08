@@ -39,11 +39,16 @@ let session = null; // { deckId, queue: [], index: 0, container: HTMLElement, on
 export async function startStudySession(container, opts = {}) {
   const { deckId, newCardCap = DEFAULT_NEW_CARD_CAP, reviewCap = DEFAULT_REVIEW_CAP, onExit } = opts;
 
+  // getCardsDueTodayOrEarlier() already excludes suspended cards by default
+  // (excludeSuspended: true) during its cursor walk. The `!card.suspended`
+  // check below is defense-in-depth only, now that `state` no longer doubles
+  // as the suspension flag — a card's `state` is always one of
+  // new/learning/review/relearning regardless of whether it's suspended.
   const dueCards = await getCardsDueTodayOrEarlier({ deckId });
 
-  const newCards = dueCards.filter(c => c.state === 'new').slice(0, newCardCap);
+  const newCards = dueCards.filter(c => c.state === 'new' && !c.suspended).slice(0, newCardCap);
   const reviewCards = dueCards
-    .filter(c => c.state !== 'new' && c.state !== 'suspended')
+    .filter(c => c.state !== 'new' && !c.suspended)
     .slice(0, reviewCap);
 
   // Interleave rather than "all reviews then all new" — keeps sessions from

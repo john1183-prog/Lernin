@@ -5,6 +5,7 @@
 // touches the raw idb handle.
 
 import { openDB } from 'idb';
+import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'RecallDB';
 const DB_VERSION = 3;
@@ -14,13 +15,16 @@ const DB_VERSION = 3;
 // scheduler.js owns the actual FSRS math; this is just the shape written here.
 // ---------------------------------------------------------------------------
 const DEFAULT_FSRS_FIELDS = {
-  state: 'new',       // 'new' | 'learning' | 'review' | 'relearning'
+  state: 'new',       // 'new' | 'learning' | 'review' | 'relearning' — the
+                      // underlying ts-fsrs state only; never 'suspended'.
   difficulty: 0,
   stability: 0,
   reps: 0,
   lapses: 0,
   last_review: null,  // ISO string or null
-  due_date: Date.now() // epoch ms; new cards are due immediately by default
+  due_date: Date.now(), // epoch ms; new cards are due immediately by default
+  suspended: false    // leech flag, tracked independently of `state` so a
+                      // suspended card's real FSRS state is never lost
 };
 
 let dbPromise = null;
@@ -198,6 +202,29 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
   }
 }
 
+/**
+ * Resets a leeched (suspended) card back to a fresh-card schedule: zeroes
+ * lapses, clears the suspended/leech flags, resets stability/difficulty to
+ * ts-fsrs's own new-card defaults (via scheduler.js's newCardDefaults(), so
+ * this file doesn't duplicate FSRS's default values), and puts the card due
+ * immediately. Deliberately routed through updateCardAfterReview() rather
+ * than a second read-modify-write transaction, so there is exactly one place
+ * that knows how to merge a partial update onto a stored card record.
+ *
+ * @param {string} cardId
+ */
+export async function resetLeech(cardId) {
+  const defaults = newCardDefaults();
+  return updateCardAfterReview(cardId, {
+    lapses: 0,
+    suspended: false,
+    leech: false,
+    stability: defaults.stability,
+    difficulty: defaults.difficulty,
+    due_date: Date.now()
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -213,9 +240,14 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
  * @param {number} [opts.limit] - cap on results (daily review cap enforcement
  *                                 lives in scheduler.js, but a hard limit here
  *                                 avoids pulling an unbounded result set)
+ * @param {boolean} [opts.excludeSuspended] - skip leeched/suspended cards
+ *                                 (default true). Filtered during the cursor
+ *                                 walk so suspended cards never count against
+ *                                 `limit`, and so callers like app.js's
+ *                                 deck-list badge never have to filter again.
  * @returns {Promise<Array>}
  */
-export async function getCardsDueTodayOrEarlier({ deckId, now, limit } = {}) {
+export async function getCardsDueTodayOrEarlier({ deckId, now, limit, excludeSuspended = true } = {}) {
   const db = await getDB();
   const cutoff = now ?? Date.now();
   const tx = db.transaction('cards', 'readonly');
@@ -227,8 +259,10 @@ export async function getCardsDueTodayOrEarlier({ deckId, now, limit } = {}) {
     const range = IDBKeyRange.bound([deckId, -Infinity], [deckId, cutoff]);
     let cursor = await index.openCursor(range);
     while (cursor) {
-      results.push(cursor.value);
-      if (limit && results.length >= limit) break;
+      if (!excludeSuspended || !cursor.value.suspended) {
+        results.push(cursor.value);
+        if (limit && results.length >= limit) break;
+      }
       cursor = await cursor.continue();
     }
   } else {
@@ -236,8 +270,10 @@ export async function getCardsDueTodayOrEarlier({ deckId, now, limit } = {}) {
     const range = IDBKeyRange.upperBound(cutoff);
     let cursor = await index.openCursor(range);
     while (cursor) {
-      results.push(cursor.value);
-      if (limit && results.length >= limit) break;
+      if (!excludeSuspended || !cursor.value.suspended) {
+        results.push(cursor.value);
+        if (limit && results.length >= limit) break;
+      }
       cursor = await cursor.continue();
     }
   }
@@ -255,6 +291,16 @@ export async function getCard(cardId) {
 }
 
 /**
+ * Permanently deletes a single card. Currently only used by the leech review
+ * surface's Delete action in app.js — nothing else in the app deletes
+ * individual cards today.
+ */
+export async function deleteCard(cardId) {
+  const db = await getDB();
+  return db.delete('cards', cardId);
+}
+
+/**
  * Fetch all cards for a deck (unfiltered by due date) — used by the flat
  * list/grid view and the canvas territory-map mastery visuals, not by
  * Study Mode.
@@ -262,6 +308,18 @@ export async function getCard(cardId) {
 export async function getCardsByDeck(deckId) {
   const db = await getDB();
   return db.getAllFromIndex('cards', 'by_deckId', deckId);
+}
+
+/**
+ * Fetch all leeched (suspended) cards for a deck — the leech review surface
+ * in app.js is the only caller. Reuses the existing by_deckId index rather
+ * than adding a new one; the suspended filter is cheap in JS since a deck's
+ * leech count is expected to be small relative to its total card count.
+ */
+export async function getSuspendedCards(deckId) {
+  const db = await getDB();
+  const all = await db.getAllFromIndex('cards', 'by_deckId', deckId);
+  return all.filter((c) => c.suspended);
 }
 
 // ---------------------------------------------------------------------------

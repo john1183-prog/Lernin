@@ -17,9 +17,11 @@
 import os
 import json
 import re
+import time
+from collections import defaultdict, deque
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 import anthropic
 
@@ -30,6 +32,74 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 MODEL = "claude-sonnet-4-6"
 MAX_RETRIES = 3
 CHUNK_CHAR_LIMIT = 12000  # rough char budget per chunk, not a token-exact split
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+#
+# Chosen approach: in-memory, per-Function-instance sliding-window counter,
+# NOT Vercel KV. Reasoning: Vercel Functions on the Python runtime are
+# effectively single-instance-per-active-request-burst in practice for a
+# low-to-moderate traffic app like this one, and adding a KV dependency
+# (extra env vars, an external network call on every single request, a new
+# failure mode if KV is briefly unavailable) is not worth it for a v1 whose
+# whole design principle elsewhere in this file is "stateless, no external
+# dependencies beyond the LLM call itself." The tradeoff being accepted: this
+# limiter resets if the underlying Function instance is recycled, and does
+# NOT share state across concurrent cold-started instances. If this endpoint
+# ever needs to be strict/abuse-proof rather than just a sane default guard,
+# swap this dict for Vercel KV (`in .set/.incr` per IP with a TTL) — nothing
+# else in this file needs to change, since callers only see the 429.
+# ---------------------------------------------------------------------------
+
+RATE_LIMIT_PER_MINUTE = 5
+RATE_LIMIT_PER_HOUR = 30
+
+# ip -> deque of request timestamps (epoch seconds), pruned on each check.
+_request_log: dict[str, deque] = defaultdict(deque)
+
+
+def _check_rate_limit(client_ip: str) -> None:
+    now = time.time()
+    log = _request_log[client_ip]
+
+    # Drop anything older than an hour; everything still in the deque after
+    # this is within the last hour, so counting entries newer than 60s covers
+    # the per-minute check too.
+    while log and now - log[0] > 3600:
+        log.popleft()
+
+    requests_last_hour = len(log)
+    requests_last_minute = sum(1 for t in log if now - t <= 60)
+
+    if requests_last_minute >= RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {RATE_LIMIT_PER_MINUTE} requests per minute. Please wait and try again."
+        )
+    if requests_last_hour >= RATE_LIMIT_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {RATE_LIMIT_PER_HOUR} requests per hour. Please wait and try again."
+        )
+
+    log.append(now)
+
+
+def _client_ip(request: Request) -> str:
+    # Vercel (and most proxies in front of it) set X-Forwarded-For; fall back
+    # to the direct connection if it's ever absent (e.g. local dev).
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Request size limit
+# ---------------------------------------------------------------------------
+
+MAX_TEXT_CHARS = 200_000  # generous bound; chunk_text() has no upper bound on
+                          # total chunk count per request otherwise
 
 # ---------------------------------------------------------------------------
 # Schema — this is the contract the client's saveNewCards()/commitGeneratedCards()
@@ -168,9 +238,17 @@ def generate_cards_for_chunk(chunk: str) -> list[Card]:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/generate-cards", response_model=GenerateResponse)
-async def generate_cards(req: GenerateRequest):
+async def generate_cards(req: GenerateRequest, request: Request):
+    _check_rate_limit(_client_ip(request))
+
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="text must not be empty")
+
+    if len(req.text) > MAX_TEXT_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"text exceeds the {MAX_TEXT_CHARS}-character limit ({len(req.text)} chars submitted)."
+        )
 
     chunks = chunk_text(req.text)
     all_cards: list[Card] = []

@@ -76,13 +76,22 @@ export async function generateCards(text, deckId) {
 /**
  * Writes user-approved generated cards to IndexedDB. Called by app.js after
  * the edit step, never called directly from generateCards().
+ *
+ * Re-runs dedupeAgainstDeck() here, immediately before saveNewCards() — the
+ * edit step (renderEditStep() in app.js) lets a user rewrite front/back text
+ * after the initial dedupe already ran in generateCards(), so an edited card
+ * could now collide with something already in the deck (or with itself
+ * turning into a near-duplicate of another card). This is the single point
+ * where cards actually get persisted, so it's the right place for the
+ * "is this a duplicate" check that matters.
  */
 export async function commitGeneratedCards(deckId, approvedCards) {
   const withIds = approvedCards.map(c => ({
     ...c,
     id: c.id || cryptoRandomId()
   }));
-  return saveNewCards(deckId, withIds);
+  const deduped = await dedupeAgainstDeck(withIds, deckId);
+  return saveNewCards(deckId, deduped);
 }
 
 /**
