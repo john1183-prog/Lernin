@@ -26,9 +26,30 @@ const SHELL_ASSETS = [
   '/styles.css'
 ];
 
+// The Fraunces stylesheet is cross-origin, so cache.addAll (which fails the
+// whole install on any single rejected request) is too brittle for it — a
+// transient Google Fonts hiccup on first install shouldn't break the entire
+// offline shell. Fetched and cached separately, best-effort, after the
+// same-origin shell is safely in place. The actual .woff2 file(s) the
+// stylesheet references get swept in too via the fetch handler's
+// opportunistic same-response caching below (cross-origin responses are
+// cacheable even though their body is opaque to JS).
+const FONT_STYLESHEET = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap';
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL_ASSETS))
+    (async () => {
+      const cache = await caches.open(CACHE_VERSION);
+      await cache.addAll(SHELL_ASSETS);
+      try {
+        const fontResponse = await fetch(FONT_STYLESHEET);
+        await cache.put(FONT_STYLESHEET, fontResponse);
+      } catch {
+        // Offline on first install, or Google Fonts unreachable — the app
+        // shell still installs and works, just falls back to system serif
+        // until a future online visit fills this in.
+      }
+    })()
   );
   self.skipWaiting();
 });
@@ -57,15 +78,23 @@ self.addEventListener('fetch', (event) => {
 
   // Cache-first for the shell: instant load offline, no network round-trip
   // even when online, since these files change only on deploy.
+  const CACHEABLE_CROSS_ORIGINS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
 
       return fetch(event.request)
         .then((response) => {
-          // Opportunistically cache anything else same-origin (e.g. a new
-          // icon added later) without requiring a SHELL_ASSETS edit.
-          if (response.ok && url.origin === self.location.origin) {
+          // Opportunistically cache same-origin assets (e.g. a new icon
+          // added later) plus the two Google Fonts origins specifically —
+          // NOT cross-origin generally, since blindly caching arbitrary
+          // third-party responses (analytics, ad pixels, etc., if any get
+          // added later) would grow the cache unpredictably.
+          const cacheable =
+            response.ok &&
+            (url.origin === self.location.origin || CACHEABLE_CROSS_ORIGINS.includes(url.hostname));
+          if (cacheable) {
             const clone = response.clone();
             caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
           }

@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getSuspendedCards, resetLeech, deleteCard } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -79,6 +79,8 @@ async function renderDeckList() {
     return;
   }
 
+  root.appendChild(await buildHomeStats(decks));
+
   const grid = document.createElement('div');
   grid.className = 'deck-grid';
 
@@ -87,6 +89,106 @@ async function renderDeckList() {
   }
 
   root.appendChild(grid);
+}
+
+// ---------------------------------------------------------------------------
+// Home stats card — streak + weekly activity, plus due/mastery metrics
+// across all decks. Deliberately only rendered on the list view; the map
+// view carries the same information ambiently through island color/size,
+// so repeating it there would be redundant chrome over the canvas.
+// ---------------------------------------------------------------------------
+
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+async function buildHomeStats(decks) {
+  const [reviewStats, allDue, deckCounts] = await Promise.all([
+    getReviewStats(),
+    getCardsDueTodayOrEarlier(),
+    Promise.all(decks.map((d) => getDeckStateCounts(d.id)))
+  ]);
+
+  const totals = deckCounts.reduce(
+    (acc, c) => ({
+      newCount: acc.newCount + c.newCount,
+      inProgress: acc.inProgress + c.inProgress,
+      mastered: acc.mastered + c.mastered,
+      total: acc.total + c.total
+    }),
+    { newCount: 0, inProgress: 0, mastered: 0, total: 0 }
+  );
+
+  const wrap = document.createElement('div');
+
+  const statsCard = document.createElement('div');
+  statsCard.className = 'home-stats';
+
+  const streakRow = document.createElement('div');
+  streakRow.className = 'streak-row';
+  streakRow.innerHTML = `
+    <div class="streak-badge">${reviewStats.streakDays}<span class="streak-unit">day streak</span></div>
+    <div class="streak-meta"><strong>${totals.mastered} cards mastered</strong>${reviewStats.weekTotal} reviews this week</div>
+  `;
+  statsCard.appendChild(streakRow);
+
+  const sparkRow = document.createElement('div');
+  sparkRow.className = 'spark-row';
+  const maxCount = Math.max(1, ...reviewStats.weekCounts);
+  const todayIndex = new Date().getDay(); // 0 = Sunday
+  reviewStats.weekCounts.forEach((count, i) => {
+    // weekCounts[i] is (6 - i) days before today, oldest first.
+    const daysAgo = reviewStats.weekCounts.length - 1 - i;
+    const weekday = WEEKDAY_LABELS[(todayIndex - daysAgo + 7) % 7];
+
+    const bar = document.createElement('div');
+    bar.className = 'spark-bar' + (daysAgo === 0 ? ' today' : '');
+    bar.style.height = `${Math.max(8, (count / maxCount) * 100)}%`;
+    bar.setAttribute('aria-label', `${weekday}: ${count} review${count === 1 ? '' : 's'}`);
+    sparkRow.appendChild(bar);
+  });
+  statsCard.appendChild(sparkRow);
+
+  wrap.appendChild(statsCard);
+
+  const metricGrid = document.createElement('div');
+  metricGrid.className = 'metric-grid';
+
+  const dueCard = document.createElement('div');
+  dueCard.className = 'metric-card';
+  dueCard.innerHTML = `<div class="metric-label">Due today</div><div class="metric-value">${allDue.length}</div>`;
+  metricGrid.appendChild(dueCard);
+
+  const masteryCard = document.createElement('div');
+  masteryCard.className = 'metric-card';
+  masteryCard.innerHTML = `<div class="metric-label">Weekly reviews</div><div class="metric-value">${reviewStats.weekTotal}</div>`;
+  masteryCard.appendChild(buildMasteryBar(totals));
+  metricGrid.appendChild(masteryCard);
+
+  wrap.appendChild(metricGrid);
+
+  return wrap;
+}
+
+/**
+ * Shared by the home stats card and each deck tile — new (sand) / in
+ * progress (ochre) / mastered (moss), matching canvas.js's island coloring
+ * so the two surfaces read as one visual language.
+ */
+function buildMasteryBar({ newCount, inProgress, mastered, total }) {
+  const bar = document.createElement('div');
+  bar.className = 'mastery-bar';
+  if (total === 0) return bar;
+
+  const seg = (count, className) => {
+    const el = document.createElement('span');
+    el.className = className;
+    el.style.width = `${(count / total) * 100}%`;
+    return el;
+  };
+
+  bar.appendChild(seg(newCount, 'mastery-seg-new'));
+  bar.appendChild(seg(inProgress, 'mastery-seg-progress'));
+  bar.appendChild(seg(mastered, 'mastery-seg-mastered'));
+  return bar;
 }
 
 function buildMapOverlayControls() {
@@ -101,15 +203,19 @@ function buildMapOverlayControls() {
 }
 
 async function buildDeckCard(deck) {
-  const due = await getCardsDueTodayOrEarlier({ deckId: deck.id });
-  const leeches = await getSuspendedCards(deck.id);
+  const [due, counts, leeches] = await Promise.all([
+    getCardsDueTodayOrEarlier({ deckId: deck.id }),
+    getDeckStateCounts(deck.id),
+    getSuspendedCards(deck.id)
+  ]);
 
   const wrapper = document.createElement('div');
   wrapper.className = 'deck-card-wrapper';
 
   const card = document.createElement('button');
   card.className = 'deck-card';
-  card.setAttribute('aria-label', `${deck.title}, ${due.length} due`);
+  const masteryPct = counts.total > 0 ? Math.round((counts.mastered / counts.total) * 100) : 0;
+  card.setAttribute('aria-label', `${deck.title}, ${due.length} due, ${masteryPct}% mastered`);
 
   const title = document.createElement('div');
   title.className = 'deck-card-title';
@@ -122,6 +228,8 @@ async function buildDeckCard(deck) {
     badge.textContent = String(due.length);
     card.appendChild(badge);
   }
+
+  card.appendChild(buildMasteryBar(counts));
 
   card.addEventListener('click', () => enterStudy(deck.id));
   wrapper.appendChild(card);

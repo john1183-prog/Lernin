@@ -202,29 +202,6 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
   }
 }
 
-/**
- * Resets a leeched (suspended) card back to a fresh-card schedule: zeroes
- * lapses, clears the suspended/leech flags, resets stability/difficulty to
- * ts-fsrs's own new-card defaults (via scheduler.js's newCardDefaults(), so
- * this file doesn't duplicate FSRS's default values), and puts the card due
- * immediately. Deliberately routed through updateCardAfterReview() rather
- * than a second read-modify-write transaction, so there is exactly one place
- * that knows how to merge a partial update onto a stored card record.
- *
- * @param {string} cardId
- */
-export async function resetLeech(cardId) {
-  const defaults = newCardDefaults();
-  return updateCardAfterReview(cardId, {
-    lapses: 0,
-    suspended: false,
-    leech: false,
-    stability: defaults.stability,
-    difficulty: defaults.difficulty,
-    due_date: Date.now()
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -301,13 +278,26 @@ export async function deleteCard(cardId) {
 }
 
 /**
- * Fetch all cards for a deck (unfiltered by due date) — used by the flat
- * list/grid view and the canvas territory-map mastery visuals, not by
- * Study Mode.
+ * Resets a leeched (suspended) card back to a fresh-card schedule: zeroes
+ * lapses, clears the suspended/leech flags, resets stability/difficulty to
+ * ts-fsrs's own new-card defaults (via scheduler.js's newCardDefaults(), so
+ * this file doesn't duplicate FSRS's default values), and puts the card due
+ * immediately. Deliberately routed through updateCardAfterReview() rather
+ * than a second read-modify-write transaction, so there is exactly one place
+ * that knows how to merge a partial update onto a stored card record.
+ *
+ * @param {string} cardId
  */
-export async function getCardsByDeck(deckId) {
-  const db = await getDB();
-  return db.getAllFromIndex('cards', 'by_deckId', deckId);
+export async function resetLeech(cardId) {
+  const defaults = newCardDefaults();
+  return updateCardAfterReview(cardId, {
+    lapses: 0,
+    suspended: false,
+    leech: false,
+    stability: defaults.stability,
+    difficulty: defaults.difficulty,
+    due_date: Date.now()
+  });
 }
 
 /**
@@ -320,6 +310,16 @@ export async function getSuspendedCards(deckId) {
   const db = await getDB();
   const all = await db.getAllFromIndex('cards', 'by_deckId', deckId);
   return all.filter((c) => c.suspended);
+}
+
+/**
+ * Fetch all cards for a deck (unfiltered by due date) — used by the flat
+ * list/grid view and the canvas territory-map mastery visuals, not by
+ * Study Mode.
+ */
+export async function getCardsByDeck(deckId) {
+  const db = await getDB();
+  return db.getAllFromIndex('cards', 'by_deckId', deckId);
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +390,115 @@ export async function getQueuedGenerations() {
 export async function clearQueuedGeneration(id) {
   const db = await getDB();
   return db.delete('genQueue', id);
+}
+
+// ---------------------------------------------------------------------------
+// Stats (app.js's home-stats card + per-deck mastery bar)
+// Reads only — no writes live here. Kept in db.js rather than app.js so the
+// "mastered" threshold has exactly one definition shared with canvas.js's
+// island coloring, rather than two heuristics drifting apart.
+// ---------------------------------------------------------------------------
+
+// A card counts as "mastered" for display purposes once FSRS stability
+// crosses ~3 weeks — matches the heuristic canvas.js uses for island color,
+// so a deck's mastery bar and its island's color always agree.
+const MASTERY_STABILITY_DAYS = 21;
+
+/**
+ * Buckets a deck's cards into new / in-progress / mastered for the
+ * mastery bar shown on each deck tile and the home stats strip.
+ * Suspended (leeched) cards are excluded from all three buckets — they're
+ * neither "new" nor meaningfully "in progress" until reset.
+ *
+ * @param {string} deckId
+ * @returns {Promise<{ total: number, newCount: number, inProgress: number, mastered: number }>}
+ */
+export async function getDeckStateCounts(deckId) {
+  // Checks both `state === 'suspended'` (how scheduler.js marks a leech
+  // today) and an explicit `suspended` boolean (in case that's split out
+  // separately later) so this stays correct either way.
+  const cards = (await getCardsByDeck(deckId)).filter(
+    (c) => c.state !== 'suspended' && !c.suspended
+  );
+
+  let newCount = 0;
+  let mastered = 0;
+
+  for (const card of cards) {
+    if (card.state === 'new') {
+      newCount++;
+    } else if ((card.stability || 0) >= MASTERY_STABILITY_DAYS) {
+      mastered++;
+    }
+  }
+
+  const total = cards.length;
+  const inProgress = total - newCount - mastered;
+
+  return { total, newCount, inProgress, mastered };
+}
+
+/**
+ * Streak + weekly review activity, read from reviewLog via its indexed
+ * `by_reviewedAt` field. Used by app.js's home stats card.
+ *
+ * Streak counts consecutive calendar days (local time) with at least one
+ * review, walking backward from today. A day with zero reviews breaks the
+ * streak UNLESS it's today itself (so the streak doesn't visibly reset to 0
+ * the moment midnight passes, before the user has had a chance to study).
+ *
+ * @param {number} [now] - override "now" (epoch ms), mainly for testing
+ * @returns {Promise<{ streakDays: number, weekCounts: number[], weekTotal: number }>}
+ *   weekCounts is 7 entries, oldest to newest, ending with today.
+ */
+export async function getReviewStats(now) {
+  const db = await getDB();
+  const nowMs = now ?? Date.now();
+
+  // Pull the last 60 days of review log entries — enough to compute any
+  // realistic streak without scanning the entire lifetime log.
+  const lookbackStart = startOfLocalDay(nowMs - 60 * 24 * 60 * 60 * 1000);
+  const range = IDBKeyRange.lowerBound(lookbackStart);
+  const entries = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', range);
+
+  const reviewedDayKeys = new Set(entries.map((e) => localDayKey(e.reviewedAt)));
+
+  let streakDays = 0;
+  let cursor = startOfLocalDay(nowMs);
+  const todayKey = localDayKey(nowMs);
+
+  while (true) {
+    const key = localDayKey(cursor);
+    if (reviewedDayKeys.has(key)) {
+      streakDays++;
+    } else if (key !== todayKey) {
+      break;
+    }
+    cursor -= 24 * 60 * 60 * 1000;
+  }
+
+  const weekCounts = [];
+  for (let i = 6; i >= 0; i--) {
+    const dayStart = startOfLocalDay(nowMs - i * 24 * 60 * 60 * 1000);
+    const key = localDayKey(dayStart);
+    const count = entries.filter((e) => localDayKey(e.reviewedAt) === key).length;
+    weekCounts.push(count);
+  }
+
+  const weekTotal = weekCounts.reduce((a, b) => a + b, 0);
+
+  return { streakDays, weekCounts, weekTotal };
+}
+
+function startOfLocalDay(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function localDayKey(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
 // ---------------------------------------------------------------------------

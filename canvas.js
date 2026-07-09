@@ -180,12 +180,21 @@ function computeMastery(cards) {
 // Vector-drawn only (canvas paths/gradients) — no raster image assets.
 // ---------------------------------------------------------------------------
 
+// Mirrors styles.css's --bg / --moss / --ochre / --sand tokens. Canvas 2D
+// can't read CSS custom properties into its drawing calls directly, so
+// these are kept as literal hex constants here — if the palette in
+// styles.css changes, update these to match. (A getComputedStyle-based sync
+// is possible later but isn't worth the added complexity for three colors.)
+const MAP_BG = '#241D14';
+const MOSS = '76, 148, 68';     // rgb triple, for use in rgba()
+const OCHRE = '181, 129, 60';   // rgb triple
+
 function render() {
   if (!ctx) return; // view was destroyed
 
   const { width, height } = canvasEl;
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#0d1117';
+  ctx.fillStyle = MAP_BG;
   ctx.fillRect(0, 0, width, height);
 
   const viewport = getWorldViewportRect();
@@ -240,8 +249,8 @@ function drawTerritory(territory, viewport) {
     screenCenter.x, screenCenter.y, 0,
     screenCenter.x, screenCenter.y, screenRadius
   );
-  gradient.addColorStop(0, 'rgba(56, 139, 253, 0.18)');
-  gradient.addColorStop(1, 'rgba(56, 139, 253, 0.02)');
+  gradient.addColorStop(0, `rgba(${MOSS}, 0.18)`);
+  gradient.addColorStop(1, `rgba(${MOSS}, 0.02)`);
 
   ctx.beginPath();
   ctx.fillStyle = gradient;
@@ -264,33 +273,50 @@ function drawTerritory(territory, viewport) {
   }
 }
 
+// Sand (new/untouched) -> ochre (in progress) -> moss (mastered), the same
+// three stops as the mastery bar on deck tiles, so a glance at the map and
+// a glance at the deck list agree on what "developed" looks like.
+const SAND_RGB = [201, 181, 140];
+const OCHRE_RGB = [181, 129, 60];
+const MOSS_RGB = [76, 148, 68];
+
+function lerpRgb(a, b, t) {
+  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+}
+
+function islandColor(mastery) {
+  const [r, g, b] = mastery < 0.5
+    ? lerpRgb(SAND_RGB, OCHRE_RGB, mastery / 0.5)
+    : lerpRgb(OCHRE_RGB, MOSS_RGB, (mastery - 0.5) / 0.5);
+  return { r, g, b };
+}
+
 function drawIsland(island) {
   const screen = worldToScreen(island.pos.x, island.pos.y);
   const radius = ISLAND_RADIUS_BASE * camera.zoom;
 
-  // Mastery drives color/density: low = dim blue-gray, high = warm gold —
+  // Mastery drives color/density: low = dusty sand, high = deep moss —
   // ambient progress feedback, no numbers required to read it.
-  const hue = 210 - island.mastery * 170; // 210 (blue) -> 40 (gold)
-  const lightness = 35 + island.mastery * 20;
+  const { r, g, b } = islandColor(island.mastery);
 
   ctx.beginPath();
-  ctx.fillStyle = `hsl(${hue}, 70%, ${lightness}%)`;
+  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
   ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
   ctx.fill();
 
   // Detail rings scale with mastery — more "developed" islands get more
   // concentric detail, all vector, no raster.
   const ringCount = Math.round(island.mastery * 3);
-  for (let r = 1; r <= ringCount; r++) {
+  for (let ring = 1; ring <= ringCount; ring++) {
     ctx.beginPath();
-    ctx.strokeStyle = `hsla(${hue}, 70%, ${lightness + 15}%, 0.5)`;
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.5)`;
     ctx.lineWidth = 1.5;
-    ctx.arc(screen.x, screen.y, radius * (0.5 + r * 0.18), 0, Math.PI * 2);
+    ctx.arc(screen.x, screen.y, radius * (0.5 + ring * 0.18), 0, Math.PI * 2);
     ctx.stroke();
   }
 
   if (camera.zoom > 0.8) {
-    ctx.fillStyle = '#e6edf3';
+    ctx.fillStyle = '#F0E6D2';
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillText(island.title, screen.x, screen.y + radius + 14);
