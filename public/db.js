@@ -4,7 +4,7 @@
 // canvas.js, api.js) talk to IndexedDB only through this file — nobody else
 // touches the raw idb handle.
 
-import { openDB } from 'idb';
+import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'RecallDB';

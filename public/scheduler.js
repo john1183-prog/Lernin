@@ -3,7 +3,7 @@
 // 'ts-fsrs' directly — study.js calls gradeCard() and gets back a plain
 // object shaped exactly for db.js's updateCardAfterReview().
 
-import { fsrs, generatorParameters, createEmptyCard, Rating, State } from 'ts-fsrs';
+import { fsrs, generatorParameters, createEmptyCard, Rating, State } from './vendor/ts-fsrs.js';
 
 // ---------------------------------------------------------------------------
 // Config

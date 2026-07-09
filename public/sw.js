@@ -6,7 +6,7 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'recalldb-shell-v1';
+const CACHE_VERSION = 'recalldb-shell-v2';
 
 // Bump CACHE_VERSION on every deploy that changes any of these files, or
 // returning users will keep serving a stale shell from cache. Wiring this
@@ -23,7 +23,9 @@ const SHELL_ASSETS = [
   '/canvas.js',
   '/pdf-extract.js',
   '/manifest.json',
-  '/styles.css'
+  '/styles.css',
+  '/vendor/idb.js',
+  '/vendor/ts-fsrs.js'
 ];
 
 // The Fraunces stylesheet is cross-origin, so cache.addAll (which fails the
