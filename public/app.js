@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -71,6 +71,13 @@ async function renderDeckList() {
   newDeckBtn.textContent = '+ New deck';
   newDeckBtn.addEventListener('click', () => openDeckModal());
   header.appendChild(newDeckBtn);
+
+  const settingsBtn = document.createElement('button');
+  settingsBtn.className = 'settings-btn';
+  settingsBtn.setAttribute('aria-label', 'Settings');
+  settingsBtn.textContent = '\u2699\uFE0F Settings';
+  settingsBtn.addEventListener('click', () => renderSettingsView());
+  header.appendChild(settingsBtn);
 
   root.appendChild(header);
 
@@ -386,6 +393,145 @@ function buildLeechRow(deck, card) {
 
   row.appendChild(actions);
   return row;
+}
+
+// ---------------------------------------------------------------------------
+// Settings — lets the user bring their own Claude or Gemini API key for
+// card generation instead of relying on the app's (optional) shared
+// server-side key. Stored client-side in IndexedDB (db.js's settings
+// store); sent to our backend per-request via headers, never persisted
+// server-side — see api/index.py's _resolve_credentials().
+// ---------------------------------------------------------------------------
+
+async function renderSettingsView() {
+  const existing = await getApiConfig();
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = 'Settings';
+  header.appendChild(heading);
+
+  wrap.appendChild(header);
+
+  const intro = document.createElement('p');
+  intro.className = 'settings-view-intro';
+  intro.textContent = 'Bring your own API key to generate cards with Claude or Gemini. Your key stays on this device and is only sent to this app\'s server at the moment you generate cards, to make the request on your behalf — it\'s never stored or logged server-side.';
+  wrap.appendChild(intro);
+
+  const form = document.createElement('form');
+  form.className = 'settings-form';
+
+  // --- provider choice ---
+  const providerLabel = document.createElement('label');
+  providerLabel.className = 'settings-form-label';
+  providerLabel.textContent = 'Provider';
+  form.appendChild(providerLabel);
+
+  const providerRow = document.createElement('div');
+  providerRow.className = 'settings-provider-row';
+
+  const providers = [
+    { value: 'claude', label: 'Claude (Anthropic)' },
+    { value: 'gemini', label: 'Gemini (Google)' }
+  ];
+  const currentProvider = existing?.provider || 'claude';
+
+  for (const p of providers) {
+    const optionLabel = document.createElement('label');
+    optionLabel.className = 'settings-provider-option';
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'provider';
+    radio.value = p.value;
+    radio.checked = p.value === currentProvider;
+
+    optionLabel.appendChild(radio);
+    optionLabel.appendChild(document.createTextNode(` ${p.label}`));
+    providerRow.appendChild(optionLabel);
+  }
+  form.appendChild(providerRow);
+
+  // --- API key ---
+  const keyLabel = document.createElement('label');
+  keyLabel.className = 'settings-form-label';
+  keyLabel.textContent = 'API key';
+  keyLabel.setAttribute('for', 'settings-api-key-input');
+  form.appendChild(keyLabel);
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.id = 'settings-api-key-input';
+  keyInput.className = 'settings-api-key-input';
+  keyInput.autocomplete = 'off';
+  keyInput.spellcheck = false;
+  keyInput.placeholder = existing?.apiKey ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (saved — enter a new key to replace it)' : 'Paste your API key';
+  form.appendChild(keyInput);
+
+  const keyHelp = document.createElement('p');
+  keyHelp.className = 'settings-key-help';
+  keyHelp.innerHTML = 'Get a key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (Claude) or <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a> (Gemini).';
+  form.appendChild(keyHelp);
+
+  // --- actions ---
+  const actions = document.createElement('div');
+  actions.className = 'settings-form-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'settings-save-btn';
+  saveBtn.textContent = 'Save';
+  actions.appendChild(saveBtn);
+
+  if (existing) {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'settings-remove-btn';
+    removeBtn.textContent = 'Remove key';
+    removeBtn.addEventListener('click', async () => {
+      await clearApiConfig();
+      showToast('API key removed — falling back to the app\'s default, if any.');
+      await renderSettingsView();
+    });
+    actions.appendChild(removeBtn);
+  }
+
+  form.appendChild(actions);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const provider = form.querySelector('input[name="provider"]:checked')?.value || 'claude';
+    const newKey = keyInput.value.trim();
+
+    // Leaving the key field blank when a key is already saved keeps the
+    // existing key (just switching provider, say) rather than wiping it —
+    // the placeholder text above explains this.
+    const apiKey = newKey || existing?.apiKey || '';
+
+    if (!apiKey) {
+      showToast('Enter an API key to save.');
+      return;
+    }
+
+    await saveApiConfig({ provider, apiKey });
+    showToast('Settings saved.');
+    await renderSettingsView();
+  });
+
+  wrap.appendChild(form);
+  root.appendChild(wrap);
 }
 
 function buildEmptyDecksState() {

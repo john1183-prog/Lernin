@@ -24,12 +24,18 @@ from typing import Literal, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 import anthropic
+import httpx
 
 app = FastAPI()
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# Server-side default key (optional) — set ANTHROPIC_API_KEY in the Vercel
+# project's env vars if you want the app to work out of the box without
+# every user bringing their own key. If unset, every request must supply
+# its own key via Settings in the UI (see _resolve_credentials() below).
+DEFAULT_ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
-MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-sonnet-4-6"
+GEMINI_MODEL = "gemini-flash-latest"  # Google's auto-updated GA alias
 MAX_RETRIES = 3
 CHUNK_CHAR_LIMIT = 12000  # rough char budget per chunk, not a token-exact split
 
@@ -95,6 +101,43 @@ def _client_ip(request: Request) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Provider/key resolution
+#
+# The client (api.js) sends X-LLM-Provider + X-LLM-Api-Key when the user has
+# configured their own key in Settings (see db.js's getApiConfig()). Neither
+# header is required: with nothing set, Claude + DEFAULT_ANTHROPIC_KEY is
+# used as before, so the app keeps working out of the box if the deployer
+# set ANTHROPIC_API_KEY. There's currently no server-side default for
+# Gemini — a user selecting Gemini in Settings must supply their own key.
+#
+# The key is read from a header, used for exactly one outbound call to the
+# provider, and never written to logs, disk, or any persistent store here —
+# this function is the only place it's handled.
+# ---------------------------------------------------------------------------
+
+def _resolve_credentials(request: Request) -> tuple[str, str]:
+    provider = request.headers.get("x-llm-provider", "claude").strip().lower()
+    user_key = request.headers.get("x-llm-api-key", "").strip()
+
+    if provider not in ("claude", "gemini"):
+        raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'. Use 'claude' or 'gemini'.")
+
+    if user_key:
+        return provider, user_key
+
+    if provider == "claude" and DEFAULT_ANTHROPIC_KEY:
+        return provider, DEFAULT_ANTHROPIC_KEY
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"No {provider.capitalize()} API key available. Add your own key in Settings, "
+            "or ask the app's deployer to configure a default key."
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Request size limit
 # ---------------------------------------------------------------------------
 
@@ -142,6 +185,30 @@ GENERATE_CARDS_TOOL = {
         },
         "required": ["cards"]
     }
+}
+
+# Gemini's `generateContent` supports native schema-constrained JSON output
+# (responseSchema + responseMimeType: "application/json") — unlike the
+# Anthropic path above, this is stable/documented, so it's used directly
+# rather than a tool-call workaround. Same shape as GENERATE_CARDS_TOOL's
+# input_schema, just without the outer tool-call wrapper.
+GEMINI_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "cards": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "front": {"type": "string"},
+                    "back": {"type": "string"},
+                    "type": {"type": "string", "enum": ["basic", "cloze"]}
+                },
+                "required": ["front", "back", "type"]
+            }
+        }
+    },
+    "required": ["cards"]
 }
 
 SYSTEM_PROMPT = """You write flashcards from source text for spaced repetition study.
@@ -194,9 +261,14 @@ def chunk_text(text: str, limit: int = CHUNK_CHAR_LIMIT) -> list[str]:
 # LLM call + validation/retry
 # ---------------------------------------------------------------------------
 
-def _call_llm(chunk: str) -> dict:
+def _call_claude(chunk: str, api_key: str) -> dict:
+    # A fresh client per call, not a module-level singleton, since the key
+    # now varies per-request (the user's own key, or DEFAULT_ANTHROPIC_KEY).
+    # anthropic.Anthropic() is cheap to construct — no connection is opened
+    # until .messages.create() is actually called.
+    client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model=MODEL,
+        model=CLAUDE_MODEL,
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         tools=[GENERATE_CARDS_TOOL],
@@ -211,18 +283,64 @@ def _call_llm(chunk: str) -> dict:
     raise ValueError("Model did not return a submit_cards tool call")
 
 
-def generate_cards_for_chunk(chunk: str) -> list[Card]:
+def _call_gemini(chunk: str, api_key: str) -> dict:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": chunk}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": GEMINI_RESPONSE_SCHEMA
+        }
+    }
+
+    with httpx.Client(timeout=60.0) as http:
+        response = http.post(url, params={"key": api_key}, json=payload)
+
+    if response.status_code in (400, 401, 403):
+        # Almost always a bad/missing key or a permissions issue on the
+        # caller's Google account — surface this immediately rather than
+        # burning retries on something that won't change on a second try.
+        raise _AuthError(f"Gemini rejected the request (HTTP {response.status_code}): {response.text[:300]}")
+
+    response.raise_for_status()
+    data = response.json()
+
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as e:
+        raise ValueError(f"Unexpected Gemini response shape: {data}") from e
+
+    return json.loads(text)
+
+
+class _AuthError(Exception):
+    """Raised for provider-reported auth/permission failures — these should
+    fail the request immediately instead of being retried, since a bad key
+    doesn't become valid on attempt 2 or 3."""
+    pass
+
+
+def generate_cards_for_chunk(chunk: str, provider: str, api_key: str) -> list[Card]:
     """Calls the LLM and validates the result, retrying on malformed output.
     Malformed responses are NEVER passed through to the client — this
     function either returns a validated card list or raises after
-    exhausting retries."""
+    exhausting retries. Auth errors (bad/missing key) raise immediately
+    without retrying, since a bad key doesn't fix itself on attempt 2."""
     last_error: Optional[Exception] = None
 
     for attempt in range(MAX_RETRIES):
         try:
-            raw = _call_llm(chunk)
+            if provider == "gemini":
+                raw = _call_gemini(chunk, api_key)
+            else:
+                raw = _call_claude(chunk, api_key)
             batch = CardBatch.model_validate(raw)
             return batch.cards
+        except _AuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except anthropic.AuthenticationError as e:
+            raise HTTPException(status_code=401, detail=f"Anthropic rejected the API key: {e}")
         except (ValidationError, ValueError, json.JSONDecodeError) as e:
             last_error = e
             continue
@@ -240,6 +358,7 @@ def generate_cards_for_chunk(chunk: str) -> list[Card]:
 @app.post("/api/generate-cards", response_model=GenerateResponse)
 async def generate_cards(req: GenerateRequest, request: Request):
     _check_rate_limit(_client_ip(request))
+    provider, api_key = _resolve_credentials(request)
 
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="text must not be empty")
@@ -254,7 +373,7 @@ async def generate_cards(req: GenerateRequest, request: Request):
     all_cards: list[Card] = []
 
     for chunk in chunks:
-        all_cards.extend(generate_cards_for_chunk(chunk))
+        all_cards.extend(generate_cards_for_chunk(chunk, provider, api_key))
 
     return GenerateResponse(cards=all_cards)
 

@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'RecallDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Default FSRS metadata stamped onto every newly created card.
@@ -90,7 +90,18 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 4) { ... }` etc. Never delete
+      // --- settings (v4): small key/value store for local, per-device
+      // preferences — currently just the user's own LLM provider + API key
+      // for /api/generate-cards (see getApiConfig/saveApiConfig below).
+      // Deliberately its own store rather than a field on decks/cards, since
+      // it's device-local config, not study data.
+      if (oldVersion < 4) {
+        if (!db.objectStoreNames.contains('settings')) {
+          db.createObjectStore('settings', { keyPath: 'key' });
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 5) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -545,4 +556,47 @@ export async function importDeck(bundle) {
 
   await tx.done;
   return { deckId: bundle.deck.id, cardCount: bundle.cards.length };
+}
+
+// ---------------------------------------------------------------------------
+// Settings — currently just the user's own LLM provider + API key, used by
+// api.js when calling /api/generate-cards. See the settings view in app.js.
+//
+// The key lives only in this device's IndexedDB and is sent to our own
+// backend (over HTTPS, per-request, never persisted or logged server-side —
+// see api/index.py) only at the moment a card-generation request is made,
+// so the backend can call the chosen provider on the user's behalf. It never
+// leaves the device otherwise.
+// ---------------------------------------------------------------------------
+
+const API_CONFIG_KEY = 'llmApiConfig';
+
+/**
+ * @returns {Promise<{provider: 'claude'|'gemini', apiKey: string}|null>}
+ *          null if the user hasn't configured their own key yet.
+ */
+export async function getApiConfig() {
+  const db = await getDB();
+  const record = await db.get('settings', API_CONFIG_KEY);
+  return record ? { provider: record.provider, apiKey: record.apiKey } : null;
+}
+
+/**
+ * @param {{provider: 'claude'|'gemini', apiKey: string}} config
+ */
+export async function saveApiConfig({ provider, apiKey }) {
+  if (provider !== 'claude' && provider !== 'gemini') {
+    throw new Error(`saveApiConfig: unknown provider "${provider}"`);
+  }
+  const db = await getDB();
+  return db.put('settings', { key: API_CONFIG_KEY, provider, apiKey: apiKey ?? '' });
+}
+
+/**
+ * Clears the stored key/provider — used by the "Remove key" action in the
+ * settings view to fall back to the app's shared/default key, if any.
+ */
+export async function clearApiConfig() {
+  const db = await getDB();
+  return db.delete('settings', API_CONFIG_KEY);
 }

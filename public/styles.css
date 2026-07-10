@@ -597,3 +597,115 @@ button { font-family: inherit; cursor: pointer; }
 
 .leech-row-reset-btn { background: var(--moss); color: var(--moss-ink); }
 .leech-row-delete-btn { background: var(--danger); color: var(--danger-ink); }
+
+/* --- Settings (app.js) --- */
+
+.settings-btn {
+  border: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.settings-view { padding: 16px; max-width: 480px; }
+
+.settings-view-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-view-back-btn {
+  border: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.settings-view-header h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.settings-view-intro {
+  color: var(--ink-sub);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.settings-form { display: flex; flex-direction: column; gap: 8px; }
+
+.settings-form-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  margin-top: 12px;
+}
+
+.settings-provider-row {
+  display: flex;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.settings-provider-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.settings-api-key-input {
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  font-family: monospace;
+  color: var(--ink);
+}
+
+.settings-key-help {
+  font-size: 12px;
+  color: var(--ink-sub);
+  margin-top: 4px;
+}
+
+.settings-key-help a { color: var(--ochre); }
+
+.settings-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.settings-save-btn {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--moss);
+  color: var(--moss-ink);
+}
+
+.settings-remove-btn {
+  padding: 12px;
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  background: transparent;
+  color: var(--terracotta);
+}

@@ -3,9 +3,25 @@
 // for the CustomEvents this file dispatches and decides how to show them.
 // study.js never imports this file, and this file never imports study.js.
 
-import { queueGeneration, getQueuedGenerations, clearQueuedGeneration, saveNewCards, getCardsByDeck } from './db.js';
+import { queueGeneration, getQueuedGenerations, clearQueuedGeneration, saveNewCards, getCardsByDeck, getApiConfig } from './db.js';
 
 const GENERATE_ENDPOINT = '/api/generate-cards';
+
+/**
+ * Builds the extra headers that tell the backend which LLM provider + key
+ * to use for this request. If the user hasn't configured their own key in
+ * Settings, this returns just Content-Type and the backend falls back to
+ * its own server-side default key (if the deployer configured one).
+ */
+async function llmRequestHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  const config = await getApiConfig();
+  if (config && config.apiKey) {
+    headers['X-LLM-Provider'] = config.provider;
+    headers['X-LLM-Api-Key'] = config.apiKey;
+  }
+  return headers;
+}
 
 // ---------------------------------------------------------------------------
 // Events — app.js listens on window for these to drive toasts/UI. Kept as
@@ -48,11 +64,18 @@ export async function generateCards(text, deckId) {
   try {
     const response = await fetch(GENERATE_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await llmRequestHeaders(),
       body: JSON.stringify({ text, deck_id: deckId })
     });
 
     if (!response.ok) {
+      // 401/400 from a bad or missing key is common enough (typo'd key,
+      // no key configured and no server default) that it deserves its own
+      // message rather than a generic "Generation failed: 401".
+      if (response.status === 401 || response.status === 400) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || `Generation failed: ${response.status}`);
+      }
       throw new Error(`Generation failed: ${response.status}`);
     }
 
@@ -106,7 +129,7 @@ export async function retryQueuedGenerations() {
     try {
       const response = await fetch(GENERATE_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await llmRequestHeaders(),
         body: JSON.stringify({ text: item.rawText, deck_id: item.deckId })
       });
 
