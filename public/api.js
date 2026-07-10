@@ -164,7 +164,7 @@ window.addEventListener('online', () => {
 
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.8;
 
-async function dedupeAgainstDeck(cards, deckId) {
+export async function dedupeAgainstDeck(cards, deckId) {
   const existing = await getCardsByDeck(deckId);
   const existingTokenSets = existing.map((c) => tokenSet(c.front));
 

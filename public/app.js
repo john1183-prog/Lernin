@@ -7,7 +7,7 @@
 
 import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
-import { generateCards, commitGeneratedCards, retryQueuedGenerations } from './api.js';
+import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
 import { extractTextFromPdf, isPdfFile } from './pdf-extract.js';
 
@@ -397,10 +397,11 @@ function buildLeechRow(deck, card) {
 
 // ---------------------------------------------------------------------------
 // Settings — lets the user bring their own Claude or Gemini API key for
-// card generation instead of relying on the app's (optional) shared
-// server-side key. Stored client-side in IndexedDB (db.js's settings
-// store); sent to our backend per-request via headers, never persisted
-// server-side — see api/index.py's _resolve_credentials().
+// card generation, or use "Paste into any AI" mode if they don't have one.
+// Stored client-side in IndexedDB (db.js's settings store); Claude/Gemini
+// keys are sent to our backend per-request via headers, never persisted
+// server-side — see api/index.py's _resolve_credentials(). Manual mode
+// never talks to our backend at all — see renderManualPasteView().
 // ---------------------------------------------------------------------------
 
 async function renderSettingsView() {
@@ -427,7 +428,7 @@ async function renderSettingsView() {
 
   const intro = document.createElement('p');
   intro.className = 'settings-view-intro';
-  intro.textContent = 'Bring your own API key to generate cards with Claude or Gemini. Your key stays on this device and is only sent to this app\'s server at the moment you generate cards, to make the request on your behalf — it\'s never stored or logged server-side.';
+  intro.textContent = 'Choose how you\u2019d like to generate cards. Bring your own Claude or Gemini API key for one-tap generation, or use "Paste into any AI" if you don\u2019t have a key \u2014 no key is stored or sent anywhere except directly to the provider you choose (for Claude/Gemini) at the moment you generate cards.';
   wrap.appendChild(intro);
 
   const form = document.createElement('form');
@@ -444,7 +445,8 @@ async function renderSettingsView() {
 
   const providers = [
     { value: 'claude', label: 'Claude (Anthropic)' },
-    { value: 'gemini', label: 'Gemini (Google)' }
+    { value: 'gemini', label: 'Gemini (Google)' },
+    { value: 'manual', label: 'Paste into any AI (no key needed)' }
   ];
   const currentProvider = existing?.provider || 'claude';
 
@@ -457,6 +459,7 @@ async function renderSettingsView() {
     radio.name = 'provider';
     radio.value = p.value;
     radio.checked = p.value === currentProvider;
+    radio.addEventListener('change', () => updateKeyFieldVisibility());
 
     optionLabel.appendChild(radio);
     optionLabel.appendChild(document.createTextNode(` ${p.label}`));
@@ -464,7 +467,7 @@ async function renderSettingsView() {
   }
   form.appendChild(providerRow);
 
-  // --- API key ---
+  // --- API key (hidden entirely for manual mode) ---
   const keyLabel = document.createElement('label');
   keyLabel.className = 'settings-form-label';
   keyLabel.textContent = 'API key';
@@ -485,6 +488,22 @@ async function renderSettingsView() {
   keyHelp.innerHTML = 'Get a key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (Claude) or <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a> (Gemini).';
   form.appendChild(keyHelp);
 
+  const manualNote = document.createElement('p');
+  manualNote.className = 'settings-key-help';
+  manualNote.textContent = 'No key needed. When you generate cards, you\u2019ll get a prompt to copy into any AI chat tool (ChatGPT, Claude.ai, Gemini, etc.) and a box to paste the result back in.';
+  manualNote.style.display = 'none';
+  form.appendChild(manualNote);
+
+  function updateKeyFieldVisibility() {
+    const provider = form.querySelector('input[name="provider"]:checked')?.value || 'claude';
+    const isManual = provider === 'manual';
+    keyLabel.style.display = isManual ? 'none' : '';
+    keyInput.style.display = isManual ? 'none' : '';
+    keyHelp.style.display = isManual ? 'none' : '';
+    manualNote.style.display = isManual ? '' : 'none';
+  }
+  updateKeyFieldVisibility();
+
   // --- actions ---
   const actions = document.createElement('div');
   actions.className = 'settings-form-actions';
@@ -502,7 +521,7 @@ async function renderSettingsView() {
     removeBtn.textContent = 'Remove key';
     removeBtn.addEventListener('click', async () => {
       await clearApiConfig();
-      showToast('API key removed — falling back to the app\'s default, if any.');
+      showToast('Settings cleared \u2014 you\u2019ll need to choose a provider again before generating cards.');
       await renderSettingsView();
     });
     actions.appendChild(removeBtn);
@@ -513,12 +532,20 @@ async function renderSettingsView() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const provider = form.querySelector('input[name="provider"]:checked')?.value || 'claude';
+
+    if (provider === 'manual') {
+      await saveApiConfig({ provider, apiKey: '' });
+      showToast('Settings saved.');
+      await renderSettingsView();
+      return;
+    }
+
     const newKey = keyInput.value.trim();
 
     // Leaving the key field blank when a key is already saved keeps the
     // existing key (just switching provider, say) rather than wiping it —
     // the placeholder text above explains this.
-    const apiKey = newKey || existing?.apiKey || '';
+    const apiKey = newKey || (existing?.provider === provider ? existing?.apiKey : '') || '';
 
     if (!apiKey) {
       showToast('Enter an API key to save.');
@@ -656,9 +683,21 @@ function enterStudy(deckId) {
 // pdf.js extraction itself lives wherever the "upload" UI triggers it
 // (out of scope for this file — assume `extractedText` arrives already
 // parsed client-side, per the spec's "nothing is uploaded to the server").
+//
+// Branches on the configured provider: Claude/Gemini go through the normal
+// network call to /api/generate-cards; 'manual' (or no config at all, e.g.
+// first-time users) goes through the copy/paste flow instead, which never
+// touches our backend.
 // ---------------------------------------------------------------------------
 
 export async function handleGeneration(extractedText, deckId) {
+  const config = await getApiConfig();
+
+  if (!config || config.provider === 'manual') {
+    renderManualPasteView(extractedText, deckId);
+    return;
+  }
+
   showToast('Generating cards\u2026');
   const cards = await generateCards(extractedText, deckId);
   if (cards.length > 0) {
@@ -666,6 +705,176 @@ export async function handleGeneration(extractedText, deckId) {
   }
   // If cards.length === 0, either it was queued (offline) or errored —
   // wireGenerationEvents() below handles the toast either way.
+}
+
+// ---------------------------------------------------------------------------
+// Manual ("paste into any AI") generation flow — for users without their
+// own Claude/Gemini API key. Mirrors api/index.py's SYSTEM_PROMPT and card
+// JSON shape so the output slots into the same edit/dedupe/commit path as
+// the API-based flow, just entered by hand instead of over the network.
+// ---------------------------------------------------------------------------
+
+const MANUAL_PROMPT_INSTRUCTIONS = `You write flashcards from source text for spaced repetition study.
+
+Rules:
+- Minimum information principle: each card tests one atomic fact. No compound
+  questions ("What is X and why does Y happen" is two cards, not one).
+- Answers must be unambiguous — a grader could mark it right/wrong with no
+  judgment call.
+- Prefer cloze deletion ("type": "cloze") for definitions and lists, where the
+  front contains {{c1::the answer}} inline. Use "basic" Q&A for everything else.
+- Do not invent facts not present in the source text.
+- Skip trivial or non-testable content (headers, page numbers, filler).
+
+Return ONLY valid JSON — no markdown formatting, no code fences, no
+commentary before or after — in exactly this shape:
+{"cards": [{"front": "...", "back": "...", "type": "basic"}, ...]}
+
+Here is the source text:
+"""
+{{TEXT}}
+"""`;
+
+function buildManualPrompt(text) {
+  return MANUAL_PROMPT_INSTRUCTIONS.replace('{{TEXT}}', text);
+}
+
+/**
+ * Lenient parse of whatever a person pastes back from their AI tool of
+ * choice: strips a wrapping ```json fence if present, accepts either
+ * {"cards": [...]} or a bare [...] array, and drops (rather than throws on)
+ * individual entries missing front/back — different tools are inconsistent
+ * about exactly how strictly they follow the requested shape, and a whole
+ * batch shouldn't fail over one bad entry.
+ *
+ * @returns {{cards: Array<{front: string, back: string, type: string}>, skipped: number}}
+ */
+function parseManualCards(rawText) {
+  let cleaned = rawText.trim();
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error('That doesn\u2019t look like valid JSON. Make sure you copied only the model\u2019s output, nothing else.');
+  }
+
+  const rawCards = Array.isArray(parsed) ? parsed : parsed?.cards;
+  if (!Array.isArray(rawCards)) {
+    throw new Error('Expected a "cards" array in the pasted JSON.');
+  }
+
+  const cards = [];
+  let skipped = 0;
+  for (const c of rawCards) {
+    const front = typeof c?.front === 'string' ? c.front.trim() : '';
+    const back = typeof c?.back === 'string' ? c.back.trim() : '';
+    if (!front || !back) {
+      skipped++;
+      continue;
+    }
+    const type = c?.type === 'cloze' ? 'cloze' : 'basic';
+    cards.push({ front, back, type });
+  }
+
+  return { cards, skipped };
+}
+
+function renderManualPasteView(extractedText, deckId) {
+  root.innerHTML = '';
+  const prompt = buildManualPrompt(extractedText);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'manual-paste-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Cancel';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = 'Generate with any AI';
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  const step1 = document.createElement('p');
+  step1.className = 'manual-paste-step';
+  step1.textContent = '1. Copy this prompt and paste it into ChatGPT, Claude.ai, Gemini, or any AI chat tool:';
+  wrap.appendChild(step1);
+
+  const promptBox = document.createElement('textarea');
+  promptBox.className = 'manual-paste-prompt-box';
+  promptBox.readOnly = true;
+  promptBox.value = prompt;
+  wrap.appendChild(promptBox);
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'manual-paste-copy-btn';
+  copyBtn.textContent = 'Copy prompt';
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      showToast('Prompt copied.');
+    } catch {
+      promptBox.select();
+      showToast('Couldn\u2019t auto-copy — the text is selected, copy it manually.');
+    }
+  });
+  wrap.appendChild(copyBtn);
+
+  if (prompt.length > 60000) {
+    const warn = document.createElement('p');
+    warn.className = 'manual-paste-warning';
+    warn.textContent = 'This is a long prompt — some AI chat tools may truncate very long pastes. If generation looks incomplete, try a shorter excerpt.';
+    wrap.appendChild(warn);
+  }
+
+  const step2 = document.createElement('p');
+  step2.className = 'manual-paste-step';
+  step2.textContent = '2. Paste the AI\u2019s JSON response here:';
+  wrap.appendChild(step2);
+
+  const responseBox = document.createElement('textarea');
+  responseBox.className = 'manual-paste-response-box';
+  responseBox.placeholder = '{"cards": [...]}';
+  wrap.appendChild(responseBox);
+
+  const parseBtn = document.createElement('button');
+  parseBtn.type = 'button';
+  parseBtn.className = 'manual-paste-parse-btn';
+  parseBtn.textContent = 'Parse cards';
+  parseBtn.addEventListener('click', async () => {
+    if (!responseBox.value.trim()) {
+      showToast('Paste the AI\u2019s response first.');
+      return;
+    }
+    let result;
+    try {
+      result = parseManualCards(responseBox.value);
+    } catch (err) {
+      showToast(err.message);
+      return;
+    }
+    if (result.cards.length === 0) {
+      showToast('No usable cards found in that response.');
+      return;
+    }
+    if (result.skipped > 0) {
+      showToast(`Parsed ${result.cards.length} card(s), skipped ${result.skipped} incomplete entr${result.skipped === 1 ? 'y' : 'ies'}.`);
+    }
+    const deduped = await dedupeAgainstDeck(result.cards, deckId);
+    renderEditStep(deduped, deckId);
+  });
+  wrap.appendChild(parseBtn);
+
+  root.appendChild(wrap);
 }
 
 function renderEditStep(cards, deckId) {

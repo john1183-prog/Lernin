@@ -572,7 +572,7 @@ export async function importDeck(bundle) {
 const API_CONFIG_KEY = 'llmApiConfig';
 
 /**
- * @returns {Promise<{provider: 'claude'|'gemini', apiKey: string}|null>}
+ * @returns {Promise<{provider: 'claude'|'gemini'|'manual', apiKey: string}|null>}
  *          null if the user hasn't configured their own key yet.
  */
 export async function getApiConfig() {
@@ -582,14 +582,20 @@ export async function getApiConfig() {
 }
 
 /**
- * @param {{provider: 'claude'|'gemini', apiKey: string}} config
+ * @param {{provider: 'claude'|'gemini'|'manual', apiKey: string}} config
+ *        'manual' means "paste into any AI, no key needed" — apiKey is
+ *        ignored/empty for that provider.
  */
 export async function saveApiConfig({ provider, apiKey }) {
-  if (provider !== 'claude' && provider !== 'gemini') {
+  if (provider !== 'claude' && provider !== 'gemini' && provider !== 'manual') {
     throw new Error(`saveApiConfig: unknown provider "${provider}"`);
   }
   const db = await getDB();
-  return db.put('settings', { key: API_CONFIG_KEY, provider, apiKey: apiKey ?? '' });
+  return db.put('settings', {
+    key: API_CONFIG_KEY,
+    provider,
+    apiKey: provider === 'manual' ? '' : (apiKey ?? '')
+  });
 }
 
 /**

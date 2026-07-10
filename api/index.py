@@ -14,7 +14,6 @@
 # structured outputs later, that's a change scoped to `_call_llm()` only —
 # nothing else in this file needs to know which method produced the JSON.
 
-import os
 import json
 import re
 import time
@@ -27,12 +26,6 @@ import anthropic
 import httpx
 
 app = FastAPI()
-
-# Server-side default key (optional) — set ANTHROPIC_API_KEY in the Vercel
-# project's env vars if you want the app to work out of the box without
-# every user bringing their own key. If unset, every request must supply
-# its own key via Settings in the UI (see _resolve_credentials() below).
-DEFAULT_ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 GEMINI_MODEL = "gemini-flash-latest"  # Google's auto-updated GA alias
@@ -104,11 +97,10 @@ def _client_ip(request: Request) -> str:
 # Provider/key resolution
 #
 # The client (api.js) sends X-LLM-Provider + X-LLM-Api-Key when the user has
-# configured their own key in Settings (see db.js's getApiConfig()). Neither
-# header is required: with nothing set, Claude + DEFAULT_ANTHROPIC_KEY is
-# used as before, so the app keeps working out of the box if the deployer
-# set ANTHROPIC_API_KEY. There's currently no server-side default for
-# Gemini — a user selecting Gemini in Settings must supply their own key.
+# configured their own key in Settings (see db.js's getApiConfig()). There
+# is no server-side default key for either provider — every request must
+# supply its own. (Users without a key at all should be using the app's
+# manual "paste into any AI" mode instead, which never calls this endpoint.)
 #
 # The key is read from a header, used for exactly one outbound call to the
 # provider, and never written to logs, disk, or any persistent store here —
@@ -122,19 +114,16 @@ def _resolve_credentials(request: Request) -> tuple[str, str]:
     if provider not in ("claude", "gemini"):
         raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'. Use 'claude' or 'gemini'.")
 
-    if user_key:
-        return provider, user_key
-
-    if provider == "claude" and DEFAULT_ANTHROPIC_KEY:
-        return provider, DEFAULT_ANTHROPIC_KEY
-
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            f"No {provider.capitalize()} API key available. Add your own key in Settings, "
-            "or ask the app's deployer to configure a default key."
+    if not user_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No {provider.capitalize()} API key was provided. Add your own key in Settings, "
+                "or use \"Paste into any AI\" mode if you don't have one."
+            )
         )
-    )
+
+    return provider, user_key
 
 
 # ---------------------------------------------------------------------------

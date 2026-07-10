@@ -709,3 +709,48 @@ button { font-family: inherit; cursor: pointer; }
   background: transparent;
   color: var(--terracotta);
 }
+
+/* --- Manual "paste into any AI" generation flow (app.js) --- */
+
+.manual-paste-view { padding: 16px; max-width: 560px; }
+
+.manual-paste-step {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  margin: 16px 0 8px;
+}
+
+.manual-paste-prompt-box,
+.manual-paste-response-box {
+  width: 100%;
+  min-height: 140px;
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--ink);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.manual-paste-copy-btn,
+.manual-paste-parse-btn {
+  margin-top: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--moss);
+  color: var(--moss-ink);
+}
+
+.manual-paste-warning {
+  font-size: 12px;
+  color: var(--terracotta);
+  margin-top: 8px;
+}
