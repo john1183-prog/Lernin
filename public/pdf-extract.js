@@ -38,7 +38,14 @@ async function loadPdfjs() {
 export async function extractTextFromPdf(file, onProgress) {
   const pdfjsLib = await loadPdfjs();
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  // getDocument() returns a PDFDocumentLoadingTask, not the document itself
+  // — destroy() lives on the loading task, NOT on the PDFDocumentProxy that
+  // `.promise` resolves to. Keep the task around so cleanup can call the
+  // right object; calling `.destroy()` on the resolved document throws
+  // "destroy is not a function".
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
 
   const pageTexts = [];
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -54,7 +61,7 @@ export async function extractTextFromPdf(file, onProgress) {
     page.cleanup();
   }
 
-  await pdf.destroy();
+  await loadingTask.destroy();
 
   return pageTexts.join('\n\n');
 }

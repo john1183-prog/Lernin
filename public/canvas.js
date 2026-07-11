@@ -34,9 +34,16 @@ function hashToUnit(str) {
 
 function territoryPosition(territoryId, index) {
   // Spiral layout so territories don't overlap as more are added, and don't
-  // require a fixed grid size decided up front.
+  // require a fixed grid size decided up front. Deliberately radius=0 at
+  // index 0 (no "+0.5" base offset) — the camera starts fixed at world
+  // origin (0,0) with no auto-centering logic, so the first (often only)
+  // territory MUST land at the origin or it's off-screen on load. This bit
+  // everyone with a single territory (i.e. anyone who hasn't split decks
+  // across multiple courseTerritoryIds yet) — the map looked completely
+  // blank because the one territory that existed was always ~450 world
+  // units away from what the camera was looking at.
   const angle = index * 2.4;
-  const radius = TERRITORY_SPACING * (0.5 + Math.sqrt(index));
+  const radius = TERRITORY_SPACING * Math.sqrt(index);
   return {
     x: Math.cos(angle) * radius,
     y: Math.sin(angle) * radius

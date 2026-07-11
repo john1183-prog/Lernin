@@ -6,7 +6,7 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'recalldb-shell-v4';
+const CACHE_VERSION = 'recalldb-shell-v5';
 
 // Bump CACHE_VERSION on every deploy that changes any of these files, or
 // returning users will keep serving a stale shell from cache. Wiring this
