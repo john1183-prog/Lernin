@@ -771,11 +771,17 @@ function parseManualCards(rawText) {
   for (const c of rawCards) {
     const front = typeof c?.front === 'string' ? c.front.trim() : '';
     const back = typeof c?.back === 'string' ? c.back.trim() : '';
-    if (!front || !back) {
+    const type = c?.type === 'cloze' ? 'cloze' : 'basic';
+
+    // Only `front` is required. Cloze cards legitimately have an empty
+    // `back` — the answer lives inline in `front` via {{c1::...}}, and
+    // api/index.py's own Card schema has no non-empty constraint on `back`
+    // either. Requiring both used to silently drop every cloze card a
+    // pasted-in AI produced.
+    if (!front) {
       skipped++;
       continue;
     }
-    const type = c?.type === 'cloze' ? 'cloze' : 'basic';
     cards.push({ front, back, type });
   }
 
