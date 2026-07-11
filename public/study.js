@@ -92,7 +92,7 @@ function renderCard() {
   const wrap = document.createElement('div');
   wrap.className = 'study-session';
 
-  wrap.appendChild(buildPacer(remaining, etaMinutes));
+  wrap.appendChild(buildTopBar(remaining, etaMinutes));
 
   const cardEl = document.createElement('div');
   cardEl.className = 'study-card';
@@ -127,11 +127,23 @@ function renderCard() {
   container.appendChild(wrap);
 }
 
-function buildPacer(remaining, etaMinutes) {
+function buildTopBar(remaining, etaMinutes) {
+  const bar = document.createElement('div');
+  bar.className = 'study-top-bar';
+
+  const exitBtn = document.createElement('button');
+  exitBtn.className = 'study-exit-btn';
+  exitBtn.setAttribute('aria-label', 'Exit study session');
+  exitBtn.textContent = '\u2715';
+  exitBtn.addEventListener('click', () => endStudySession());
+  bar.appendChild(exitBtn);
+
   const pacer = document.createElement('div');
   pacer.className = 'study-pacer';
   pacer.textContent = `${remaining} left, ~${etaMinutes} min`;
-  return pacer;
+  bar.appendChild(pacer);
+
+  return bar;
 }
 
 function buildGradeBar(card) {
@@ -158,10 +170,22 @@ function buildGradeBar(card) {
 
 function renderEmptyState(container) {
   container.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'study-empty-state-wrap';
+
+  const exitBtn = document.createElement('button');
+  exitBtn.className = 'study-exit-btn';
+  exitBtn.setAttribute('aria-label', 'Back');
+  exitBtn.textContent = '\u2715';
+  exitBtn.addEventListener('click', () => endStudySession());
+  wrap.appendChild(exitBtn);
+
   const empty = document.createElement('div');
   empty.className = 'study-empty-state';
   empty.textContent = 'Nothing due right now. Come back later.';
-  container.appendChild(empty);
+  wrap.appendChild(empty);
+
+  container.appendChild(wrap);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +245,7 @@ function advance() {
   if (session.index >= session.queue.length) {
     renderEmptyState(session.container);
     if (session.onExit) session.onExit();
+    session = null; // avoid double-firing onExit if the empty state's exit button is clicked too
     return;
   }
   renderCard();

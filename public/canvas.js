@@ -280,34 +280,47 @@ function drawTerritory(territory, viewport) {
   }
 }
 
-// Sand (new/untouched) -> ochre (in progress) -> moss (mastered), the same
-// three stops as the mastery bar on deck tiles, so a glance at the map and
-// a glance at the deck list agree on what "developed" looks like.
-const SAND_RGB = [201, 181, 140];
-const OCHRE_RGB = [181, 129, 60];
-const MOSS_RGB = [76, 148, 68];
+// Sand (new/untouched) -> ochre (in progress) -> moss (mastered) stays the
+// backbone signal — same three stops as the mastery bar on deck tiles, so a
+// glance at the map and a glance at the deck list agree on what "developed"
+// looks like. Defined in HSL (not RGB) so a small per-deck hue jitter can be
+// layered on top without a manual RGB<->HSL conversion.
+const SAND_HSL = { h: 40, s: 30, l: 68 };
+const OCHRE_HSL = { h: 32, s: 50, l: 48 };
+const MOSS_HSL = { h: 115, s: 40, l: 40 };
 
-function lerpRgb(a, b, t) {
-  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+// Every fresh deck starts at mastery 0, which without this would make every
+// island on the map an identical dusty-sand dot — the map reads as "blank"
+// until someone actually studies something. This gives each deck a stable,
+// subtle hue offset (seeded from its own id, so it never changes between
+// renders) so islands are visually distinguishable from the very first
+// visit. Kept small (±16°) so decks still read as one warm family, not a
+// rainbow — mastery (via lerpHsl below) is still the dominant signal.
+const HUE_JITTER_RANGE = 16;
+
+function lerpHsl(a, b, t) {
+  return { h: a.h + (b.h - a.h) * t, s: a.s + (b.s - a.s) * t, l: a.l + (b.l - a.l) * t };
 }
 
-function islandColor(mastery) {
-  const [r, g, b] = mastery < 0.5
-    ? lerpRgb(SAND_RGB, OCHRE_RGB, mastery / 0.5)
-    : lerpRgb(OCHRE_RGB, MOSS_RGB, (mastery - 0.5) / 0.5);
-  return { r, g, b };
+function islandColor(mastery, seedId) {
+  const base = mastery < 0.5
+    ? lerpHsl(SAND_HSL, OCHRE_HSL, mastery / 0.5)
+    : lerpHsl(OCHRE_HSL, MOSS_HSL, (mastery - 0.5) / 0.5);
+  const jitter = (hashToUnit(seedId) - 0.5) * 2 * HUE_JITTER_RANGE;
+  return { h: base.h + jitter, s: base.s, l: base.l };
 }
 
 function drawIsland(island) {
   const screen = worldToScreen(island.pos.x, island.pos.y);
   const radius = ISLAND_RADIUS_BASE * camera.zoom;
 
-  // Mastery drives color/density: low = dusty sand, high = deep moss —
-  // ambient progress feedback, no numbers required to read it.
-  const { r, g, b } = islandColor(island.mastery);
+  // Mastery drives the sand->ochre->moss progression; the deck's own id
+  // drives a subtle hue offset within that — together, color communicates
+  // both "how developed is this deck" and "which deck is this," at a glance.
+  const { h, s, l } = islandColor(island.mastery, island.id);
 
   ctx.beginPath();
-  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+  ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;
   ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
   ctx.fill();
 
@@ -316,7 +329,7 @@ function drawIsland(island) {
   const ringCount = Math.round(island.mastery * 3);
   for (let ring = 1; ring <= ringCount; ring++) {
     ctx.beginPath();
-    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.5)`;
+    ctx.strokeStyle = `hsla(${h}, ${s}%, ${l}%, 0.5)`;
     ctx.lineWidth = 1.5;
     ctx.arc(screen.x, screen.y, radius * (0.5 + ring * 0.18), 0, Math.PI * 2);
     ctx.stroke();
@@ -343,6 +356,16 @@ function attachGestureHandlers() {
   canvasEl.addEventListener('wheel', onWheel, { passive: false });
 }
 
+// A touch/pointer-down landing on an island doesn't immediately commit to
+// "drag this island" — below this many px of accumulated movement, nothing
+// moves yet. Without this, a pan gesture that happens to *start* on top of
+// an island (a 52px-diameter target, easy to clip when starting a pan near
+// a deck) would relocate the island on the very first pixel of movement,
+// and that new position gets persisted on release. Above the threshold, it
+// commits to a real drag, same as before.
+const DRAG_COMMIT_THRESHOLD = 10;
+let pendingIslandHit = null; // candidate island from pointerdown, not yet committed to dragging
+
 function onPointerDown(e) {
   canvasEl.setPointerCapture(e.pointerId);
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -352,17 +375,23 @@ function onPointerDown(e) {
     const hit = hitTestIsland(e.clientX - rect.left, e.clientY - rect.top);
 
     dragMoved = 0;
+    draggedIsland = null;
     if (hit) {
-      draggedIsland = hit;
+      // Candidate only — see DRAG_COMMIT_THRESHOLD above. Camera pan is
+      // deliberately NOT started for this pointer either, until we know
+      // whether this resolves to a tap, a real island drag, or a pan that
+      // merely started on top of an island.
+      pendingIslandHit = hit;
       isPanning = false;
     } else {
-      draggedIsland = null;
+      pendingIslandHit = null;
       isPanning = true;
     }
     lastPointer = { x: e.clientX, y: e.clientY };
   } else if (activePointers.size === 2) {
     isPanning = false;
     draggedIsland = null;
+    pendingIslandHit = null;
     const [p1, p2] = Array.from(activePointers.values());
     pinchStartDist = distance(p1, p2);
     pinchStartZoom = camera.zoom;
@@ -389,8 +418,21 @@ function onPointerMove(e) {
   dragMoved += Math.abs(dx) + Math.abs(dy);
 
   if (draggedIsland) {
+    // Already committed to dragging this island — move it directly.
     draggedIsland.pos.x += dx / camera.zoom;
     draggedIsland.pos.y += dy / camera.zoom;
+  } else if (pendingIslandHit) {
+    // Started on an island, not yet committed either way.
+    if (dragMoved >= DRAG_COMMIT_THRESHOLD) {
+      draggedIsland = pendingIslandHit;
+      pendingIslandHit = null;
+      // Apply this frame's delta now that we've committed — no retroactive
+      // catch-up of the movement that happened during the dead-zone, so the
+      // island doesn't jump.
+      draggedIsland.pos.x += dx / camera.zoom;
+      draggedIsland.pos.y += dy / camera.zoom;
+    }
+    // Below threshold: don't move anything yet, just keep accumulating.
   } else if (isPanning) {
     camera.x -= dx / camera.zoom;
     camera.y -= dy / camera.zoom;
@@ -414,6 +456,7 @@ function onPointerUp(e) {
 
   activePointers.delete(e.pointerId);
   draggedIsland = null;
+  pendingIslandHit = null;
   if (activePointers.size < 2) {
     pinchStartDist = null;
   }

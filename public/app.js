@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -210,10 +210,11 @@ function buildMapOverlayControls() {
 }
 
 async function buildDeckCard(deck) {
-  const [due, counts, leeches] = await Promise.all([
+  const [due, counts, leeches, documents] = await Promise.all([
     getCardsDueTodayOrEarlier({ deckId: deck.id }),
     getDeckStateCounts(deck.id),
-    getSuspendedCards(deck.id)
+    getSuspendedCards(deck.id),
+    getDocumentsByDeck(deck.id)
   ]);
 
   const wrapper = document.createElement('div');
@@ -242,11 +243,27 @@ async function buildDeckCard(deck) {
   wrapper.appendChild(card);
   wrapper.appendChild(buildImportButton(deck.id));
 
+  if (documents.length > 0) {
+    wrapper.appendChild(buildDocumentsButton(deck, documents.length));
+  }
+
   if (leeches.length > 0) {
     wrapper.appendChild(buildLeechButton(deck, leeches.length));
   }
 
   return wrapper;
+}
+
+function buildDocumentsButton(deck, count) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-documents-btn';
+  btn.textContent = `Documents (${count})`;
+  btn.setAttribute('aria-label', `View ${count} uploaded document${count === 1 ? '' : 's'} in ${deck.title}`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderDocumentsView(deck);
+  });
+  return btn;
 }
 
 function buildLeechButton(deck, count) {
@@ -291,6 +308,11 @@ function buildImportButton(deckId) {
         showToast('Couldn\u2019t find any text in that PDF (might be scanned images).');
         return;
       }
+      // Keep the original file, not just its extracted text — otherwise
+      // there's no way to see or reopen what was actually uploaded later.
+      // Saved before generation so the document is kept even if generation
+      // itself fails or gets queued for retry.
+      await saveDocument({ id: cryptoRandomId(), deckId, filename: file.name, blob: file, size: file.size });
       await handleGeneration(text, deckId);
     } catch (err) {
       showToast(`Couldn't read that PDF: ${err.message}`);
@@ -558,7 +580,197 @@ async function renderSettingsView() {
   });
 
   wrap.appendChild(form);
+
+  // --- danger zone ---
+  const dangerZone = document.createElement('div');
+  dangerZone.className = 'settings-danger-zone';
+
+  const dangerHeading = document.createElement('h3');
+  dangerHeading.className = 'settings-danger-heading';
+  dangerHeading.textContent = 'Danger zone';
+  dangerZone.appendChild(dangerHeading);
+
+  const dangerIntro = document.createElement('p');
+  dangerIntro.className = 'settings-key-help';
+  dangerIntro.textContent = 'Permanently deletes every deck, card, and review history on this device. This cannot be undone — there\u2019s no cloud backup to restore from.';
+  dangerZone.appendChild(dangerIntro);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'settings-danger-btn';
+  resetBtn.textContent = 'Reset everything\u2026';
+  dangerZone.appendChild(resetBtn);
+
+  // Confirmation UI is built but hidden until the button above is clicked —
+  // requires typing RESET rather than a plain confirm() dialog, since a
+  // single accidental tap here is unrecoverable.
+  const confirmWrap = document.createElement('div');
+  confirmWrap.className = 'settings-danger-confirm';
+  confirmWrap.style.display = 'none';
+
+  const confirmLabel = document.createElement('p');
+  confirmLabel.className = 'settings-key-help';
+  confirmLabel.textContent = 'Type RESET to confirm:';
+  confirmWrap.appendChild(confirmLabel);
+
+  const confirmInput = document.createElement('input');
+  confirmInput.type = 'text';
+  confirmInput.className = 'settings-danger-confirm-input';
+  confirmInput.autocomplete = 'off';
+  confirmInput.spellcheck = false;
+  confirmWrap.appendChild(confirmInput);
+
+  const confirmActions = document.createElement('div');
+  confirmActions.className = 'settings-form-actions';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.className = 'settings-danger-btn';
+  confirmBtn.textContent = 'Permanently delete everything';
+  confirmBtn.disabled = true;
+  confirmActions.appendChild(confirmBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'settings-remove-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => {
+    confirmWrap.style.display = 'none';
+    confirmInput.value = '';
+    confirmBtn.disabled = true;
+  });
+  confirmActions.appendChild(cancelBtn);
+
+  confirmWrap.appendChild(confirmActions);
+  dangerZone.appendChild(confirmWrap);
+
+  resetBtn.addEventListener('click', () => {
+    confirmWrap.style.display = confirmWrap.style.display === 'none' ? '' : 'none';
+  });
+
+  confirmInput.addEventListener('input', () => {
+    confirmBtn.disabled = confirmInput.value.trim() !== 'RESET';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Deleting\u2026';
+    try {
+      await wipeAllData();
+      // A full reload (not just re-rendering) so every in-memory module
+      // cache (getDB()'s dbPromise, canvas.js's worldTerritories, etc.)
+      // starts clean rather than trying to reconcile itself against a
+      // database that no longer exists.
+      window.location.reload();
+    } catch (err) {
+      showToast(err.message || 'Reset failed.');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Permanently delete everything';
+    }
+  });
+
+  wrap.appendChild(dangerZone);
   root.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// Documents — lists the original PDFs uploaded into a deck (see db.js's
+// documents store) so they can be reopened later, not just their extracted
+// text. Same plain-list pattern as the leech review surface.
+// ---------------------------------------------------------------------------
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatUploadDate(ts) {
+  return new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+async function renderDocumentsView(deck) {
+  const documents = await getDocumentsByDeck(deck.id);
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'documents-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = `Documents in ${deck.title} (${documents.length})`;
+  header.appendChild(heading);
+
+  wrap.appendChild(header);
+
+  if (documents.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'leech-view-empty';
+    empty.textContent = 'No documents uploaded to this deck yet.';
+    wrap.appendChild(empty);
+    root.appendChild(wrap);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'documents-list';
+
+  for (const doc of documents) {
+    list.appendChild(buildDocumentRow(deck, doc));
+  }
+
+  wrap.appendChild(list);
+  root.appendChild(wrap);
+}
+
+function buildDocumentRow(deck, doc) {
+  const row = document.createElement('div');
+  row.className = 'document-row';
+
+  const content = document.createElement('div');
+  content.className = 'document-row-content';
+  content.innerHTML = `
+    <div class="document-row-filename">${escapeHtml(doc.filename)}</div>
+    <div class="document-row-meta">${formatFileSize(doc.size)} \u00b7 uploaded ${formatUploadDate(doc.uploadedAt)}</div>
+  `;
+  row.appendChild(content);
+
+  const actions = document.createElement('div');
+  actions.className = 'document-row-actions';
+
+  const openBtn = document.createElement('button');
+  openBtn.className = 'document-row-open-btn';
+  openBtn.textContent = 'Open';
+  openBtn.addEventListener('click', () => {
+    // Object URL, not a data URL — cheap for large PDFs, no base64 blowup.
+    // Revoked after a delay rather than immediately, so the new tab has
+    // time to actually load the PDF into its own memory first.
+    const url = URL.createObjectURL(doc.blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  });
+  actions.appendChild(openBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'document-row-delete-btn';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', async () => {
+    await deleteDocument(doc.id);
+    showToast('Document deleted.');
+    await renderDocumentsView(deck);
+  });
+  actions.appendChild(deleteBtn);
+
+  row.appendChild(actions);
+  return row;
 }
 
 function buildEmptyDecksState() {

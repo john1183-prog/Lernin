@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'RecallDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Default FSRS metadata stamped onto every newly created card.
@@ -101,7 +101,20 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 5) { ... }` etc. Never delete
+      // --- documents (v5): stores the original uploaded PDF Blob alongside
+      // the deck it was imported into, so "Documents" in app.js can list
+      // and re-open what someone uploaded — previously only the extracted
+      // text made it into a card-generation request, and the original file
+      // was discarded the moment extraction finished, with no way to see
+      // or re-open it later.
+      if (oldVersion < 5) {
+        if (!db.objectStoreNames.contains('documents')) {
+          const documents = db.createObjectStore('documents', { keyPath: 'id' });
+          documents.createIndex('by_deckId', 'deckId');
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 6) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -605,4 +618,61 @@ export async function saveApiConfig({ provider, apiKey }) {
 export async function clearApiConfig() {
   const db = await getDB();
   return db.delete('settings', API_CONFIG_KEY);
+}
+
+/**
+ * Nukes everything: every deck, card, review log entry, queued generation,
+ * territory layout override, and saved setting — used by Settings' "Reset
+ * everything" danger-zone action. There is no undo.
+ *
+ * Deletes the whole IndexedDB database rather than clearing each store
+ * individually, so a future schema migration (new stores we haven't
+ * thought of yet) can't accidentally be left out of the wipe. Closes the
+ * cached connection first — deleteDatabase() blocks/hangs while any
+ * connection to it is still open.
+ */
+export async function wipeAllData() {
+  if (dbPromise) {
+    const db = await dbPromise;
+    db.close();
+    dbPromise = null;
+  }
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('Could not reset — close any other tabs with this app open and try again.'));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Documents — the original uploaded PDF Blob, kept alongside the deck it
+// was imported into so it can be listed and re-opened later (see app.js's
+// "Documents" view). Purely storage/retrieval here; extraction lives in
+// pdf-extract.js and card generation in api.js — neither touches this
+// store directly.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {{id: string, deckId: string, filename: string, blob: Blob, size: number}} doc
+ */
+export async function saveDocument({ id, deckId, filename, blob, size }) {
+  const db = await getDB();
+  return db.put('documents', { id, deckId, filename, blob, size, uploadedAt: Date.now() });
+}
+
+export async function getDocumentsByDeck(deckId) {
+  const db = await getDB();
+  const docs = await db.getAllFromIndex('documents', 'by_deckId', deckId);
+  return docs.sort((a, b) => b.uploadedAt - a.uploadedAt);
+}
+
+export async function getDocument(id) {
+  const db = await getDB();
+  return db.get('documents', id);
+}
+
+export async function deleteDocument(id) {
+  const db = await getDB();
+  return db.delete('documents', id);
 }
