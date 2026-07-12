@@ -52,13 +52,14 @@ function emit(name, detail) {
  *
  * @param {string} text - raw text already extracted client-side by pdf.js
  * @param {string} deckId
- * @returns {Promise<Array<{front: string, back: string, type: string}>>}
+ * @returns {Promise<{cards: Array<{front: string, back: string, type: string}>, summary: string}>}
+ *          summary is '' if generation was queued (offline) or failed.
  */
 export async function generateCards(text, deckId) {
   if (!navigator.onLine) {
     await queueGeneration(deckId, text);
     emit('recall:generation-queued', { deckId });
-    return [];
+    return { cards: [], summary: '' };
   }
 
   try {
@@ -81,18 +82,19 @@ export async function generateCards(text, deckId) {
 
     const data = await response.json();
     const deduped = await dedupeAgainstDeck(data.cards, deckId);
-    emit('recall:generation-success', { deckId, cards: deduped });
-    return deduped;
+    const summary = data.summary || '';
+    emit('recall:generation-success', { deckId, cards: deduped, summary });
+    return { cards: deduped, summary };
   } catch (err) {
     // Network failure (not a server error) — queue for retry rather than
     // surfacing a dead end.
     if (err instanceof TypeError) {
       await queueGeneration(deckId, text);
       emit('recall:generation-queued', { deckId });
-      return [];
+      return { cards: [], summary: '' };
     }
     emit('recall:generation-error', { deckId, message: err.message });
-    return [];
+    return { cards: [], summary: '' };
   }
 }
 

@@ -215,13 +215,31 @@ function render() {
 }
 
 function territoryBounds(territory) {
-  const pad = TERRITORY_SPACING * 0.6;
-  return {
-    minX: territory.center.x - pad,
-    minY: territory.center.y - pad,
-    maxX: territory.center.x + pad,
-    maxY: territory.center.y + pad
-  };
+  // Computed from the territory's ACTUAL island positions, not a fixed
+  // radius around center. A fixed radius (the previous approach) breaks
+  // the moment an island is dragged far enough from center — which is
+  // exactly what happens when someone rearranges their map — because the
+  // outer per-territory cull check in render() would exclude the whole
+  // territory (dragged island included) once its assumed fixed-size box no
+  // longer intersected the viewport, even though the dragged island itself
+  // was still clearly on screen.
+  const pad = ISLAND_SPACING + 60; // island radius + room for its label
+  if (territory.islands.length === 0) {
+    return {
+      minX: territory.center.x - pad,
+      minY: territory.center.y - pad,
+      maxX: territory.center.x + pad,
+      maxY: territory.center.y + pad
+    };
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const island of territory.islands) {
+    minX = Math.min(minX, island.pos.x - pad);
+    minY = Math.min(minY, island.pos.y - pad);
+    maxX = Math.max(maxX, island.pos.x + pad);
+    maxY = Math.max(maxY, island.pos.y + pad);
+  }
+  return { minX, minY, maxX, maxY };
 }
 
 function getWorldViewportRect() {

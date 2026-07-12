@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -135,7 +135,36 @@ async function buildHomeStats(decks) {
     <div class="streak-badge">${reviewStats.streakDays}<span class="streak-unit">day streak</span></div>
     <div class="streak-meta"><strong>${totals.mastered} cards mastered</strong>${reviewStats.weekTotal} reviews this week</div>
   `;
+  if (reviewStats.freezesAvailable > 0) {
+    const freezeBadge = document.createElement('span');
+    freezeBadge.className = 'streak-freeze-badge';
+    freezeBadge.title = 'Streak freezes: skip a day without breaking your streak. Earned every 7-day streak, up to 3.';
+    freezeBadge.textContent = `\u2744\ufe0f ${reviewStats.freezesAvailable}`;
+    streakRow.appendChild(freezeBadge);
+  }
   statsCard.appendChild(streakRow);
+
+  if (!reviewStats.studiedToday && reviewStats.streakDays > 0) {
+    const atRisk = document.createElement('div');
+    atRisk.className = 'streak-at-risk';
+    if (reviewStats.freezesAvailable > 0) {
+      atRisk.innerHTML = `<span>Haven\u2019t studied today \u2014 your streak is at risk.</span>`;
+      const freezeBtn = document.createElement('button');
+      freezeBtn.className = 'streak-freeze-btn';
+      freezeBtn.textContent = 'Use a freeze';
+      freezeBtn.addEventListener('click', async () => {
+        const used = await useStreakFreeze();
+        if (used) {
+          showToast('Streak protected for today.');
+          await renderDeckList();
+        }
+      });
+      atRisk.appendChild(freezeBtn);
+    } else {
+      atRisk.innerHTML = `<span>Haven\u2019t studied today \u2014 your streak is at risk.</span>`;
+    }
+    statsCard.appendChild(atRisk);
+  }
 
   const sparkRow = document.createElement('div');
   sparkRow.className = 'spark-row';
@@ -242,6 +271,7 @@ async function buildDeckCard(deck) {
   card.addEventListener('click', () => enterStudy(deck.id));
   wrapper.appendChild(card);
   wrapper.appendChild(buildImportButton(deck.id));
+  wrapper.appendChild(buildEditDeckButton(deck));
 
   if (documents.length > 0) {
     wrapper.appendChild(buildDocumentsButton(deck, documents.length));
@@ -252,6 +282,18 @@ async function buildDeckCard(deck) {
   }
 
   return wrapper;
+}
+
+function buildEditDeckButton(deck) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-edit-btn';
+  btn.textContent = 'Edit';
+  btn.setAttribute('aria-label', `Edit ${deck.title} \u2014 rename or move to a different course group`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openDeckModal(deck);
+  });
+  return btn;
 }
 
 function buildDocumentsButton(deck, count) {
@@ -308,12 +350,12 @@ function buildImportButton(deckId) {
         showToast('Couldn\u2019t find any text in that PDF (might be scanned images).');
         return;
       }
-      // Keep the original file, not just its extracted text — otherwise
-      // there's no way to see or reopen what was actually uploaded later.
-      // Saved before generation so the document is kept even if generation
-      // itself fails or gets queued for retry.
-      await saveDocument({ id: cryptoRandomId(), deckId, filename: file.name, blob: file, size: file.size });
-      await handleGeneration(text, deckId);
+      // The document record is saved once a summary actually exists (inside
+      // handleGeneration / the manual-paste flow), not here — storing the
+      // original PDF Blob would be a lot of browser storage for students
+      // uploading many PDFs across a term, so only the filename, size, and
+      // an LLM-written summary are kept, not the file itself.
+      await handleGeneration(text, deckId, { filename: file.name, size: file.size });
     } catch (err) {
       showToast(`Couldn't read that PDF: ${err.message}`);
     }
@@ -369,15 +411,17 @@ async function renderLeechView(deck) {
   const list = document.createElement('div');
   list.className = 'leech-view-list';
 
-  for (const card of leeches) {
-    list.appendChild(buildLeechRow(deck, card));
-  }
+  const histories = await Promise.all(leeches.map((c) => getReviewHistoryForCard(c.id)));
+
+  leeches.forEach((card, i) => {
+    list.appendChild(buildLeechRow(deck, card, histories[i]));
+  });
 
   wrap.appendChild(list);
   root.appendChild(wrap);
 }
 
-function buildLeechRow(deck, card) {
+function buildLeechRow(deck, card, history = []) {
   const row = document.createElement('div');
   row.className = 'leech-row';
 
@@ -389,6 +433,39 @@ function buildLeechRow(deck, card) {
     <div class="leech-row-lapses">Lapses: ${card.lapses}</div>
   `;
   row.appendChild(content);
+
+  // Not real semantic "why this card keeps failing" analysis — the app
+  // only ever records a grade per review, not which part of the answer
+  // was wrong, so there's no data to reason about *why*. This is the
+  // honest version: a quick-glance pattern (recent grades + fail rate)
+  // that at least tells you whether this was one bad week or a card
+  // that's basically never landing, without pretending to explain more
+  // than the data actually supports.
+  if (history.length > 0) {
+    const recent = history.slice(-10);
+    const failCount = history.filter((h) => h.grade === 'again').length;
+    const failRate = Math.round((failCount / history.length) * 100);
+
+    const historyEl = document.createElement('div');
+    historyEl.className = 'leech-row-history';
+
+    const dots = document.createElement('div');
+    dots.className = 'leech-row-history-dots';
+    for (const entry of recent) {
+      const dot = document.createElement('span');
+      dot.className = `leech-history-dot leech-history-dot-${entry.grade}`;
+      dot.title = entry.grade;
+      dots.appendChild(dot);
+    }
+    historyEl.appendChild(dots);
+
+    const rateLabel = document.createElement('span');
+    rateLabel.className = 'leech-row-fail-rate';
+    rateLabel.textContent = `${failRate}% "Again" over ${history.length} review${history.length === 1 ? '' : 's'}`;
+    historyEl.appendChild(rateLabel);
+
+    row.appendChild(historyEl);
+  }
 
   const actions = document.createElement('div');
   actions.className = 'leech-row-actions';
@@ -581,6 +658,70 @@ async function renderSettingsView() {
 
   wrap.appendChild(form);
 
+  // --- storage section: usage estimate + hard reload ---
+  const storageSection = document.createElement('div');
+  storageSection.className = 'settings-danger-zone';
+
+  const storageHeading = document.createElement('h3');
+  storageHeading.className = 'settings-danger-heading';
+  storageHeading.style.color = 'var(--ink)';
+  storageHeading.textContent = 'Storage';
+  storageSection.appendChild(storageHeading);
+
+  const storageUsageText = document.createElement('p');
+  storageUsageText.className = 'settings-key-help';
+  storageUsageText.textContent = 'Checking storage usage\u2026';
+  storageSection.appendChild(storageUsageText);
+
+  if (navigator.storage?.estimate) {
+    navigator.storage.estimate().then(({ usage, quota }) => {
+      if (typeof usage === 'number' && typeof quota === 'number' && quota > 0) {
+        const pct = Math.round((usage / quota) * 100);
+        storageUsageText.textContent = `Using ${formatFileSize(usage)} of ${formatFileSize(quota)} available on this device (${pct}%).`;
+      } else {
+        storageUsageText.textContent = 'Storage usage isn\u2019t available in this browser.';
+      }
+    }).catch(() => {
+      storageUsageText.textContent = 'Storage usage isn\u2019t available in this browser.';
+    });
+  } else {
+    storageUsageText.textContent = 'Storage usage isn\u2019t available in this browser.';
+  }
+
+  const reloadIntro = document.createElement('p');
+  reloadIntro.className = 'settings-key-help';
+  reloadIntro.textContent = 'If a new version was deployed but the app still looks/behaves like the old one (common on mobile, where a normal refresh doesn\u2019t clear the cached app shell), use this to force-load the latest version. Your decks and cards are untouched — this only clears cached app code, not your data.';
+  storageSection.appendChild(reloadIntro);
+
+  const hardReloadBtn = document.createElement('button');
+  hardReloadBtn.type = 'button';
+  hardReloadBtn.className = 'settings-remove-btn';
+  hardReloadBtn.textContent = 'Hard reload';
+  hardReloadBtn.addEventListener('click', async () => {
+    hardReloadBtn.disabled = true;
+    hardReloadBtn.textContent = 'Reloading\u2026';
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((r) => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch {
+      // Best-effort — reload regardless, a normal network fetch still picks
+      // up the new deployment even if unregistering/clearing partially failed.
+    }
+    // Cache-busting query param, not just reload() — some browsers still
+    // serve a bfcache/HTTP-cache copy of the HTML on a bare reload even
+    // after the service worker is gone.
+    window.location.href = `${window.location.pathname}?_r=${Date.now()}`;
+  });
+  storageSection.appendChild(hardReloadBtn);
+
+  wrap.appendChild(storageSection);
+
   // --- danger zone ---
   const dangerZone = document.createElement('div');
   dangerZone.className = 'settings-danger-zone';
@@ -720,6 +861,15 @@ async function renderDocumentsView(deck) {
     return;
   }
 
+  const withSummaries = documents.filter((d) => d.summary && d.summary.trim());
+  if (withSummaries.length > 0) {
+    const recapBtn = document.createElement('button');
+    recapBtn.className = 'course-recap-btn';
+    recapBtn.textContent = '\ud83d\udcd6 Course Recap \u2014 5 min read';
+    recapBtn.addEventListener('click', () => renderCourseRecapView(deck, withSummaries));
+    wrap.appendChild(recapBtn);
+  }
+
   const list = document.createElement('div');
   list.className = 'documents-list';
 
@@ -731,9 +881,60 @@ async function renderDocumentsView(deck) {
   root.appendChild(wrap);
 }
 
+/**
+ * Concatenates every document's summary into one scrollable read, grouped
+ * by source document — deliberately NOT another LLM call: each summary
+ * was already generated for free as part of that document's card
+ * generation (see api/index.py's generate_cards route), so stitching them
+ * together here costs nothing and needs no API key/connectivity at all,
+ * which matters for anyone using manual/no-key mode.
+ */
+function renderCourseRecapView(deck, documents) {
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'course-recap-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDocumentsView(deck));
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = `${deck.title} \u2014 Course Recap`;
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  const intro = document.createElement('p');
+  intro.className = 'leech-view-empty';
+  intro.style.textAlign = 'left';
+  intro.style.padding = '0 0 16px';
+  intro.textContent = `A quick recap of everything uploaded to this deck, built from ${documents.length} document summar${documents.length === 1 ? 'y' : 'ies'} \u2014 meant to be skimmed in a few minutes before an exam, not a replacement for the full material.`;
+  wrap.appendChild(intro);
+
+  for (const doc of documents) {
+    const section = document.createElement('div');
+    section.className = 'course-recap-section';
+    section.innerHTML = `
+      <h3 class="course-recap-section-title">${escapeHtml(doc.filename)}</h3>
+      <div class="course-recap-section-body">${escapeHtml(doc.summary)}</div>
+    `;
+    wrap.appendChild(section);
+  }
+
+  root.appendChild(wrap);
+}
+
 function buildDocumentRow(deck, doc) {
   const row = document.createElement('div');
   row.className = 'document-row';
+
+  const top = document.createElement('div');
+  top.className = 'document-row-top';
 
   const content = document.createElement('div');
   content.className = 'document-row-content';
@@ -741,23 +942,15 @@ function buildDocumentRow(deck, doc) {
     <div class="document-row-filename">${escapeHtml(doc.filename)}</div>
     <div class="document-row-meta">${formatFileSize(doc.size)} \u00b7 uploaded ${formatUploadDate(doc.uploadedAt)}</div>
   `;
-  row.appendChild(content);
+  top.appendChild(content);
 
   const actions = document.createElement('div');
   actions.className = 'document-row-actions';
 
-  const openBtn = document.createElement('button');
-  openBtn.className = 'document-row-open-btn';
-  openBtn.textContent = 'Open';
-  openBtn.addEventListener('click', () => {
-    // Object URL, not a data URL — cheap for large PDFs, no base64 blowup.
-    // Revoked after a delay rather than immediately, so the new tab has
-    // time to actually load the PDF into its own memory first.
-    const url = URL.createObjectURL(doc.blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  });
-  actions.appendChild(openBtn);
+  const viewBtn = document.createElement('button');
+  viewBtn.className = 'document-row-open-btn';
+  viewBtn.textContent = 'View summary';
+  actions.appendChild(viewBtn);
 
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'document-row-delete-btn';
@@ -769,7 +962,24 @@ function buildDocumentRow(deck, doc) {
   });
   actions.appendChild(deleteBtn);
 
-  row.appendChild(actions);
+  top.appendChild(actions);
+  row.appendChild(top);
+
+  // The original file isn't kept (see saveDocument's doc comment in
+  // db.js) — only its summary is, so "viewing a document" here means
+  // reading the summary, not reopening the PDF itself.
+  const summaryBox = document.createElement('div');
+  summaryBox.className = 'document-row-summary';
+  summaryBox.textContent = doc.summary || 'No summary available for this document.';
+  summaryBox.style.display = 'none';
+  row.appendChild(summaryBox);
+
+  viewBtn.addEventListener('click', () => {
+    const showing = summaryBox.style.display !== 'none';
+    summaryBox.style.display = showing ? 'none' : '';
+    viewBtn.textContent = showing ? 'View summary' : 'Hide summary';
+  });
+
   return row;
 }
 
@@ -785,16 +995,23 @@ function buildEmptyDecksState() {
 }
 
 /**
- * Real deck creation form: title + territory/course name (free text —
+ * Shared create/edit form: title + territory/course name (free text —
  * territories are just courseTerritoryId strings; canvas.js groups by
- * whatever's typed here, no separate territory table needed). Replaces the
- * earlier prompt()-based placeholder.
+ * whatever's typed here, no separate territory table needed).
+ *
+ * @param {object} [existingDeck] - pass to edit an existing deck (rename
+ *        and/or move it to a different territory/course group) instead of
+ *        creating a new one. Reassigning to a different territory clears
+ *        any saved map drag position for it — see clearIslandPosition's
+ *        doc comment for why a stale absolute position shouldn't carry
+ *        over to a different territory.
  */
-async function openDeckModal() {
+async function openDeckModal(existingDeck = null) {
   const existingDecks = await getAllDecks();
   const existingTerritories = Array.from(
     new Set(existingDecks.map((d) => d.courseTerritoryId).filter(Boolean))
   );
+  const isEdit = !!existingDeck;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -802,7 +1019,7 @@ async function openDeckModal() {
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.innerHTML = `
-    <h2>New deck</h2>
+    <h2>${isEdit ? 'Edit deck' : 'New deck'}</h2>
     <label class="modal-label">Title
       <input type="text" class="modal-title-input" placeholder="e.g. EEE 307 — Field Theory" />
     </label>
@@ -814,7 +1031,7 @@ async function openDeckModal() {
     </label>
     <div class="modal-actions">
       <button class="modal-cancel-btn">Cancel</button>
-      <button class="modal-save-btn">Create</button>
+      <button class="modal-save-btn">${isEdit ? 'Save' : 'Create'}</button>
     </div>
   `;
 
@@ -823,6 +1040,11 @@ async function openDeckModal() {
 
   const titleInput = modal.querySelector('.modal-title-input');
   const territoryInput = modal.querySelector('.modal-territory-input');
+
+  if (isEdit) {
+    titleInput.value = existingDeck.title;
+    territoryInput.value = existingDeck.courseTerritoryId === 'uncategorized' ? '' : (existingDeck.courseTerritoryId || '');
+  }
   titleInput.focus();
 
   const close = () => overlay.remove();
@@ -840,12 +1062,20 @@ async function openDeckModal() {
     }
     const territory = territoryInput.value.trim() || 'uncategorized';
 
-    await saveDeck({
-      id: cryptoRandomId(),
-      title,
-      courseTerritoryId: territory,
-      createdAt: Date.now()
-    });
+    if (isEdit) {
+      const territoryChanged = territory !== (existingDeck.courseTerritoryId || 'uncategorized');
+      await saveDeck({ ...existingDeck, title, courseTerritoryId: territory });
+      if (territoryChanged) {
+        await clearIslandPosition(existingDeck.id);
+      }
+    } else {
+      await saveDeck({
+        id: cryptoRandomId(),
+        title,
+        courseTerritoryId: territory,
+        createdAt: Date.now()
+      });
+    }
 
     close();
     await renderDeckList();
@@ -902,17 +1132,49 @@ function enterStudy(deckId) {
 // touches our backend.
 // ---------------------------------------------------------------------------
 
-export async function handleGeneration(extractedText, deckId) {
+// ---------------------------------------------------------------------------
+// Generation flow: upload -> generateCards() -> edit step -> commit
+// pdf.js extraction itself lives wherever the "upload" UI triggers it
+// (out of scope for this file — assume `extractedText` arrives already
+// parsed client-side, per the spec's "nothing is uploaded to the server").
+//
+// Branches on the configured provider: Claude/Gemini go through the normal
+// network call to /api/generate-cards; 'manual' (or no config at all, e.g.
+// first-time users) goes through the copy/paste flow instead, which never
+// touches our backend.
+//
+// `fileMeta` ({filename, size}) is only used to save a Documents entry once
+// a summary is actually available — deliberately NOT stored ahead of time,
+// and deliberately NOT storing the original file at all (see buildImportButton's
+// comment: keeping every uploaded PDF in IndexedDB doesn't scale for a
+// student uploading dozens of them across a term). If generation gets
+// queued for offline retry or fails outright, no Documents entry is
+// created for this upload — there's no summary to show yet, and wiring a
+// summary update through the async retry path is more plumbing than this
+// pass covers. The extracted text itself isn't lost either way (it's
+// already in the offline generation queue, retried automatically).
+// ---------------------------------------------------------------------------
+
+export async function handleGeneration(extractedText, deckId, fileMeta = null) {
   const config = await getApiConfig();
 
   if (!config || config.provider === 'manual') {
-    renderManualPasteView(extractedText, deckId);
+    renderManualPasteView(extractedText, deckId, fileMeta);
     return;
   }
 
   showToast('Generating cards\u2026');
-  const cards = await generateCards(extractedText, deckId);
+  const { cards, summary } = await generateCards(extractedText, deckId);
   if (cards.length > 0) {
+    if (fileMeta) {
+      await saveDocument({
+        id: cryptoRandomId(),
+        deckId,
+        filename: fileMeta.filename,
+        size: fileMeta.size,
+        summary: summary || ''
+      });
+    }
     renderEditStep(cards, deckId);
   }
   // If cards.length === 0, either it was queued (offline) or errored —
@@ -937,10 +1199,13 @@ Rules:
   front contains {{c1::the answer}} inline. Use "basic" Q&A for everything else.
 - Do not invent facts not present in the source text.
 - Skip trivial or non-testable content (headers, page numbers, filler).
+- Also write a "summary": 2-4 sentences capturing the key points of this
+  text, written for a student reviewing right before an exam — dense and
+  factual, not a restatement of the assignment/chapter structure.
 
 Return ONLY valid JSON — no markdown formatting, no code fences, no
 commentary before or after — in exactly this shape:
-{"cards": [{"front": "...", "back": "...", "type": "basic"}, ...]}
+{"cards": [{"front": "...", "back": "...", "type": "basic"}, ...], "summary": "..."}
 
 Here is the source text:
 """
@@ -959,7 +1224,7 @@ function buildManualPrompt(text) {
  * about exactly how strictly they follow the requested shape, and a whole
  * batch shouldn't fail over one bad entry.
  *
- * @returns {{cards: Array<{front: string, back: string, type: string}>, skipped: number}}
+ * @returns {{cards: Array<{front: string, back: string, type: string}>, skipped: number, summary: string}}
  */
 function parseManualCards(rawText) {
   let cleaned = rawText.trim();
@@ -977,6 +1242,7 @@ function parseManualCards(rawText) {
   if (!Array.isArray(rawCards)) {
     throw new Error('Expected a "cards" array in the pasted JSON.');
   }
+  const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim() : '';
 
   const cards = [];
   let skipped = 0;
@@ -997,10 +1263,10 @@ function parseManualCards(rawText) {
     cards.push({ front, back, type });
   }
 
-  return { cards, skipped };
+  return { cards, skipped, summary };
 }
 
-function renderManualPasteView(extractedText, deckId) {
+function renderManualPasteView(extractedText, deckId, fileMeta = null) {
   root.innerHTML = '';
   const prompt = buildManualPrompt(extractedText);
 
@@ -1086,6 +1352,15 @@ function renderManualPasteView(extractedText, deckId) {
     }
     if (result.skipped > 0) {
       showToast(`Parsed ${result.cards.length} card(s), skipped ${result.skipped} incomplete entr${result.skipped === 1 ? 'y' : 'ies'}.`);
+    }
+    if (fileMeta) {
+      await saveDocument({
+        id: cryptoRandomId(),
+        deckId,
+        filename: fileMeta.filename,
+        size: fileMeta.size,
+        summary: result.summary || ''
+      });
     }
     const deduped = await dedupeAgainstDeck(result.cards, deckId);
     renderEditStep(deduped, deckId);

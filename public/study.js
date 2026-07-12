@@ -4,7 +4,7 @@
 // for grading; canvas.js and app.js's list view both route INTO this module
 // rather than reimplementing any of it.
 
-import { getCardsDueTodayOrEarlier, updateCardAfterReview } from './db.js';
+import { getCardsDueTodayOrEarlier, updateCardAfterReview, getReviewStats } from './db.js';
 import { gradeCard, Grade } from './scheduler.js';
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ export async function startStudySession(container, opts = {}) {
   // front-loading the hardest (newest) material.
   const queue = interleave(reviewCards, newCards);
 
-  session = { deckId, queue, index: 0, container, onExit };
+  session = { deckId, queue, index: 0, container, onExit, tally: { again: 0, hard: 0, good: 0, easy: 0 } };
 
   if (queue.length === 0) {
     renderEmptyState(container);
@@ -168,6 +168,58 @@ function buildGradeBar(card) {
   return bar;
 }
 
+/**
+ * Shown when a session that actually reviewed something finishes (queue
+ * exhausted after at least one grade) — closes the loop with what was
+ * accomplished instead of dumping straight back to the deck list. Distinct
+ * from renderEmptyState(), which is for entering a session that had
+ * nothing due in the first place.
+ */
+async function renderSessionSummary(container, tally, onExit) {
+  const reviewed = tally.again + tally.hard + tally.good + tally.easy;
+  const correct = tally.good + tally.easy;
+  const accuracy = reviewed > 0 ? Math.round((correct / reviewed) * 100) : 0;
+
+  // Fetch fresh — the last grade's write already landed in reviewLog, so
+  // this reflects the streak AFTER this session, not before it.
+  const stats = await getReviewStats();
+
+  container.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'study-summary';
+
+  const heading = document.createElement('h2');
+  heading.className = 'study-summary-heading';
+  heading.textContent = 'Session complete';
+  wrap.appendChild(heading);
+
+  const statRow = document.createElement('div');
+  statRow.className = 'study-summary-stats';
+  statRow.innerHTML = `
+    <div class="study-summary-stat"><div class="study-summary-stat-value">${reviewed}</div><div class="study-summary-stat-label">reviewed</div></div>
+    <div class="study-summary-stat"><div class="study-summary-stat-value">${accuracy}%</div><div class="study-summary-stat-label">accuracy</div></div>
+    <div class="study-summary-stat"><div class="study-summary-stat-value">${stats.streakDays}</div><div class="study-summary-stat-label">day streak</div></div>
+  `;
+  wrap.appendChild(statRow);
+
+  if (tally.again > 0) {
+    const note = document.createElement('p');
+    note.className = 'study-summary-note';
+    note.textContent = `${tally.again} card${tally.again === 1 ? '' : 's'} graded "Again" \u2014 you\u2019ll see ${tally.again === 1 ? 'it' : 'them'} again soon.`;
+    wrap.appendChild(note);
+  }
+
+  const doneBtn = document.createElement('button');
+  doneBtn.className = 'study-summary-done-btn';
+  doneBtn.textContent = 'Done';
+  doneBtn.addEventListener('click', () => {
+    if (onExit) onExit();
+  });
+  wrap.appendChild(doneBtn);
+
+  container.appendChild(wrap);
+}
+
 function renderEmptyState(container) {
   container.innerHTML = '';
   const wrap = document.createElement('div');
@@ -237,15 +289,19 @@ async function handleGrade(card, grade) {
     throw err;
   }
 
+  if (grade === Grade.AGAIN) session.tally.again++;
+  else if (grade === Grade.HARD) session.tally.hard++;
+  else if (grade === Grade.GOOD) session.tally.good++;
+  else if (grade === Grade.EASY) session.tally.easy++;
+
   advance();
 }
 
 function advance() {
   session.index += 1;
   if (session.index >= session.queue.length) {
-    renderEmptyState(session.container);
-    if (session.onExit) session.onExit();
-    session = null; // avoid double-firing onExit if the empty state's exit button is clicked too
+    renderSessionSummary(session.container, session.tally, session.onExit);
+    session = null; // avoid double-firing onExit if the summary's Done button is clicked too
     return;
   }
   renderCard();

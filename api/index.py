@@ -145,6 +145,7 @@ class Card(BaseModel):
 
 class CardBatch(BaseModel):
     cards: list[Card]
+    summary: str = ""  # 2-4 sentence summary of THIS chunk's content
 
 class GenerateRequest(BaseModel):
     text: str
@@ -152,10 +153,11 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     cards: list[Card]
+    summary: str = ""  # joined per-chunk summaries — see generate_cards() below
 
 GENERATE_CARDS_TOOL = {
     "name": "submit_cards",
-    "description": "Submit the generated flashcards.",
+    "description": "Submit the generated flashcards and a brief summary of the source text.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -170,9 +172,13 @@ GENERATE_CARDS_TOOL = {
                     },
                     "required": ["front", "back", "type"]
                 }
+            },
+            "summary": {
+                "type": "string",
+                "description": "2-4 sentence summary of the key points in this text, written for someone reviewing before an exam."
             }
         },
-        "required": ["cards"]
+        "required": ["cards", "summary"]
     }
 }
 
@@ -195,9 +201,10 @@ GEMINI_RESPONSE_SCHEMA = {
                 },
                 "required": ["front", "back", "type"]
             }
-        }
+        },
+        "summary": {"type": "string"}
     },
-    "required": ["cards"]
+    "required": ["cards", "summary"]
 }
 
 SYSTEM_PROMPT = """You write flashcards from source text for spaced repetition study.
@@ -211,7 +218,11 @@ Rules:
   front contains {{c1::the answer}} inline. Use "basic" Q&A for everything else.
 - Do not invent facts not present in the source text.
 - Skip trivial or non-testable content (headers, page numbers, filler).
-- Call submit_cards exactly once with the full set of cards for this text."""
+- Also write a "summary": 2-4 sentences capturing the key points of this
+  text, written for a student reviewing right before an exam — dense and
+  factual, not a restatement of the assignment/chapter structure.
+- Call submit_cards exactly once with the full set of cards and the summary
+  for this text."""
 
 
 # ---------------------------------------------------------------------------
@@ -310,12 +321,13 @@ class _AuthError(Exception):
     pass
 
 
-def generate_cards_for_chunk(chunk: str, provider: str, api_key: str) -> list[Card]:
+def generate_cards_for_chunk(chunk: str, provider: str, api_key: str) -> tuple[list[Card], str]:
     """Calls the LLM and validates the result, retrying on malformed output.
     Malformed responses are NEVER passed through to the client — this
-    function either returns a validated card list or raises after
-    exhausting retries. Auth errors (bad/missing key) raise immediately
-    without retrying, since a bad key doesn't fix itself on attempt 2."""
+    function either returns a validated (cards, summary) pair or raises
+    after exhausting retries. Auth errors (bad/missing key) raise
+    immediately without retrying, since a bad key doesn't fix itself on
+    attempt 2."""
     last_error: Optional[Exception] = None
 
     for attempt in range(MAX_RETRIES):
@@ -325,7 +337,7 @@ def generate_cards_for_chunk(chunk: str, provider: str, api_key: str) -> list[Ca
             else:
                 raw = _call_claude(chunk, api_key)
             batch = CardBatch.model_validate(raw)
-            return batch.cards
+            return batch.cards, batch.summary
         except _AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         except anthropic.AuthenticationError as e:
@@ -360,11 +372,24 @@ async def generate_cards(req: GenerateRequest, request: Request):
 
     chunks = chunk_text(req.text)
     all_cards: list[Card] = []
+    chunk_summaries: list[str] = []
 
     for chunk in chunks:
-        all_cards.extend(generate_cards_for_chunk(chunk, provider, api_key))
+        cards, summary = generate_cards_for_chunk(chunk, provider, api_key)
+        all_cards.extend(cards)
+        if summary.strip():
+            chunk_summaries.append(summary.strip())
 
-    return GenerateResponse(cards=all_cards)
+    # No separate summarization call/endpoint on purpose — this reuses the
+    # LLM calls already being made for card generation instead of doubling
+    # API cost per upload. For a single-chunk document (the common case)
+    # this is just that chunk's summary; for a longer, multi-chunk document
+    # it's each chunk's summary joined in order, which reads as a slightly
+    # disjointed but still useful multi-part digest rather than one
+    # perfectly cohesive paragraph. Good enough for "skim before an exam."
+    document_summary = "\n\n".join(chunk_summaries)
+
+    return GenerateResponse(cards=all_cards, summary=document_summary)
 
 
 @app.get("/api/health")

@@ -101,12 +101,14 @@ export function getDB() {
         }
       }
 
-      // --- documents (v5): stores the original uploaded PDF Blob alongside
-      // the deck it was imported into, so "Documents" in app.js can list
-      // and re-open what someone uploaded — previously only the extracted
-      // text made it into a card-generation request, and the original file
-      // was discarded the moment extraction finished, with no way to see
-      // or re-open it later.
+      // --- documents (v5): stores each uploaded PDF's filename + an
+      // LLM-written summary alongside the deck it was imported into, so
+      // "Documents" and "Course Recap" in app.js have something to show
+      // for what someone uploaded — previously only the extracted text
+      // made it into a card-generation request and everything about the
+      // original file was discarded once extraction finished. Summary,
+      // not the original file itself (see saveDocument's doc comment) —
+      // storing every PDF a student uploads across a term doesn't scale.
       if (oldVersion < 5) {
         if (!db.objectStoreNames.contains('documents')) {
           const documents = db.createObjectStore('documents', { keyPath: 'id' });
@@ -337,6 +339,20 @@ export async function getSuspendedCards(deckId) {
 }
 
 /**
+ * Fetch a card's full review history, oldest first — used by the leech
+ * review surface to show *why* a card might have been leeched (a string of
+ * "Again" grades vs. one bad day among mostly "Good"s reads very
+ * differently), without attempting any real semantic analysis of what
+ * specifically kept going wrong — that would need the app to record more
+ * than a grade per review, which it currently doesn't.
+ */
+export async function getReviewHistoryForCard(cardId) {
+  const db = await getDB();
+  const entries = await db.getAllFromIndex('reviewLog', 'by_cardId', cardId);
+  return entries.sort((a, b) => a.reviewedAt - b.reviewedAt);
+}
+
+/**
  * Fetch all cards for a deck (unfiltered by due date) — used by the flat
  * list/grid view and the canvas territory-map mastery visuals, not by
  * Study Mode.
@@ -378,6 +394,17 @@ export async function getDecksByTerritory(courseTerritoryId) {
 export async function saveIslandPosition(islandId, x, y) {
   const db = await getDB();
   return db.put('territoryLayout', { islandId, x, y, updatedAt: Date.now() });
+}
+
+/**
+ * Clears a saved drag position override — used when a deck is reassigned
+ * to a different courseTerritoryId, so it falls back to a sensible default
+ * spot within its new territory instead of keeping an absolute position
+ * left over from whatever territory it used to belong to.
+ */
+export async function clearIslandPosition(islandId) {
+  const db = await getDB();
+  return db.delete('territoryLayout', islandId);
 }
 
 export async function getIslandPositionOverrides() {
@@ -486,6 +513,8 @@ export async function getReviewStats(now) {
   const entries = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', range);
 
   const reviewedDayKeys = new Set(entries.map((e) => localDayKey(e.reviewedAt)));
+  const freezeState = await getStreakFreezeState();
+  const frozenDayKeys = new Set(freezeState.frozenDayKeys);
 
   let streakDays = 0;
   let cursor = startOfLocalDay(nowMs);
@@ -493,12 +522,27 @@ export async function getReviewStats(now) {
 
   while (true) {
     const key = localDayKey(cursor);
-    if (reviewedDayKeys.has(key)) {
+    if (reviewedDayKeys.has(key) || frozenDayKeys.has(key)) {
       streakDays++;
     } else if (key !== todayKey) {
       break;
     }
     cursor -= 24 * 60 * 60 * 1000;
+  }
+
+  // Auto-award: +1 freeze (capped) every 7-day streak milestone reached,
+  // tracked via lastAwardedMilestone so this doesn't re-award every time
+  // getReviewStats() is called (which happens on basically every render,
+  // not just once a day).
+  const milestone = Math.floor(streakDays / 7);
+  let currentFreezeState = freezeState;
+  if (milestone > freezeState.lastAwardedMilestone) {
+    currentFreezeState = {
+      ...freezeState,
+      freezesAvailable: Math.min(MAX_STREAK_FREEZES, freezeState.freezesAvailable + 1),
+      lastAwardedMilestone: milestone
+    };
+    await saveStreakFreezeState(currentFreezeState);
   }
 
   const weekCounts = [];
@@ -510,8 +554,59 @@ export async function getReviewStats(now) {
   }
 
   const weekTotal = weekCounts.reduce((a, b) => a + b, 0);
+  const studiedToday = reviewedDayKeys.has(todayKey) || frozenDayKeys.has(todayKey);
 
-  return { streakDays, weekCounts, weekTotal };
+  return {
+    streakDays,
+    weekCounts,
+    weekTotal,
+    studiedToday,
+    freezesAvailable: currentFreezeState.freezesAvailable
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Streak freezes — a limited resource (earned by keeping a streak going,
+// spent to protect it) rather than the streak silently resetting to 0 the
+// first time someone misses a day. Deliberately spent MANUALLY (via
+// useStreakFreeze, called from a button in app.js) rather than
+// auto-consumed the moment a gap is detected — an explicit user action is
+// simpler to reason about correctness-wise than trying to silently detect
+// and bridge gaps on every stats read, and it makes the tradeoff visible
+// ("you're about to spend one of your 3 freezes") instead of invisible.
+// ---------------------------------------------------------------------------
+
+const STREAK_FREEZE_KEY = 'streakFreezeState';
+const MAX_STREAK_FREEZES = 3;
+
+async function getStreakFreezeState() {
+  const db = await getDB();
+  const record = await db.get('settings', STREAK_FREEZE_KEY);
+  return record || { key: STREAK_FREEZE_KEY, freezesAvailable: 0, lastAwardedMilestone: 0, frozenDayKeys: [] };
+}
+
+async function saveStreakFreezeState(state) {
+  const db = await getDB();
+  return db.put('settings', { ...state, key: STREAK_FREEZE_KEY });
+}
+
+/**
+ * Spends one freeze to protect today's streak (marks today as "covered"
+ * without an actual review) — used when someone knows they won't get to
+ * study today and doesn't want to lose their streak. Returns false (spends
+ * nothing) if there are no freezes available or today is already
+ * covered/reviewed.
+ */
+export async function useStreakFreeze() {
+  const state = await getStreakFreezeState();
+  const todayKey = localDayKey(Date.now());
+  if (state.freezesAvailable <= 0 || state.frozenDayKeys.includes(todayKey)) return false;
+  await saveStreakFreezeState({
+    ...state,
+    freezesAvailable: state.freezesAvailable - 1,
+    frozenDayKeys: [...state.frozenDayKeys, todayKey]
+  });
+  return true;
 }
 
 function startOfLocalDay(ms) {
@@ -656,9 +751,18 @@ export async function wipeAllData() {
 /**
  * @param {{id: string, deckId: string, filename: string, blob: Blob, size: number}} doc
  */
-export async function saveDocument({ id, deckId, filename, blob, size }) {
+/**
+ * @param {{id: string, deckId: string, filename: string, summary: string, size: number}} doc
+ *        Deliberately does NOT store the original file — only its filename,
+ *        original size (informational only), and an LLM-written summary.
+ *        Storing every uploaded PDF in IndexedDB doesn't scale for a
+ *        student uploading dozens of them across a term; the summary is
+ *        what actually gets used later (see the Course Recap view), and
+ *        costs a few KB instead of a few MB per document.
+ */
+export async function saveDocument({ id, deckId, filename, summary, size }) {
   const db = await getDB();
-  return db.put('documents', { id, deckId, filename, blob, size, uploadedAt: Date.now() });
+  return db.put('documents', { id, deckId, filename, summary: summary || '', size, uploadedAt: Date.now() });
 }
 
 export async function getDocumentsByDeck(deckId) {
