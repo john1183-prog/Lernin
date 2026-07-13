@@ -539,8 +539,23 @@ button { font-family: inherit; cursor: pointer; }
 
 /* --- Edit step (app.js) --- */
 
-.edit-step { padding: 16px; }
-.edit-step h2 { font-family: var(--font-display); font-weight: 600; }
+.edit-step { padding: 16px; max-width: 560px; margin: 0 auto; }
+
+.edit-step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.edit-step-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--ink);
+  margin: 0;
+}
+
 .edit-step-row {
   display: flex;
   flex-direction: column;
@@ -548,17 +563,73 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--surface);
   border: 0.5px solid var(--border);
   border-radius: 12px;
-  padding: 12px;
-  margin-bottom: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+  transition: opacity 0.15s ease;
 }
-.edit-step-row textarea {
+
+.edit-step-row-discarded {
+  opacity: 0.45;
+}
+
+.edit-step-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.edit-step-type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.edit-step-type-basic { background: var(--surface-sunken); color: var(--ink-sub); }
+.edit-step-type-cloze { background: var(--surface-sunken); color: var(--ochre); }
+
+.edit-step-discard-btn {
+  border: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--terracotta);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.edit-step-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-sub);
+  margin-top: 6px;
+}
+
+.edit-step-textarea {
   background: var(--surface-sunken);
-  color: inherit;
+  color: var(--ink);
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
   font-family: inherit;
+  font-size: 14px;
+  min-height: 52px;
+  resize: vertical;
+  box-sizing: border-box;
+  width: 100%;
 }
+
+.edit-step-textarea:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-sub);
+}
+
 .commit-cards-btn {
   width: 100%;
   padding: 14px;
@@ -566,8 +637,10 @@ button { font-family: inherit; cursor: pointer; }
   border-radius: 12px;
   background: var(--moss);
   color: var(--moss-ink);
+  font-family: var(--font-display);
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 600;
+  margin-top: 8px;
 }
 
 /* --- Territory map (canvas.js) --- */

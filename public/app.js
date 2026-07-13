@@ -1226,16 +1226,70 @@ function buildManualPrompt(text) {
  *
  * @returns {{cards: Array<{front: string, back: string, type: string}>, skipped: number, summary: string}}
  */
-function parseManualCards(rawText) {
-  let cleaned = rawText.trim();
-  const fenceMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  if (fenceMatch) cleaned = fenceMatch[1].trim();
+/**
+ * Pulls a JSON object/array out of arbitrary pasted text, trying — in
+ * order — a fenced ```json block, a fenced ``` block with no language tag,
+ * a balanced {...} span found anywhere in the text, and finally the raw
+ * text as-is. Each candidate is tried against JSON.parse in turn.
+ *
+ * Why this many fallbacks: the first paste in a conversation is often
+ * clean model output, but a *second* paste (this function's actual bug
+ * report) tends to come from a chat that's already going — the AI adds a
+ * sentence like "Sure, here's the JSON:" before the fence, or one after
+ * it, which an anchored ^...$ fence match rejects outright even though
+ * the JSON itself is perfectly valid.
+ */
+function extractJsonCandidate(rawText) {
+  const trimmed = rawText.trim();
+  const candidates = [];
 
-  let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error('That doesn\u2019t look like valid JSON. Make sure you copied only the model\u2019s output, nothing else.');
+  const jsonFence = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
+  if (jsonFence) candidates.push(jsonFence[1]);
+
+  const anyFence = trimmed.match(/```\s*([\s\S]*?)\s*```/);
+  if (anyFence && anyFence[1] !== jsonFence?.[1]) candidates.push(anyFence[1]);
+
+  // Balanced-brace scan: find the first '{' and walk forward tracking
+  // depth (ignoring braces inside string literals) to find its matching
+  // '}', regardless of what text surrounds it.
+  const start = trimmed.indexOf('{');
+  if (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          candidates.push(trimmed.slice(start, i + 1));
+          break;
+        }
+      }
+    }
+  }
+
+  candidates.push(trimmed);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function parseManualCards(rawText) {
+  const parsed = extractJsonCandidate(rawText);
+  if (parsed === undefined) {
+    throw new Error('That doesn\u2019t look like valid JSON. Make sure you copied the model\u2019s full response, including the opening { and closing }.');
   }
 
   const rawCards = Array.isArray(parsed) ? parsed : parsed?.cards;
@@ -1375,47 +1429,104 @@ function renderEditStep(cards, deckId) {
 
   const wrap = document.createElement('div');
   wrap.className = 'edit-step';
-  wrap.innerHTML = `<h2>Review ${cards.length} generated card${cards.length === 1 ? '' : 's'}</h2>`;
+
+  const header = document.createElement('div');
+  header.className = 'edit-step-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Cancel';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.className = 'edit-step-heading';
+  header.appendChild(heading);
+  wrap.appendChild(header);
 
   const list = document.createElement('div');
   list.className = 'edit-step-list';
 
+  // null = discarded (recoverable via Undo — nothing is destroyed until
+  // "Add to deck" is actually clicked), not removed from the array.
   const editable = cards.map(c => ({ ...c }));
+
+  function updateHeading() {
+    const remaining = editable.filter(Boolean).length;
+    heading.textContent = remaining === editable.length
+      ? `Review ${editable.length} generated card${editable.length === 1 ? '' : 's'}`
+      : `Review \u2014 ${remaining} of ${editable.length} will be added`;
+  }
 
   editable.forEach((card, i) => {
     const row = document.createElement('div');
     row.className = 'edit-step-row';
 
+    const rowHeader = document.createElement('div');
+    rowHeader.className = 'edit-step-row-header';
+
+    const typeBadge = document.createElement('span');
+    typeBadge.className = `edit-step-type-badge edit-step-type-${card.type}`;
+    typeBadge.textContent = card.type === 'cloze' ? 'Cloze' : 'Basic';
+    rowHeader.appendChild(typeBadge);
+
+    const discardBtn = document.createElement('button');
+    discardBtn.className = 'edit-step-discard-btn';
+    discardBtn.textContent = 'Discard';
+    rowHeader.appendChild(discardBtn);
+
+    row.appendChild(rowHeader);
+
+    const frontLabel = document.createElement('label');
+    frontLabel.className = 'edit-step-field-label';
+    frontLabel.textContent = 'Front';
+    row.appendChild(frontLabel);
+
     const frontInput = document.createElement('textarea');
+    frontInput.className = 'edit-step-textarea';
     frontInput.value = card.front;
     frontInput.addEventListener('input', () => { editable[i].front = frontInput.value; });
+    row.appendChild(frontInput);
+
+    const backLabel = document.createElement('label');
+    backLabel.className = 'edit-step-field-label';
+    backLabel.textContent = 'Back';
+    row.appendChild(backLabel);
 
     const backInput = document.createElement('textarea');
+    backInput.className = 'edit-step-textarea';
     backInput.value = card.back;
+    backInput.placeholder = card.type === 'cloze' ? '(optional \u2014 cloze answers live inline in Front)' : '';
     backInput.addEventListener('input', () => { editable[i].back = backInput.value; });
+    row.appendChild(backInput);
 
-    const removeBtn = document.createElement('button');
-    removeBtn.textContent = 'Discard';
-    removeBtn.addEventListener('click', () => {
-      editable[i] = null;
-      row.remove();
+    discardBtn.addEventListener('click', () => {
+      const discarded = editable[i] !== null;
+      editable[i] = discarded ? null : { front: frontInput.value, back: backInput.value, type: card.type };
+      row.classList.toggle('edit-step-row-discarded', discarded);
+      frontInput.disabled = discarded;
+      backInput.disabled = discarded;
+      discardBtn.textContent = discarded ? 'Undo' : 'Discard';
+      updateHeading();
     });
 
-    row.appendChild(frontInput);
-    row.appendChild(backInput);
-    row.appendChild(removeBtn);
     list.appendChild(row);
   });
 
   wrap.appendChild(list);
+  updateHeading();
 
   const commitBtn = document.createElement('button');
   commitBtn.className = 'commit-cards-btn';
   commitBtn.textContent = 'Add to deck';
   commitBtn.addEventListener('click', async () => {
     const approved = editable.filter(Boolean);
+    if (approved.length === 0) {
+      showToast('Nothing to add \u2014 every card was discarded.');
+      return;
+    }
     await commitGeneratedCards(deckId, approved);
-    showToast(`Added ${approved.length} cards.`);
+    showToast(`Added ${approved.length} card${approved.length === 1 ? '' : 's'}.`);
     await renderDeckList();
   });
   wrap.appendChild(commitBtn);

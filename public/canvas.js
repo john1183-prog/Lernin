@@ -82,8 +82,18 @@ const activePointers = new Map();
 let draggedIsland = null;
 let dragMoved = 0;
 
-// LOD threshold — below this zoom, draw simplified territory blobs only.
+// LOD threshold — below this zoom, islands draw as simplified fixed-size
+// dots (see drawIslandSimple) instead of full detail (rings + labels).
+// They are still drawn and still tappable at every zoom level; only the
+// amount of per-island detail changes.
 const LOD_ISLAND_DETAIL_THRESHOLD = 0.5;
+
+// Fixed SCREEN-space radius (not multiplied by zoom) for simplified dots —
+// deliberately not shrinking with zoom, so decks stay easy to see and tap
+// even zoomed most of the way out, rather than shrinking into unclickable
+// specks the way the full-detail island radius (which IS zoom-scaled)
+// would.
+const LOD_SIMPLE_DOT_RADIUS = 10;
 
 // ---------------------------------------------------------------------------
 // Public entry point — same signature shape as study.js's startStudySession,
@@ -282,9 +292,15 @@ function drawTerritory(territory, viewport) {
   ctx.arc(screenCenter.x, screenCenter.y, screenRadius, 0, Math.PI * 2);
   ctx.fill();
 
-  // LOD: below the zoom threshold, this soft blob is ALL we draw for the
-  // territory — no island-level detail, no labels.
-  if (camera.zoom < LOD_ISLAND_DETAIL_THRESHOLD) return;
+  // LOD: below the zoom threshold, skip the expensive per-island detail
+  // (rings, labels) but NEVER skip the island entirely — a previous
+  // version returned here with nothing drawn but the ambient glow, which
+  // meant zooming out even slightly made every deck completely invisible
+  // and untappable, with no indication anything was even there. Below the
+  // threshold, draw a plain solid dot instead: still colored (so progress
+  // is still legible at a glance), still clickable, just without the
+  // detail that only makes sense up close.
+  const showFullDetail = camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD;
 
   for (const island of territory.islands) {
     const islandBounds = {
@@ -294,8 +310,34 @@ function drawTerritory(territory, viewport) {
       maxY: island.pos.y + ISLAND_SPACING
     };
     if (!rectIntersects(islandBounds, viewport)) continue; // per-island culling
-    drawIsland(island);
+    if (showFullDetail) {
+      drawIsland(island);
+    } else {
+      drawIslandSimple(island);
+    }
   }
+}
+
+/**
+ * Minimal zoomed-out marker: a solid colored dot, no rings, no label.
+ * Colors match drawIsland() exactly (same islandColor() call) so panning
+ * across the LOD threshold doesn't change what a deck's color means, only
+ * how much detail is drawn around it. Radius is NOT scaled down with the
+ * rest of the LOD reduction — it stays a fixed, easy-to-hit screen size
+ * regardless of zoom, so decks stay findable and tappable even zoomed
+ * most of the way out, rather than shrinking into unclickable specks.
+ */
+function drawIslandSimple(island) {
+  const screen = worldToScreen(island.pos.x, island.pos.y);
+  const { h, s, l } = islandColor(island.mastery, island.id);
+
+  ctx.beginPath();
+  ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;
+  ctx.arc(screen.x, screen.y, LOD_SIMPLE_DOT_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.stroke();
 }
 
 // Sand (new/untouched) -> ochre (in progress) -> moss (mastered) stays the
@@ -341,6 +383,14 @@ function drawIsland(island) {
   ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;
   ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
   ctx.fill();
+
+  // A thin dark outline so the island reads as a distinct object against
+  // the ambient territory glow behind it, rather than blending into it —
+  // low-mastery islands especially (pale sand color) had very little
+  // contrast against the glow otherwise.
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.stroke();
 
   // Detail rings scale with mastery — more "developed" islands get more
   // concentric detail, all vector, no raster.
@@ -510,10 +560,16 @@ function distance(a, b) {
  * implementation, not two that could drift apart.
  */
 function hitTestIsland(screenX, screenY) {
+  // Must match whichever radius drawTerritory() actually drew this frame —
+  // otherwise, at low zoom, the visible (fixed-size) simplified dot and
+  // its (previously zoom-shrunk) tap target drift apart, and tapping
+  // squarely on a clearly visible dot can miss.
+  const radius = camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD
+    ? ISLAND_RADIUS_BASE * camera.zoom
+    : LOD_SIMPLE_DOT_RADIUS;
   for (const territory of worldTerritories) {
     for (const island of territory.islands) {
       const screen = worldToScreen(island.pos.x, island.pos.y);
-      const radius = ISLAND_RADIUS_BASE * camera.zoom;
       if (distance({ x: screenX, y: screenY }, screen) <= radius) {
         return island;
       }
