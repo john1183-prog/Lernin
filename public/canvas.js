@@ -197,14 +197,13 @@ function computeMastery(cards) {
 // Vector-drawn only (canvas paths/gradients) — no raster image assets.
 // ---------------------------------------------------------------------------
 
-// Mirrors styles.css's --bg / --moss / --ochre / --sand tokens. Canvas 2D
-// can't read CSS custom properties into its drawing calls directly, so
-// these are kept as literal hex constants here — if the palette in
-// styles.css changes, update these to match. (A getComputedStyle-based sync
-// is possible later but isn't worth the added complexity for three colors.)
+// Mirrors styles.css's --bg token. Canvas 2D can't read CSS custom
+// properties into its drawing calls directly, so this is kept as a
+// literal hex constant here — if the palette in styles.css changes,
+// update this to match. (--moss/--ochre don't need a canvas-side copy
+// anymore now that island glows derive their color from islandColor()'s
+// HSL values directly, rather than a fixed rgba() tint.)
 const MAP_BG = '#241D14';
-const MOSS = '76, 148, 68';     // rgb triple, for use in rgba()
-const OCHRE = '181, 129, 60';   // rgb triple
 
 function render() {
   if (!ctx) return; // view was destroyed
@@ -277,29 +276,17 @@ function worldToScreen(wx, wy) {
 }
 
 function drawTerritory(territory, viewport) {
-  const screenCenter = worldToScreen(territory.center.x, territory.center.y);
-  const screenRadius = TERRITORY_SPACING * 0.45 * camera.zoom;
+  // Previously drew one glow gradient centered on territory.center — but a
+  // territory can hold several islands, each offset from that center by
+  // islandPosition()'s jitter, so the glow's brightest point (where the
+  // eye is naturally drawn) very often had NO island there at all, while
+  // the actual circles sat off to the side. That's exactly the "duller
+  // circles don't have the main circle at their center" bug report — the
+  // glow was structurally guaranteed to be off-center from what it was
+  // supposedly highlighting whenever a territory had more than one deck.
+  // Fixed by making the glow per-island (see drawIslandGlow) instead of
+  // per-territory, so it's always concentric with the thing it's under.
 
-  const gradient = ctx.createRadialGradient(
-    screenCenter.x, screenCenter.y, 0,
-    screenCenter.x, screenCenter.y, screenRadius
-  );
-  gradient.addColorStop(0, `rgba(${MOSS}, 0.18)`);
-  gradient.addColorStop(1, `rgba(${MOSS}, 0.02)`);
-
-  ctx.beginPath();
-  ctx.fillStyle = gradient;
-  ctx.arc(screenCenter.x, screenCenter.y, screenRadius, 0, Math.PI * 2);
-  ctx.fill();
-
-  // LOD: below the zoom threshold, skip the expensive per-island detail
-  // (rings, labels) but NEVER skip the island entirely — a previous
-  // version returned here with nothing drawn but the ambient glow, which
-  // meant zooming out even slightly made every deck completely invisible
-  // and untappable, with no indication anything was even there. Below the
-  // threshold, draw a plain solid dot instead: still colored (so progress
-  // is still legible at a glance), still clickable, just without the
-  // detail that only makes sense up close.
   const showFullDetail = camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD;
 
   for (const island of territory.islands) {
@@ -319,6 +306,26 @@ function drawTerritory(territory, viewport) {
 }
 
 /**
+ * Soft radial glow directly under one island, in that island's OWN color
+ * (not a fixed universal color) — reinforces the per-deck hue identity
+ * from islandColor() rather than fighting it with an unrelated tint.
+ * Always centered on the exact same point as the circle drawn on top of
+ * it, by construction, so it can never end up looking like it's
+ * highlighting the wrong spot.
+ */
+function drawIslandGlow(island, radius) {
+  const screen = worldToScreen(island.pos.x, island.pos.y);
+  const { h, s, l } = islandColor(island.mastery, island.id);
+  const gradient = ctx.createRadialGradient(screen.x, screen.y, 0, screen.x, screen.y, radius);
+  gradient.addColorStop(0, `hsla(${h}, ${s}%, ${l}%, 0.28)`);
+  gradient.addColorStop(1, `hsla(${h}, ${s}%, ${l}%, 0)`);
+  ctx.beginPath();
+  ctx.fillStyle = gradient;
+  ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
  * Minimal zoomed-out marker: a solid colored dot, no rings, no label.
  * Colors match drawIsland() exactly (same islandColor() call) so panning
  * across the LOD threshold doesn't change what a deck's color means, only
@@ -330,6 +337,8 @@ function drawTerritory(territory, viewport) {
 function drawIslandSimple(island) {
   const screen = worldToScreen(island.pos.x, island.pos.y);
   const { h, s, l } = islandColor(island.mastery, island.id);
+
+  drawIslandGlow(island, LOD_SIMPLE_DOT_RADIUS * 2.5);
 
   ctx.beginPath();
   ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;
@@ -378,6 +387,8 @@ function drawIsland(island) {
   // drives a subtle hue offset within that — together, color communicates
   // both "how developed is this deck" and "which deck is this," at a glance.
   const { h, s, l } = islandColor(island.mastery, island.id);
+
+  drawIslandGlow(island, radius * 2.2);
 
   ctx.beginPath();
   ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;

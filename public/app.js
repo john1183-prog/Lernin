@@ -1217,15 +1217,64 @@ function buildManualPrompt(text) {
 }
 
 /**
- * Lenient parse of whatever a person pastes back from their AI tool of
- * choice: strips a wrapping ```json fence if present, accepts either
- * {"cards": [...]} or a bare [...] array, and drops (rather than throws on)
- * individual entries missing front/back — different tools are inconsistent
- * about exactly how strictly they follow the requested shape, and a whole
- * batch shouldn't fail over one bad entry.
+ * Fixes the single most common real-world way pasted "JSON" from a chat
+ * model is invalid: literal, unescaped quote marks left inside a string
+ * value (e.g. quoting source text that itself contains quotation marks —
+ * scripture, dialogue, titles — without escaping them as \"). Scans
+ * character-by-character tracking string state; when a quote appears
+ * while already inside a string, it's treated as a legitimate terminator
+ * only if the next non-whitespace character is one that can legally
+ * follow a JSON string (`,` `:` `}` `]`, or end of text) — otherwise it's
+ * content and gets escaped. Already-escaped quotes (\") are left alone.
  *
- * @returns {{cards: Array<{front: string, back: string, type: string}>, skipped: number, summary: string}}
+ * This is a heuristic, not a JSON grammar fix — it cannot distinguish
+ * every possible malformed input from a correctly-escaped one with 100%
+ * certainty, but it's deliberately conservative (only ever ADDS escapes,
+ * never removes structure) and only ever tried as a fallback after a
+ * plain JSON.parse on the same text has already failed.
  */
+function repairUnescapedQuotes(text) {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (!inString) {
+      result += ch;
+      if (ch === '"') inString = true;
+      continue;
+    }
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      const next = text[j];
+      const isTerminator = next === undefined || [',', ':', '}', ']'].includes(next);
+      if (isTerminator) {
+        result += ch;
+        inString = false;
+      } else {
+        result += '\\"';
+      }
+      continue;
+    }
+    result += ch;
+  }
+  return result;
+}
+
 /**
  * Pulls a JSON object/array out of arbitrary pasted text, trying — in
  * order — a fenced ```json block, a fenced ``` block with no language tag,
@@ -1280,7 +1329,16 @@ function extractJsonCandidate(rawText) {
     try {
       return JSON.parse(candidate);
     } catch {
-      continue;
+      // Common real-world failure: the model quoted source text containing
+      // its own quotation marks and forgot to escape them (e.g. quoting
+      // scripture, dialogue, or a title) — technically invalid JSON, but a
+      // narrow, well-defined repair. Only tried as a fallback after a
+      // clean parse fails, never applied blindly.
+      try {
+        return JSON.parse(repairUnescapedQuotes(candidate));
+      } catch {
+        continue;
+      }
     }
   }
   return undefined;
