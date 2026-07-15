@@ -1289,7 +1289,25 @@ function repairUnescapedQuotes(text) {
  * the JSON itself is perfectly valid.
  */
 function extractJsonCandidate(rawText) {
-  const trimmed = rawText.trim();
+  // Strip invisible/zero-width Unicode that Android clipboard commonly
+  // inserts: BOM, ZWNJ, ZWJ, ZWSP, soft hyphen, directional marks, etc.
+  // Non-breaking space -> regular space so JSON whitespace rules apply.
+  // Curly/smart quotes (\u2018-\u201D) that are being used as JSON
+  // structural string delimiters (i.e. the whole document was output by
+  // an AI that auto-typographied its quotes) are normalised to straight
+  // quotes — if they're prose content *inside* an already-delimited
+  // string, JSON.parse handles them fine as regular Unicode characters.
+  let t = rawText
+    .replace(/\uFEFF|\u200B|\u200C|\u200D|\u00AD|\u200E|\u200F|\u202A-\u202E/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u2018|\u2019/g, "'")
+    // Only replace curly double-quotes when they appear to be structural
+    // delimiters (immediately after : , [ { or at the very start of the
+    // text), not when they're legitimately inside a string as prose.
+    .replace(/(?<=[:,\[{\s]|^)\u201C/gm, '"')
+    .replace(/\u201D(?=\s*[:,\]},\n]|$)/gm, '"');
+
+  const trimmed = t.trim();
   const candidates = [];
 
   const jsonFence = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
@@ -1298,9 +1316,10 @@ function extractJsonCandidate(rawText) {
   const anyFence = trimmed.match(/```\s*([\s\S]*?)\s*```/);
   if (anyFence && anyFence[1] !== jsonFence?.[1]) candidates.push(anyFence[1]);
 
-  // Balanced-brace scan: find the first '{' and walk forward tracking
-  // depth (ignoring braces inside string literals) to find its matching
-  // '}', regardless of what text surrounds it.
+  // Balanced-brace scan — only straight double-quotes (U+0022) toggle
+  // inString, since the normalization above converted any structural curly
+  // quotes. Curly quotes that survived normalization are genuinely inside
+  // prose string content and should not affect the depth counter.
   const start = trimmed.indexOf('{');
   if (start !== -1) {
     let depth = 0;
@@ -1310,7 +1329,7 @@ function extractJsonCandidate(rawText) {
       const ch = trimmed[i];
       if (escaped) { escaped = false; continue; }
       if (ch === '\\') { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
+      if (ch === '\u0022') { inString = !inString; continue; } // U+0022 straight " only
       if (inString) continue;
       if (ch === '{') depth++;
       else if (ch === '}') {
@@ -1323,17 +1342,19 @@ function extractJsonCandidate(rawText) {
     }
   }
 
+  // Greedy span: grab the first { and the last } in the text. Simpler
+  // than the brace-depth scanner and handles the common "preamble before
+  // the JSON block" case cleanly when there are no nested objects in the
+  // surrounding prose (the usual case for AI responses).
+  const greedyMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (greedyMatch) candidates.push(greedyMatch[0]);
+
   candidates.push(trimmed);
 
   for (const candidate of candidates) {
     try {
       return JSON.parse(candidate);
     } catch {
-      // Common real-world failure: the model quoted source text containing
-      // its own quotation marks and forgot to escape them (e.g. quoting
-      // scripture, dialogue, or a title) — technically invalid JSON, but a
-      // narrow, well-defined repair. Only tried as a fallback after a
-      // clean parse fails, never applied blindly.
       try {
         return JSON.parse(repairUnescapedQuotes(candidate));
       } catch {
