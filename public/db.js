@@ -7,8 +7,18 @@
 import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
-const DB_NAME = 'RecallDB';
+const DB_NAME = 'Lernin';
 const DB_VERSION = 5;
+
+// Renamed from 'RecallDB' -> 'Lernin' to match the repo/product name.
+// IndexedDB database names can't be renamed in place, so on first load
+// after this change, migrateFromOldDatabaseIfNeeded() (called once from
+// app.js on startup) copies every record across store-by-store into the
+// new database name. Without this, the rename would silently orphan every
+// existing user's decks/cards/review history — the app would just open a
+// blank new database and look like all their data vanished.
+const OLD_DB_NAME = 'RecallDB';
+const MIGRATION_FLAG_KEY = 'migratedFromRecallDB';
 
 // ---------------------------------------------------------------------------
 // Default FSRS metadata stamped onto every newly created card.
@@ -130,6 +140,64 @@ export function getDB() {
   }
 
   return dbPromise;
+}
+
+/**
+ * One-time copy of every record from the old 'RecallDB' database into this
+ * one, run on every app startup (see app.js) but only does real work once
+ * — checks a flag in the settings store and bails immediately after the
+ * first successful run (or first run that finds nothing to migrate).
+ *
+ * Safe by construction: only copies into 'decks' if 'decks' is currently
+ * empty (never overwrites real data), and never throws — a failed or
+ * partial migration just means the flag doesn't get set and it retries
+ * next launch, which is strictly better than blocking startup on it.
+ */
+export async function migrateFromOldDatabaseIfNeeded() {
+  const db = await getDB();
+
+  try {
+    const flag = await db.get('settings', MIGRATION_FLAG_KEY);
+    if (flag) return;
+
+    const existingDeckCount = await db.count('decks');
+    if (existingDeckCount > 0) {
+      // Already has data under the new name (e.g. a fresh install after
+      // this change shipped) — nothing to migrate, just mark it done.
+      await db.put('settings', { key: MIGRATION_FLAG_KEY, migratedAt: Date.now(), copied: false });
+      return;
+    }
+
+    // Opening without a version spec attaches to whatever version already
+    // exists — or silently creates an empty v1 database with no stores if
+    // 'RecallDB' was never used on this device, which is harmless.
+    const oldDb = await openDB(OLD_DB_NAME);
+    const storeNames = ['decks', 'cards', 'reviewLog', 'genQueue', 'territoryLayout', 'settings', 'documents'];
+    let copiedAny = false;
+
+    for (const storeName of storeNames) {
+      if (!oldDb.objectStoreNames.contains(storeName) || !db.objectStoreNames.contains(storeName)) continue;
+      const records = await oldDb.getAll(storeName);
+      if (records.length === 0) continue;
+
+      const tx = db.transaction(storeName, 'readwrite');
+      for (const record of records) {
+        // Don't carry over the old DB's own (nonexistent, but just in
+        // case) migration flag under this same key.
+        if (storeName === 'settings' && record.key === MIGRATION_FLAG_KEY) continue;
+        await tx.store.put(record);
+      }
+      await tx.done;
+      copiedAny = true;
+    }
+
+    oldDb.close();
+    await db.put('settings', { key: MIGRATION_FLAG_KEY, migratedAt: Date.now(), copied: copiedAny });
+  } catch (err) {
+    // Never let a migration failure block the app from loading — worst
+    // case, this just retries on the next launch.
+    console.error('Migration from RecallDB failed, will retry next launch:', err);
+  }
 }
 
 // ---------------------------------------------------------------------------

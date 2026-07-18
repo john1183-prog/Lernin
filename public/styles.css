@@ -1,10 +1,15 @@
 /* styles.css
-   Organic visual identity: warm sand/parchment surfaces in light mode, deep
-   umber/charcoal in dark mode, with three meaning-bearing accents (moss for
-   mastery/growth, ochre for in-progress, terracotta for streaks/warmth)
-   rather than one generic brand color. These same three accents drive
-   canvas.js's island coloring, so the deck list and the territory map read
-   as one world, not two apps stitched together.
+   Lernin visual identity: a confident, open grass-green as the primary
+   brand color, with warm gold as its complement — chosen for a feel of
+   growth, groundedness, and clarity rather than the generic
+   productivity-app blue or a playful "gamified" palette. Same three
+   meaning-bearing accent roles as before (moss for mastery/growth, ochre
+   for in-progress/complement, terracotta for streaks/warmth — just
+   recolored), so nothing downstream that references these variable names
+   needed to change, only their values. These same accents drive
+   canvas.js's island coloring (kept as its own hardcoded HSL constants
+   there, since canvas 2D can't read CSS custom properties directly), so
+   the deck list and the territory map still read as one world.
 
    Fraunces (a warm, slightly hand-cut serif) carries headings; body and UI
    chrome stay on the system sans stack deliberately — one custom font file,
@@ -12,21 +17,21 @@
    this app targets. */
 
 :root {
-  --bg: #F1E7D6;
-  --surface: #FBF5EA;
-  --surface-sunken: #EFE0C4;
-  --ink: #3A2E22;
-  --ink-sub: #8A7860;
-  --border: #E4D3B6;
-  --border-strong: #D8C29A;
+  --bg: #F3F8F4;
+  --surface: #FAFDFA;
+  --surface-sunken: #EAF3EB;
+  --ink: #16241A;
+  --ink-sub: #5C6F5D;
+  --border: #D7E6D9;
+  --border-strong: #BFD6C2;
 
-  --moss: #4F7A4A;
-  --moss-ink: #1F3A1C;
-  --ochre: #B5813C;
-  --ochre-ink: #4A3512;
-  --terracotta: #8A5A3B;
-  --terracotta-ink: #3D2814;
-  --sand: #C9B58C;
+  --moss: #2C6B35;
+  --moss-ink: #F2FAF3;
+  --ochre: #C47B20;
+  --ochre-ink: #3D2600;
+  --terracotta: #A6572E;
+  --terracotta-ink: #FFF4EC;
+  --sand: #D7E2D2;
 
   --danger: #B5482E;
   --danger-ink: #fff;
@@ -39,24 +44,24 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #241D14;
-    --surface: #2E2519;
-    --surface-sunken: #1C1610;
-    --ink: #F0E6D2;
-    --ink-sub: #B3A488;
-    --border: #453A28;
-    --border-strong: #59492F;
+    --bg: #0F1810;
+    --surface: #16221A;
+    --surface-sunken: #0B120C;
+    --ink: #E4F1E5;
+    --ink-sub: #93A895;
+    --border: #2A3B2B;
+    --border-strong: #3C523D;
 
-    --moss: #7BAE6F;
-    --moss-ink: #E8F5E4;
-    --ochre: #D9A85C;
-    --ochre-ink: #3A2A0E;
-    --terracotta: #C88A63;
-    --terracotta-ink: #2E1B0F;
-    --sand: #8A7654;
+    --moss: #6FBE78;
+    --moss-ink: #0C230E;
+    --ochre: #E5A94A;
+    --ochre-ink: #3A2500;
+    --terracotta: #DC8B5C;
+    --terracotta-ink: #331500;
+    --sand: #3A4A3B;
 
-    --danger: #D97D63;
-    --danger-ink: #2E1109;
+    --danger: #E0604A;
+    --danger-ink: #2A0800;
 
     color-scheme: dark;
   }

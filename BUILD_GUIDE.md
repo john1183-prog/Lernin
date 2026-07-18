@@ -1,4 +1,4 @@
-# RecallDB — Full Build Guide (Now → Completion)
+# Lernin — Full Build Guide (Now → Completion)
 
 Status check: `db.js` is done. Everything below is the path from here to a shippable app, in the order the spec mandates. Don't skip ahead to `canvas.js` — it's built last on purpose so you always have a working app underneath it.
 

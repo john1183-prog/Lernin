@@ -110,12 +110,33 @@ export async function initCanvasView(targetContainer, opts = {}) {
   container.appendChild(canvasEl);
 
   ctx = canvasEl.getContext('2d');
+  refreshThemeColors();
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
 
   await buildWorldModel();
   attachGestureHandlers();
   requestAnimationFrame(render);
+}
+
+/**
+ * Reads --bg and --ink from CSS (styles.css is the single source of truth
+ * for the app's palette) into module-level vars for canvas 2D to use,
+ * since canvas fillStyle/strokeStyle can't reference CSS custom
+ * properties directly. Called once per view-open rather than every frame
+ * — cheap enough, and avoids a getComputedStyle call 60 times a second
+ * for values that only change if the OS theme changes mid-session (rare,
+ * and a fresh view-open re-reads it anyway).
+ *
+ * This replaces two previously hardcoded hex constants that had silently
+ * drifted out of sync with styles.css's actual palette (one was still the
+ * *original* dark theme's colors even after two full palette changes) —
+ * reading live from CSS means that can't happen again.
+ */
+function refreshThemeColors() {
+  const style = getComputedStyle(document.documentElement);
+  MAP_BG = style.getPropertyValue('--bg').trim() || MAP_BG;
+  MAP_INK = style.getPropertyValue('--ink').trim() || MAP_INK;
 }
 
 export function destroyCanvasView() {
@@ -203,7 +224,8 @@ function computeMastery(cards) {
 // update this to match. (--moss/--ochre don't need a canvas-side copy
 // anymore now that island glows derive their color from islandColor()'s
 // HSL values directly, rather than a fixed rgba() tint.)
-const MAP_BG = '#241D14';
+let MAP_BG = '#0F1810';   // fallback only — refreshThemeColors() overwrites this from CSS on view init
+let MAP_INK = '#E4F1E5';  // fallback only — same
 
 function render() {
   if (!ctx) return; // view was destroyed
@@ -352,11 +374,14 @@ function drawIslandSimple(island) {
 // Sand (new/untouched) -> ochre (in progress) -> moss (mastered) stays the
 // backbone signal — same three stops as the mastery bar on deck tiles, so a
 // glance at the map and a glance at the deck list agree on what "developed"
-// looks like. Defined in HSL (not RGB) so a small per-deck hue jitter can be
-// layered on top without a manual RGB<->HSL conversion.
-const SAND_HSL = { h: 40, s: 30, l: 68 };
-const OCHRE_HSL = { h: 32, s: 50, l: 48 };
-const MOSS_HSL = { h: 115, s: 40, l: 40 };
+// looks like. Values match styles.css's --sand/--ochre/--moss (converted to
+// HSL here since canvas fillStyle needs a literal string, not a CSS var) —
+// SAND is deliberately a muted neutral rather than a pale version of MOSS,
+// so "untouched" and "mastered" stay visually distinct at a glance instead
+// of both reading as "green, just different shades."
+const SAND_HSL = { h: 90, s: 15, l: 62 };
+const OCHRE_HSL = { h: 33, s: 65, l: 50 };
+const MOSS_HSL = { h: 129, s: 42, l: 38 };
 
 // Every fresh deck starts at mastery 0, which without this would make every
 // island on the map an identical dusty-sand dot — the map reads as "blank"
@@ -415,7 +440,7 @@ function drawIsland(island) {
   }
 
   if (camera.zoom > 0.8) {
-    ctx.fillStyle = '#F0E6D2';
+    ctx.fillStyle = MAP_INK;
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillText(island.title, screen.x, screen.y + radius + 14);

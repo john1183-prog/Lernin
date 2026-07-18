@@ -1,4 +1,4 @@
-# RecallDB — Pre-Ship Test Checklist
+# Lernin — Pre-Ship Test Checklist
 
 I can't run these myself — they need a real device/browser and your deployed
 backend. Check them off as you go; each one maps to something specific I
