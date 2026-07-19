@@ -288,6 +288,15 @@ button { font-family: inherit; cursor: pointer; }
   font-weight: 500;
 }
 
+.import-deck-btn {
+  border: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
 .view-toggle-btn {
   border: 0.5px solid var(--border);
   background: transparent;

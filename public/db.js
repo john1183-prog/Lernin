@@ -809,10 +809,162 @@ export async function wipeAllData() {
 }
 
 // ---------------------------------------------------------------------------
-// Documents — the original uploaded PDF Blob, kept alongside the deck it
-// was imported into so it can be listed and re-opened later (see app.js's
-// "Documents" view). Purely storage/retrieval here; extraction lives in
-// pdf-extract.js and card generation in api.js — neither touches this
+// Deck export / import — JSON backup/restore and deck-sharing. Export never
+// mutates anything; import always creates a brand-new deck with fresh IDs
+// (never merges into or overwrites an existing deck), so importing the same
+// file twice just produces two decks rather than silently colliding or
+// clobbering data. This is also the safety net for future schema changes —
+// exporting before a risky migration means there's always a plain JSON copy
+// outside IndexedDB entirely.
+// ---------------------------------------------------------------------------
+
+const EXPORT_FORMAT_VERSION = 1;
+
+/**
+ * @param {string} deckId
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeProgress] - default true. false produces a
+ *        "fresh copy" export (cards only, no FSRS state or review history)
+ *        suitable for sharing with someone else — they get the cards, not
+ *        your study progress.
+ * @returns {Promise<object>} plain JSON-serializable object
+ */
+export async function exportDeckData(deckId, { includeProgress = true } = {}) {
+  const db = await getDB();
+  const deck = await db.get('decks', deckId);
+  if (!deck) throw new Error(`No deck found with id ${deckId}`);
+
+  const cards = await db.getAllFromIndex('cards', 'by_deckId', deckId);
+  const documents = await db.getAllFromIndex('documents', 'by_deckId', deckId);
+
+  let reviewLog = [];
+  if (includeProgress && cards.length > 0) {
+    const perCard = await Promise.all(cards.map((c) => db.getAllFromIndex('reviewLog', 'by_cardId', c.id)));
+    reviewLog = perCard.flat();
+  }
+
+  return {
+    formatVersion: EXPORT_FORMAT_VERSION,
+    exportedAt: Date.now(),
+    sourceApp: 'Lernin',
+    includesProgress: includeProgress,
+    deck: { title: deck.title, courseTerritoryId: deck.courseTerritoryId },
+    cards: cards.map((c) => ({
+      id: c.id, // kept for reviewLog cross-referencing below; import mints a fresh id regardless
+      front: c.front,
+      back: c.back,
+      type: c.type,
+      ...(includeProgress ? {
+        state: c.state,
+        difficulty: c.difficulty,
+        stability: c.stability,
+        reps: c.reps,
+        lapses: c.lapses,
+        last_review: c.last_review,
+        due_date: c.due_date,
+        suspended: c.suspended,
+        leech: c.leech || false
+      } : {})
+    })),
+    reviewLog: reviewLog.map((r) => ({ cardId: r.cardId, grade: r.grade, reviewedAt: r.reviewedAt, elapsedDays: r.elapsedDays })),
+    documents: documents.map((d) => ({ filename: d.filename, summary: d.summary, size: d.size, uploadedAt: d.uploadedAt }))
+  };
+}
+
+/**
+ * Imports a previously-exported deck as a brand-new deck (fresh deck id,
+ * fresh card ids — old ids in the file are only used to remap reviewLog
+ * entries during this one operation, never reused). Throws with a
+ * human-readable message on anything that doesn't look like a Lernin
+ * deck export, so app.js can show it directly rather than a generic
+ * "import failed."
+ *
+ * @param {object} parsed - JSON.parse() of an exported file's contents
+ * @returns {Promise<{deckId: string, cardCount: number}>}
+ */
+export async function importDeckData(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('That doesn\u2019t look like a valid export file.');
+  }
+  if (parsed.formatVersion !== EXPORT_FORMAT_VERSION) {
+    throw new Error(`Unsupported export format (expected version ${EXPORT_FORMAT_VERSION}, got ${parsed.formatVersion ?? 'none'}).`);
+  }
+  if (!parsed.deck?.title || !Array.isArray(parsed.cards)) {
+    throw new Error('This file is missing the deck title or card list.');
+  }
+
+  const db = await getDB();
+  const newDeckId = cryptoRandomIdInDb();
+  const idMap = new Map(); // old exported card id -> newly minted card id
+
+  await db.put('decks', {
+    id: newDeckId,
+    title: parsed.deck.title,
+    courseTerritoryId: parsed.deck.courseTerritoryId || 'uncategorized',
+    createdAt: Date.now()
+  });
+
+  const cardTx = db.transaction('cards', 'readwrite');
+  for (const c of parsed.cards) {
+    const newCardId = cryptoRandomIdInDb();
+    if (c.id) idMap.set(c.id, newCardId);
+    await cardTx.store.put({
+      id: newCardId,
+      deckId: newDeckId,
+      front: c.front,
+      back: c.back,
+      type: c.type || 'basic',
+      createdAt: Date.now(),
+      state: c.state ?? 'new',
+      difficulty: c.difficulty ?? 0,
+      stability: c.stability ?? 0,
+      reps: c.reps ?? 0,
+      lapses: c.lapses ?? 0,
+      last_review: c.last_review ?? null,
+      due_date: c.due_date ?? Date.now(),
+      suspended: c.suspended ?? false,
+      leech: c.leech ?? false
+    });
+  }
+  await cardTx.done;
+
+  if (Array.isArray(parsed.reviewLog) && parsed.reviewLog.length > 0) {
+    const logTx = db.transaction('reviewLog', 'readwrite');
+    for (const entry of parsed.reviewLog) {
+      const remappedCardId = idMap.get(entry.cardId);
+      if (!remappedCardId) continue; // orphaned reference in a hand-edited file — skip rather than fail the whole import
+      await logTx.store.add({ cardId: remappedCardId, grade: entry.grade, reviewedAt: entry.reviewedAt, elapsedDays: entry.elapsedDays ?? null });
+    }
+    await logTx.done;
+  }
+
+  if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
+    const docTx = db.transaction('documents', 'readwrite');
+    for (const d of parsed.documents) {
+      await docTx.store.put({
+        id: cryptoRandomIdInDb(),
+        deckId: newDeckId,
+        filename: d.filename,
+        summary: d.summary || '',
+        size: d.size,
+        uploadedAt: d.uploadedAt || Date.now()
+      });
+    }
+    await docTx.done;
+  }
+
+  return { deckId: newDeckId, cardCount: parsed.cards.length };
+}
+
+function cryptoRandomIdInDb() {
+  return (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Documents — each uploaded PDF's filename + an LLM-written summary, kept
+// alongside the deck it was imported into (see app.js's "Documents" and
+// "Course Recap" views). The original file itself is never stored — see
+// saveDocument's doc comment for why.
 // store directly.
 // ---------------------------------------------------------------------------
 

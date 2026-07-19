@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -75,6 +75,13 @@ async function renderDeckList() {
   newDeckBtn.textContent = '+ New deck';
   newDeckBtn.addEventListener('click', () => openDeckModal());
   header.appendChild(newDeckBtn);
+
+  const importBtn = document.createElement('button');
+  importBtn.className = 'import-deck-btn';
+  importBtn.textContent = 'Import';
+  importBtn.setAttribute('aria-label', 'Import a deck from a file');
+  importBtn.addEventListener('click', () => triggerDeckImport());
+  header.appendChild(importBtn);
 
   const settingsBtn = document.createElement('button');
   settingsBtn.className = 'settings-btn';
@@ -276,6 +283,7 @@ async function buildDeckCard(deck) {
   wrapper.appendChild(card);
   wrapper.appendChild(buildImportButton(deck.id));
   wrapper.appendChild(buildEditDeckButton(deck));
+  wrapper.appendChild(buildExportDeckButton(deck));
 
   if (documents.length > 0) {
     wrapper.appendChild(buildDocumentsButton(deck, documents.length));
@@ -298,6 +306,116 @@ function buildEditDeckButton(deck) {
     openDeckModal(deck);
   });
   return btn;
+}
+
+// ---------------------------------------------------------------------------
+// Deck export / import — JSON backup and restore, and deck sharing. See
+// db.js's exportDeckData/importDeckData for the actual data handling; this
+// section is just the file-download/file-read UI glue around it.
+// ---------------------------------------------------------------------------
+
+function buildExportDeckButton(deck) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-edit-btn';
+  btn.textContent = 'Export';
+  btn.setAttribute('aria-label', `Export ${deck.title}`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openExportOptionsModal(deck);
+  });
+  return btn;
+}
+
+function openExportOptionsModal(deck) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <h2>Export "${escapeHtml(deck.title)}"</h2>
+    <p class="settings-key-help">Choose what to include in the exported file.</p>
+  `;
+
+  const optionsWrap = document.createElement('div');
+  optionsWrap.className = 'modal-label';
+
+  const fullLabel = document.createElement('label');
+  fullLabel.className = 'settings-provider-option';
+  fullLabel.style.display = 'flex';
+  fullLabel.innerHTML = `<input type="radio" name="export-mode" value="full" checked /> Full backup (includes your study progress)`;
+  optionsWrap.appendChild(fullLabel);
+
+  const shareLabel = document.createElement('label');
+  shareLabel.className = 'settings-provider-option';
+  shareLabel.style.display = 'flex';
+  shareLabel.style.marginTop = '8px';
+  shareLabel.innerHTML = `<input type="radio" name="export-mode" value="share" /> Share copy (cards only, no progress \u2014 for sending to someone else)`;
+  optionsWrap.appendChild(shareLabel);
+
+  modal.appendChild(optionsWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'modal-cancel-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancelBtn);
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'modal-save-btn';
+  confirmBtn.textContent = 'Export';
+  confirmBtn.addEventListener('click', async () => {
+    const mode = modal.querySelector('input[name="export-mode"]:checked')?.value || 'full';
+    overlay.remove();
+    await downloadDeckExport(deck, mode === 'full');
+  });
+  actions.appendChild(confirmBtn);
+
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function downloadDeckExport(deck, includeProgress) {
+  const data = await exportDeckData(deck.id, { includeProgress });
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
+  const safeName = deck.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'deck';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lernin-${safeName}${includeProgress ? '' : '-share'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  showToast(`Exported ${data.cards.length} card${data.cards.length === 1 ? '' : 's'}.`);
+}
+
+function triggerDeckImport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const result = await importDeckData(parsed);
+      showToast(`Imported "${parsed.deck.title}" \u2014 ${result.cardCount} card${result.cardCount === 1 ? '' : 's'}.`);
+      await renderDeckList();
+    } catch (err) {
+      showToast(err.message?.includes('JSON') ? 'That file isn\u2019t valid JSON.' : (err.message || 'Import failed.'));
+    }
+  });
+  input.click();
 }
 
 function buildDocumentsButton(deck, count) {

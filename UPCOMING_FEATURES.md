@@ -23,14 +23,6 @@ card. Retention rate over time, mastery breakdown per deck, a proper
 review-history chart, "readiness" signal ahead of an exam. No schema
 changes needed — this is entirely a new view over existing data.
 
-### Export / import decks
-JSON export of a deck (cards + FSRS state + review log, optionally
-excluding review log for a "fresh copy to share" mode) and a matching
-import. High value for: backing up before the risky changes we keep
-making, sharing a deck with a classmate, moving between devices without
-relying on the RecallDB→Lernin-style migration path working perfectly
-every time.
-
 ### Onboarding / empty states
 First-time open currently shows a mostly-blank home screen. Needs: a
 first-run explainer (what this app does, BYOK vs. manual-paste mode,
@@ -142,5 +134,6 @@ per-document summaries (not full-file storage), Course Recap view,
 BYOK (Claude/Gemini/manual-paste), streaks with freeze tokens,
 session-end summary, leech review with history context, deck
 edit/rename/re-territory, hard reload + storage usage in Settings,
-Reset-everything, RecallDB→Lernin rename with data migration, and the
-green/gold rebrand.
+Reset-everything, RecallDB→Lernin rename with data migration, the
+green/gold rebrand, and deck export/import (JSON, with a full-backup vs.
+progress-free share-copy choice).
