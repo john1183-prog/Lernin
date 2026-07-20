@@ -633,6 +633,86 @@ export async function getReviewStats(now) {
   };
 }
 
+/**
+ * Aggregated stats for a dedicated statistics dashboard view (app.js) —
+ * broader and slower than getReviewStats(), which is called on basically
+ * every home-screen render and stays deliberately cheap. This is only
+ * called when the dashboard view is actually opened.
+ *
+ * @param {number} [now] - override "now" (epoch ms), mainly for testing
+ * @returns {Promise<{
+ *   retention30d: number|null,      -- % of reviews graded good/easy in the last 30 days, null if none
+ *   dailyCounts30d: number[],       -- 30 entries, oldest to newest, ending today
+ *   longestStreak365d: number,      -- longest run of consecutive studied days found in the past year
+ *   totalReviewsLifetime: number,   -- full reviewLog count, not bounded to any window
+ *   totalCardsStudied: number,      -- cards with at least one review, across every deck
+ *   leechCount: number,             -- suspended cards, across every deck
+ *   perDeck: Array<{deckId, title, total, newCount, inProgress, mastered, dueToday}>
+ * }>}
+ */
+export async function getDashboardStats(now) {
+  const db = await getDB();
+  const nowMs = now ?? Date.now();
+
+  const decks = await getAllDecks();
+  const allCards = await db.getAll('cards');
+
+  const perDeck = await Promise.all(decks.map(async (deck) => {
+    const counts = await getDeckStateCounts(deck.id);
+    const due = await getCardsDueTodayOrEarlier({ deckId: deck.id, now: nowMs });
+    return { deckId: deck.id, title: deck.title, ...counts, dueToday: due.length };
+  }));
+
+  const totalCardsStudied = allCards.filter((c) => (c.reps || 0) > 0).length;
+  const leechCount = allCards.filter((c) => c.suspended || c.state === 'suspended').length;
+  const totalReviewsLifetime = await db.count('reviewLog');
+
+  // 30-day window for retention + the daily activity chart.
+  const lookback30Start = startOfLocalDay(nowMs - 30 * 24 * 60 * 60 * 1000);
+  const entries30d = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(lookback30Start));
+
+  const goodOrEasy = entries30d.filter((e) => e.grade === 'good' || e.grade === 'easy').length;
+  const retention30d = entries30d.length > 0 ? Math.round((goodOrEasy / entries30d.length) * 100) : null;
+
+  const dailyCounts30d = [];
+  for (let i = 29; i >= 0; i--) {
+    const dayStart = startOfLocalDay(nowMs - i * 24 * 60 * 60 * 1000);
+    const key = localDayKey(dayStart);
+    dailyCounts30d.push(entries30d.filter((e) => localDayKey(e.reviewedAt) === key).length);
+  }
+
+  // Longest streak found in the past year — bounded lookback so this stays
+  // a single indexed range query rather than scanning a lifetime's worth
+  // of reviewLog on every dashboard open. "Longest ever" would need an
+  // unbounded scan; 365 days is a reasonable practical ceiling for what
+  // someone actually wants to see reflected back to them.
+  const lookback365Start = startOfLocalDay(nowMs - 365 * 24 * 60 * 60 * 1000);
+  const entries365d = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(lookback365Start));
+  const reviewedDayKeys365 = new Set(entries365d.map((e) => localDayKey(e.reviewedAt)));
+
+  let longestStreak365d = 0;
+  let currentRun = 0;
+  const todayStart = startOfLocalDay(nowMs);
+  for (let cursor = lookback365Start; cursor <= todayStart; cursor += 24 * 60 * 60 * 1000) {
+    if (reviewedDayKeys365.has(localDayKey(cursor))) {
+      currentRun++;
+      longestStreak365d = Math.max(longestStreak365d, currentRun);
+    } else {
+      currentRun = 0;
+    }
+  }
+
+  return {
+    retention30d,
+    dailyCounts30d,
+    longestStreak365d,
+    totalReviewsLifetime,
+    totalCardsStudied,
+    leechCount,
+    perDeck
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Streak freezes — a limited resource (earned by keeping a streak going,
 // spent to protect it) rather than the streak silently resetting to 0 the

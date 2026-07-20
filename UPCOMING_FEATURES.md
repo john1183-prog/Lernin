@@ -16,13 +16,6 @@ not a queue.
 
 These can each be picked up independently, in any order.
 
-### Statistics dashboard
-Surface the data that's already being tracked (`reviewLog`, mastery per
-deck, streaks) in a real view instead of just the home-screen summary
-card. Retention rate over time, mastery breakdown per deck, a proper
-review-history chart, "readiness" signal ahead of an exam. No schema
-changes needed — this is entirely a new view over existing data.
-
 ### Onboarding / empty states
 First-time open currently shows a mostly-blank home screen. Needs: a
 first-run explainer (what this app does, BYOK vs. manual-paste mode,
@@ -135,5 +128,33 @@ BYOK (Claude/Gemini/manual-paste), streaks with freeze tokens,
 session-end summary, leech review with history context, deck
 edit/rename/re-territory, hard reload + storage usage in Settings,
 Reset-everything, RecallDB→Lernin rename with data migration, the
-green/gold rebrand, and deck export/import (JSON, with a full-backup vs.
-progress-free share-copy choice).
+green/gold rebrand, deck export/import (JSON, with a full-backup vs.
+progress-free share-copy choice), and a statistics dashboard (30-day
+retention, longest streak, per-deck breakdown, activity chart).
+
+---
+
+## Active — real user feedback, not yet fully addressed
+
+### Onboarding / "I don't know what this is"
+Multiple people reported not understanding what the app does or how to
+get started. This is the same as the onboarding/empty-states item above,
+but escalated from "nice to have" to "actively hurting adoption" based on
+direct feedback. Needs its own pass: what does someone see in their
+first 30 seconds, and does it explain BYOK vs. manual-paste mode clearly
+enough to get through generating their first deck without confusion.
+
+### iOS Safari PDF upload (fixed, needs real-device confirmation)
+A user reported PDF import not working on iPhone Safari. Root cause:
+pdf-extract.js was loading pdf.js *and its Worker script* from jsDelivr
+at runtime — cross-origin Worker/module-worker loading is a long-standing
+source of browser-specific failures, and WebKit has repeatedly been
+named in pdf.js's own issue tracker for exactly this failure mode
+("Setting up fake worker failed", worker not loading on Safari/iOS).
+Fixed by vendoring pdf.js locally (same pattern as idb/ts-fsrs), so the
+worker now loads same-origin. Not pre-cached in the service worker's
+install step (adds ~1.7MB, most installs may never import a PDF) — the
+existing opportunistic same-origin caching picks it up after first use.
+Could not be tested end-to-end in the working environment (pdf.js's
+browser build needs real DOM globals unavailable in plain Node) — needs
+confirmation on an actual iPhone.

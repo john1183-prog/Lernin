@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -193,6 +193,15 @@ async function buildHomeStats(decks) {
     sparkRow.appendChild(bar);
   });
   statsCard.appendChild(sparkRow);
+
+  const viewStatsLink = document.createElement('button');
+  viewStatsLink.className = 'view-full-stats-btn';
+  viewStatsLink.textContent = 'View full statistics \u2192';
+  viewStatsLink.addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderStatsView();
+  });
+  statsCard.appendChild(viewStatsLink);
 
   wrap.appendChild(statsCard);
 
@@ -624,6 +633,102 @@ function buildLeechRow(deck, card, history = []) {
 // server-side — see api/index.py's _resolve_credentials(). Manual mode
 // never talks to our backend at all — see renderManualPasteView().
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Statistics dashboard — a broader view over the same review data the home
+// screen's stats card summarizes, via db.js's getDashboardStats(). Read-only:
+// no actions here beyond navigating back.
+// ---------------------------------------------------------------------------
+
+async function renderStatsView() {
+  const stats = await getDashboardStats();
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'stats-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = 'Statistics';
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  // --- summary metrics ---
+  const metricsGrid = document.createElement('div');
+  metricsGrid.className = 'stats-metrics-grid';
+
+  const metrics = [
+    { label: '30-day retention', value: stats.retention30d !== null ? `${stats.retention30d}%` : '\u2014' },
+    { label: 'Longest streak', value: `${stats.longestStreak365d}d` },
+    { label: 'Total reviews', value: stats.totalReviewsLifetime.toLocaleString() },
+    { label: 'Cards studied', value: stats.totalCardsStudied.toLocaleString() },
+    { label: 'Leeches', value: stats.leechCount.toLocaleString() }
+  ];
+  for (const m of metrics) {
+    const card = document.createElement('div');
+    card.className = 'stats-metric-card';
+    card.innerHTML = `<div class="stats-metric-value">${m.value}</div><div class="stats-metric-label">${m.label}</div>`;
+    metricsGrid.appendChild(card);
+  }
+  wrap.appendChild(metricsGrid);
+
+  // --- 30-day activity chart ---
+  const chartHeading = document.createElement('h3');
+  chartHeading.className = 'stats-section-heading';
+  chartHeading.textContent = 'Last 30 days';
+  wrap.appendChild(chartHeading);
+
+  const chartRow = document.createElement('div');
+  chartRow.className = 'stats-chart-row';
+  const maxDaily = Math.max(1, ...stats.dailyCounts30d);
+  stats.dailyCounts30d.forEach((count, i) => {
+    const daysAgo = stats.dailyCounts30d.length - 1 - i;
+    const bar = document.createElement('div');
+    bar.className = 'stats-chart-bar' + (daysAgo === 0 ? ' today' : '');
+    bar.style.height = `${Math.max(6, (count / maxDaily) * 100)}%`;
+    bar.setAttribute('aria-label', `${daysAgo === 0 ? 'Today' : daysAgo + ' days ago'}: ${count} review${count === 1 ? '' : 's'}`);
+    chartRow.appendChild(bar);
+  });
+  wrap.appendChild(chartRow);
+
+  // --- per-deck breakdown ---
+  const deckHeading = document.createElement('h3');
+  deckHeading.className = 'stats-section-heading';
+  deckHeading.textContent = 'By deck';
+  wrap.appendChild(deckHeading);
+
+  if (stats.perDeck.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'leech-view-empty';
+    empty.textContent = 'No decks yet.';
+    wrap.appendChild(empty);
+  } else {
+    const deckList = document.createElement('div');
+    deckList.className = 'stats-deck-list';
+    for (const d of stats.perDeck) {
+      const row = document.createElement('div');
+      row.className = 'stats-deck-row';
+      row.innerHTML = `
+        <div class="stats-deck-row-title">${escapeHtml(d.title)}</div>
+        <div class="stats-deck-row-meta">
+          ${d.total} card${d.total === 1 ? '' : 's'} \u00b7 ${d.mastered} mastered \u00b7 ${d.dueToday} due today
+        </div>
+      `;
+      deckList.appendChild(row);
+    }
+    wrap.appendChild(deckList);
+  }
+
+  root.appendChild(wrap);
+}
 
 async function renderSettingsView() {
   const existing = await getApiConfig();
