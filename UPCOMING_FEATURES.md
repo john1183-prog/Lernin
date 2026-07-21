@@ -31,17 +31,15 @@ dedicated `cardRelationships` store (not arrays embedded on the card
 record — see `db.js`'s v6 migration comment for why) with `dependsOn`/
 `related` links, indexed both directions, deliberately allowed to cross
 decks. A "+ Card" manual creation view supporting all three types plus a
-live-search relationship picker. All of it tested end-to-end against
-real IndexedDB semantics (fake-indexeddb), not just read through.
+live-search relationship picker. Rich rendering in Study Mode — formula,
+variables, assumptions, common mistakes, and applications all show on
+the back reveal (plain text/monospace, not real math typesetting —
+revisit if that turns out insufficient once people are actually using
+formula cards). All of it tested end-to-end against real IndexedDB
+semantics (fake-indexeddb) or, for the rendering, against realistic
+card data including HTML-unsafe characters — not just read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
-
-### Rich card rendering in Study Mode
-Formula cards currently render with plain front/back like any other card
-— `study.js` doesn't yet surface `formula`/`variables`/`commonMistakes`
-during review. Decided: plain text/monospace for v1 rather than real math
-typesetting (KaTeX) — revisit if that turns out insufficient once people
-are actually using formula cards.
 
 ### Improved PDF-to-rich-card pipeline
 `api/index.py`'s generation prompts still only populate
@@ -109,10 +107,10 @@ progress-free share-copy choice), a statistics dashboard (30-day
 retention, longest streak, per-deck breakdown, activity chart), a
 persistent, sectioned in-app Help view (reachable via the header's "?"
 button and from a rewritten first-run empty state) covering what the app
-is and how each feature works, and a rich card data layer (formula card
-type, cross-deck dependsOn/related relationships, manual card creation
-with a relationship picker) — Study Mode rendering and the AI generation
-pipeline don't use these fields yet, see Tier 2 above.
+is and how each feature works, and rich formula cards end-to-end (schema,
+cross-deck dependsOn/related relationships, manual creation with a
+relationship picker, and Study Mode rendering) — only the AI generation
+pipeline doesn't populate these fields yet, see Tier 2 above.
 
 ---
 

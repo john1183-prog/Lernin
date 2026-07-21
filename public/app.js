@@ -710,11 +710,11 @@ function renderHelpView() {
     },
     {
       title: 'Formula cards and relationships',
-      body: `"+ Card" lets you add a Basic, Cloze, or Formula card. Formula cards have extra structured fields: the formula itself, its variables (symbol + meaning), assumptions it relies on, common mistakes, and real-world applications — useful for STEM material where the "answer" is more than a single fact.
+      body: `"+ Card" lets you add a Basic, Cloze, or Formula card. Formula cards have extra structured fields: the formula itself, its variables (symbol + meaning), assumptions it relies on, common mistakes, and real-world applications — useful for STEM material where the "answer" is more than a single fact. All of this shows up when you reveal the answer during a review, after the plain question like any other card — formulas render as plain text/monospace, not typeset math.
       <br><br>
       Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
       <br><br>
-      This is the data layer for it — a dedicated relationship explorer and prerequisite-aware study planner are planned but not built yet (see the repo's UPCOMING_FEATURES.md), and formulas currently render as plain text in Study Mode, not typeset math.`
+      Relationships aren't surfaced anywhere yet beyond creation — a dedicated relationship explorer and prerequisite-aware study planner are planned but not built (see the repo's UPCOMING_FEATURES.md).`
     },
     {
       title: 'Why you bring your own AI key',

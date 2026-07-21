@@ -263,7 +263,49 @@ function renderBack(card) {
       `<span class="cloze-answer">${escapeHtml(answer)}</span>`
     );
   }
+  if (card.type === 'formula') {
+    return renderFormulaBack(card);
+  }
   return escapeHtml(card.back);
+}
+
+/**
+ * Formula cards' extra fields only appear on the back, after grading
+ * yourself against the plain front/back like any other card — showing
+ * commonMistakes/applications up front would be a spoiler. Plain
+ * text/monospace for the formula itself, not real math typesetting
+ * (KaTeX) — a deliberate v1 scope decision, revisit if this turns out
+ * insufficient once formula cards are in real use.
+ */
+function renderFormulaBack(card) {
+  let html = '';
+
+  if (card.back) {
+    html += `<div class="formula-back-explanation">${escapeHtml(card.back)}</div>`;
+  }
+  if (card.formula) {
+    html += `<div class="formula-expression">${escapeHtml(card.formula)}</div>`;
+  }
+  if (Array.isArray(card.variables) && card.variables.length > 0) {
+    const items = card.variables
+      .filter((v) => v.symbol || v.meaning)
+      .map((v) => `<li><strong>${escapeHtml(v.symbol)}</strong> \u2014 ${escapeHtml(v.meaning)}</li>`)
+      .join('');
+    if (items) {
+      html += `<div class="formula-variables"><div class="formula-section-label">Variables</div><ul>${items}</ul></div>`;
+    }
+  }
+  if (card.assumptions) {
+    html += `<div class="formula-hint"><div class="formula-section-label">Assumptions</div>${escapeHtml(card.assumptions)}</div>`;
+  }
+  if (card.commonMistakes) {
+    html += `<div class="formula-hint"><div class="formula-section-label">Common mistakes</div>${escapeHtml(card.commonMistakes)}</div>`;
+  }
+  if (card.applications) {
+    html += `<div class="formula-hint"><div class="formula-section-label">Applications</div>${escapeHtml(card.applications)}</div>`;
+  }
+
+  return html || '<em>(no back content for this card)</em>';
 }
 
 function escapeHtml(str) {

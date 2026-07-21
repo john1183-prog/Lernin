@@ -707,6 +707,56 @@ button { font-family: inherit; cursor: pointer; }
 .cloze-blank { color: var(--ochre); font-weight: 600; }
 .cloze-answer { color: var(--moss); font-weight: 600; }
 
+.formula-back-explanation {
+  margin-bottom: 12px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.formula-expression {
+  font-family: monospace;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--moss);
+  background: var(--surface-sunken);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.formula-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-sub);
+  margin-bottom: 4px;
+}
+
+.formula-variables {
+  margin-bottom: 14px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.formula-variables ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.formula-variables li { margin-bottom: 4px; }
+
+.formula-hint {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ink-sub);
+  line-height: 1.5;
+}
+
 /* Thumb-reachable: reveal + grade controls pinned to the bottom, not
    wherever the card content happens to end. */
 .study-reveal-btn, .study-grade-bar {
