@@ -849,6 +849,128 @@ button { font-family: inherit; cursor: pointer; }
   margin-top: 8px;
 }
 
+/* --- Manual card creation (app.js) --- */
+
+.new-card-view { padding: 16px; max-width: 560px; margin: 0 auto; }
+
+.new-card-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.new-card-formula-section {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 12px;
+  margin: 8px 0;
+}
+
+.new-card-variables-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.new-card-variable-row {
+  display: flex;
+  gap: 6px;
+}
+
+.new-card-variable-symbol { flex: 0 0 80px; }
+.new-card-variable-meaning { flex: 1; }
+
+.new-card-variable-symbol,
+.new-card-variable-meaning {
+  border: 0.5px solid var(--border);
+  background: var(--surface-sunken);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.new-card-variable-remove {
+  border: none;
+  background: transparent;
+  color: var(--terracotta);
+  font-size: 14px;
+  flex: 0 0 28px;
+}
+
+.new-card-add-variable-btn {
+  border: 0.5px dashed var(--border-strong);
+  background: transparent;
+  color: var(--ink-sub);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.new-card-rel-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.new-card-rel-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--surface-sunken);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.new-card-rel-result-row button {
+  border: none;
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+
+.new-card-rel-attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.new-card-rel-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-sunken);
+  border: 0.5px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.new-card-rel-chip-type {
+  font-weight: 600;
+  color: var(--ochre);
+}
+
+.new-card-rel-chip-deck {
+  color: var(--ink-sub);
+}
+
+.new-card-rel-chip button {
+  border: none;
+  background: transparent;
+  color: var(--terracotta);
+  font-size: 12px;
+}
+
 /* --- Territory map (canvas.js) --- */
 
 .territory-map-canvas {

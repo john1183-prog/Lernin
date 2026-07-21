@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'Lernin';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 // Renamed from 'RecallDB' -> 'Lernin' to match the repo/product name.
 // IndexedDB database names can't be renamed in place, so on first load
@@ -126,7 +126,26 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 6) { ... }` etc. Never delete
+      // --- cardRelationships (v6): dependsOn/related links between two
+      // cards (fromCardId -> toCardId, typed 'dependsOn' | 'related'), used
+      // by formula cards' prerequisite chains and (eventually) the map
+      // view's cross-territory connections. A separate store rather than
+      // arrays embedded on the card record itself — an array that grows
+      // with every new relationship means rewriting the whole card record
+      // for every edit, and isn't indexable in either direction. This
+      // store is indexed on both fromCardId and toCardId, so "what does X
+      // depend on" and "what depends on X" are both cheap indexed lookups.
+      // Deliberately not deck-scoped: a relationship can point at a card in
+      // a different deck (e.g. a prerequisite from an earlier course).
+      if (oldVersion < 6) {
+        if (!db.objectStoreNames.contains('cardRelationships')) {
+          const relationships = db.createObjectStore('cardRelationships', { keyPath: 'id' });
+          relationships.createIndex('by_fromCardId', 'fromCardId');
+          relationships.createIndex('by_toCardId', 'toCardId');
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 7) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -245,6 +264,54 @@ export async function saveNewCards(deckId, newCards) {
     }
     throw err;
   }
+}
+
+/**
+ * Creates a single card by hand (not from generation) — the only way to
+ * add a card was previously via PDF upload + AI/manual-paste generation.
+ * Supports all three card types; formula-specific fields are simply
+ * omitted/undefined on the record for 'basic'/'cloze' cards rather than
+ * enforced by any schema (IndexedDB is schemaless per-record, so this is
+ * fine — study.js and the edit views only read the fields relevant to a
+ * card's own `type`).
+ *
+ * @param {object} card
+ * @param {string} card.deckId
+ * @param {string} card.front
+ * @param {string} card.back
+ * @param {'basic'|'cloze'|'formula'} card.type
+ * @param {string} [card.formula] - the actual expression, formula type only
+ * @param {Array<{symbol: string, meaning: string}>} [card.variables]
+ * @param {string} [card.assumptions]
+ * @param {string} [card.commonMistakes]
+ * @param {string} [card.applications]
+ * @returns {Promise<string>} the new card's id
+ */
+export async function saveManualCard(card) {
+  const db = await getDB();
+  const id = cryptoRandomIdInDb();
+
+  const record = {
+    id,
+    deckId: card.deckId,
+    front: card.front,
+    back: card.back,
+    type: card.type || 'basic',
+    createdAt: Date.now(),
+    ...DEFAULT_FSRS_FIELDS,
+    due_date: Date.now()
+  };
+
+  if (card.type === 'formula') {
+    record.formula = card.formula || '';
+    record.variables = Array.isArray(card.variables) ? card.variables : [];
+    record.assumptions = card.assumptions || '';
+    record.commonMistakes = card.commonMistakes || '';
+    record.applications = card.applications || '';
+  }
+
+  await db.put('cards', record);
+  return id;
 }
 
 /**
@@ -1038,6 +1105,102 @@ export async function importDeckData(parsed) {
 
 function cryptoRandomIdInDb() {
   return (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Card relationships — dependsOn/related links between two cards. See the
+// v6 migration comment above for why this is its own store rather than
+// arrays on the card record. Not deck-scoped: a card in one deck can
+// depend on or relate to a card in a different deck (e.g. a prerequisite
+// from an earlier course) — the map view's territory grouping is a
+// separate, purely visual concept from what a card conceptually depends on.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} fromCardId
+ * @param {string} toCardId
+ * @param {'dependsOn'|'related'} type
+ * @returns {Promise<string>} the relationship's id, or the existing one's
+ *          id if this exact (fromCardId, toCardId, type) triple already
+ *          exists — never creates a duplicate.
+ */
+export async function addRelationship(fromCardId, toCardId, type) {
+  if (fromCardId === toCardId) {
+    throw new Error('A card can\u2019t depend on or relate to itself.');
+  }
+  if (type !== 'dependsOn' && type !== 'related') {
+    throw new Error(`addRelationship: unknown type "${type}"`);
+  }
+
+  const db = await getDB();
+  const existing = await db.getAllFromIndex('cardRelationships', 'by_fromCardId', fromCardId);
+  const dup = existing.find((r) => r.toCardId === toCardId && r.type === type);
+  if (dup) return dup.id;
+
+  const id = cryptoRandomIdInDb();
+  await db.put('cardRelationships', { id, fromCardId, toCardId, type });
+  return id;
+}
+
+export async function removeRelationship(relationshipId) {
+  const db = await getDB();
+  return db.delete('cardRelationships', relationshipId);
+}
+
+/**
+ * Relationships FROM this card — i.e. what this card depends on / relates
+ * to. Each entry includes the target card's front text (a plain id isn't
+ * useful to show in a UI on its own), or `targetMissing: true` if the
+ * target card was since deleted — relationships aren't cleaned up when a
+ * card is deleted (cross-store cascade on every delete adds real
+ * complexity for a case that's cheap to just filter out at read time).
+ */
+export async function getRelationshipsFrom(cardId) {
+  const db = await getDB();
+  const rels = await db.getAllFromIndex('cardRelationships', 'by_fromCardId', cardId);
+  return Promise.all(rels.map(async (r) => {
+    const target = await db.get('cards', r.toCardId);
+    return target
+      ? { id: r.id, type: r.type, cardId: r.toCardId, front: target.front, deckId: target.deckId }
+      : { id: r.id, type: r.type, cardId: r.toCardId, targetMissing: true };
+  }));
+}
+
+/** Relationships TO this card — i.e. what depends on / relates to it. */
+export async function getRelationshipsTo(cardId) {
+  const db = await getDB();
+  const rels = await db.getAllFromIndex('cardRelationships', 'by_toCardId', cardId);
+  return Promise.all(rels.map(async (r) => {
+    const source = await db.get('cards', r.fromCardId);
+    return source
+      ? { id: r.id, type: r.type, cardId: r.fromCardId, front: source.front, deckId: source.deckId }
+      : { id: r.id, type: r.type, cardId: r.fromCardId, sourceMissing: true };
+  }));
+}
+
+/**
+ * Finds cards by a substring match on their front text, across every
+ * deck — used by the relationship picker in app.js's manual card
+ * creation flow. Cross-deck on purpose, matching the decision that
+ * relationships aren't scoped to one deck. Capped at 20 results; this is
+ * a live-search-as-you-type picker, not a full search feature.
+ *
+ * @param {string} query
+ * @param {string} [excludeCardId] - typically the card being created/edited,
+ *        so it can't be offered as its own dependency
+ */
+export async function searchCardsByFront(query, excludeCardId) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return [];
+
+  const db = await getDB();
+  const [allCards, decks] = await Promise.all([db.getAll('cards'), getAllDecks()]);
+  const deckTitleById = new Map(decks.map((d) => [d.id, d.title]));
+
+  return allCards
+    .filter((c) => c.id !== excludeCardId && c.front.toLowerCase().includes(trimmed))
+    .slice(0, 20)
+    .map((c) => ({ id: c.id, front: c.front, deckId: c.deckId, deckTitle: deckTitleById.get(c.deckId) || 'Unknown deck' }));
 }
 
 // ---------------------------------------------------------------------------

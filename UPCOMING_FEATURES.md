@@ -18,70 +18,54 @@ These can each be picked up independently, in any order.
 
 ---
 
-## Tier 2 — Needs a real spec before touching code
+## Tier 2 — Rich cards and relationships
 
-These are the "rich card schema" items from the filtered list. They all
-depend on the same underlying decision (what a "rich card" actually
-looks like in the data model), so they should be spec'd together in one
-dedicated conversation before any of them get implemented — this is
-exactly the kind of change that's expensive to redo if we start coding
-against an underspecified schema and have to migrate again.
+The foundational decisions got made and the first slice shipped (see
+below) — remaining items here are follow-ups, each independently
+buildable now that the data layer exists and is tested.
 
-### Extend card schema for rich fields
-`db.js`'s `cards` store currently holds `front`/`back`/`type` plus FSRS
-state. Proposed additional fields: `formula`, `variables`, `dependsOn`,
-`related`, `applications`, `commonMistakes`, `assumptions`. Before
-building: decide which of these are structured (e.g. `dependsOn` as an
-array of card IDs) vs. free text, how they render in Study Mode, whether
-they apply to all cards or only a new "formula" card type, and how the
-PDF/manual generation prompts need to change to populate them.
+**Shipped:** a third card type, `'formula'` (alongside `basic`/`cloze`),
+with `formula`/`variables`/`assumptions`/`commonMistakes`/`applications`
+fields — scoped to formula cards only, not added to every card. A
+dedicated `cardRelationships` store (not arrays embedded on the card
+record — see `db.js`'s v6 migration comment for why) with `dependsOn`/
+`related` links, indexed both directions, deliberately allowed to cross
+decks. A "+ Card" manual creation view supporting all three types plus a
+live-search relationship picker. All of it tested end-to-end against
+real IndexedDB semantics (fake-indexeddb), not just read through.
 
-### Relationships between cards/decks
-The `dependsOn`/`related` fields above imply an actual graph, not just
-per-card metadata. Needs: a real relationship model (probably a new
-store, or an index on card IDs referencing other card IDs), UI for
-creating/editing relationships, and a decision on whether relationships
-are deck-scoped or can cross decks (a formula in one course depending on
-a concept from a prerequisite course, say).
+**Not shipped yet, on purpose (decided when scoping this):**
 
 ### Rich card rendering in Study Mode
-Once the schema exists: `study.js`'s `renderFront`/`renderBack` need to
-handle formula rendering (likely KaTeX or similar for actual math
-notation, not just plain text), and show `commonMistakes`/`assumptions`
-as contextual hints without cluttering the core review flow.
+Formula cards currently render with plain front/back like any other card
+— `study.js` doesn't yet surface `formula`/`variables`/`commonMistakes`
+during review. Decided: plain text/monospace for v1 rather than real math
+typesetting (KaTeX) — revisit if that turns out insufficient once people
+are actually using formula cards.
+
+### Improved PDF-to-rich-card pipeline
+`api/index.py`'s generation prompts still only populate
+`front`/`back`/`type`/`summary`. Extending them to actually extract
+formula/variables/etc. from source text is real prompt-engineering work,
+deliberately deferred until the manually-created path is proven out.
 
 ### Relationship explorer / reverse lookup
-Given a card, show what it depends on and what depends on it. "Reverse
-lookup" = given an answer/formula, find which card(s) produce it — useful
-for "I remember the formula but not what it's called" type recall.
-Depends entirely on the relationship model existing first.
+Given a card, show what it depends on and what depends on it (the data
+functions — `getRelationshipsFrom`/`getRelationshipsTo` — already exist
+in `db.js`; this is the UI to browse them, separate from attaching them
+during creation). "Reverse lookup" = given an answer/formula, find which
+card(s) produce it.
 
 ### Smart daily session planner
 Currently `study.js` queues due cards by FSRS due date only. A smarter
-planner would factor in: available study time (user-specified), weak
-topics (leech rate, low mastery), and prerequisites (don't surface a
-card whose `dependsOn` cards haven't been reviewed recently). Depends on
-the relationship model.
-
-### Manual creation of rich formula cards
-A "New card" flow that isn't PDF/AI-generated — for adding a single
-formula card by hand with its structured fields. Lower urgency than the
-above since PDF/manual-paste generation covers the common case; this is
-for one-off additions.
-
-### Improved PDF-to-rich-card pipeline
-Once the schema exists, `api/index.py`'s `SYSTEM_PROMPT` and
-`GENERATE_CARDS_TOOL`/`GEMINI_RESPONSE_SCHEMA` need to be extended to
-populate the new fields where the source text supports it (e.g. actually
-extracting a formula's variables from a physics PDF), not just
-front/back/type/summary as today.
+planner would factor in available study time, weak topics, and
+prerequisites (don't surface a card whose `dependsOn` cards haven't been
+reviewed recently) — now buildable against the real relationship data.
 
 ### Visual connections between related concepts on the map
-Once relationships exist, `canvas.js` could draw lines/arcs between
-related islands (possibly across territories) — this is the piece that
-would make the map feel like a genuine knowledge graph rather than a
-grouped list of dots. Purely visual, no logic changes to Study Mode
-itself; can be built any time after the relationship model lands.
+`canvas.js` could draw lines/arcs between related islands (possibly
+across territories) using the same relationship data. Purely visual, no
+Study Mode logic changes needed.
 
 ---
 
@@ -122,10 +106,13 @@ edit/rename/re-territory, hard reload + storage usage in Settings,
 Reset-everything, RecallDB→Lernin rename with data migration, the
 green/gold rebrand, deck export/import (JSON, with a full-backup vs.
 progress-free share-copy choice), a statistics dashboard (30-day
-retention, longest streak, per-deck breakdown, activity chart), and a
+retention, longest streak, per-deck breakdown, activity chart), a
 persistent, sectioned in-app Help view (reachable via the header's "?"
 button and from a rewritten first-run empty state) covering what the app
-is and how each feature works.
+is and how each feature works, and a rich card data layer (formula card
+type, cross-deck dependsOn/related relationships, manual card creation
+with a relationship picker) — Study Mode rendering and the AI generation
+pipeline don't use these fields yet, see Tier 2 above.
 
 ---
 

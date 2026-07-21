@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats } from './db.js';
+import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, searchCardsByFront } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -300,6 +300,7 @@ async function buildDeckCard(deck) {
   wrapper.appendChild(buildImportButton(deck.id));
   wrapper.appendChild(buildEditDeckButton(deck));
   wrapper.appendChild(buildExportDeckButton(deck));
+  wrapper.appendChild(buildNewCardButton(deck));
 
   if (documents.length > 0) {
     wrapper.appendChild(buildDocumentsButton(deck, documents.length));
@@ -338,6 +339,18 @@ function buildExportDeckButton(deck) {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     openExportOptionsModal(deck);
+  });
+  return btn;
+}
+
+function buildNewCardButton(deck) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-edit-btn';
+  btn.textContent = '+ Card';
+  btn.setAttribute('aria-label', `Add a card by hand to ${deck.title}`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderNewCardView(deck);
   });
   return btn;
 }
@@ -688,12 +701,20 @@ function renderHelpView() {
   const sections = [
     {
       title: 'Getting cards into a deck',
-      body: `There's no manual "type a card" option yet — every card comes from a PDF you upload. Tap "Import PDF" on a deck, and Lernin extracts the text and turns it into cards. How that last step happens depends on what you've set up in Settings:
+      body: `Two ways to add cards: upload a PDF (tap "Import PDF" on a deck, and Lernin extracts the text and turns it into cards), or add a single card by hand (tap "+ Card"). How PDF generation happens depends on what you've set up in Settings:
       <ul>
         <li><strong>Your own Claude or Gemini API key</strong> — one tap, cards generate automatically.</li>
         <li><strong>"Paste into any AI" (no key needed)</strong> — you get a ready-made prompt to copy into ChatGPT, Claude.ai, Gemini, or whatever you already use, then paste the result back in.</li>
       </ul>
-      Either way, you get a chance to review, edit, or discard each card before anything is saved — nothing is added to your deck automatically.`
+      Either way, you get a chance to review, edit, or discard each generated card before anything is saved — nothing is added to your deck automatically.`
+    },
+    {
+      title: 'Formula cards and relationships',
+      body: `"+ Card" lets you add a Basic, Cloze, or Formula card. Formula cards have extra structured fields: the formula itself, its variables (symbol + meaning), assumptions it relies on, common mistakes, and real-world applications — useful for STEM material where the "answer" is more than a single fact.
+      <br><br>
+      Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
+      <br><br>
+      This is the data layer for it — a dedicated relationship explorer and prerequisite-aware study planner are planned but not built yet (see the repo's UPCOMING_FEATURES.md), and formulas currently render as plain text in Study Mode, not typeset math.`
     },
     {
       title: 'Why you bring your own AI key',
@@ -1841,6 +1862,317 @@ function renderManualPasteView(extractedText, deckId, fileMeta = null) {
   });
   wrap.appendChild(parseBtn);
 
+  root.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// Manual card creation — the only prior way to add a card was via PDF
+// upload + AI/manual-paste generation. Supports all three card types;
+// formula-specific fields and the relationship picker only apply to the
+// 'formula' type, but relationships themselves are offered for every type
+// (a basic card can legitimately relate to another one too).
+// ---------------------------------------------------------------------------
+
+function renderNewCardView(deck) {
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'new-card-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Cancel';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = `Add card to ${deck.title}`;
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  const form = document.createElement('form');
+  form.className = 'new-card-form';
+
+  // --- type selector ---
+  const typeLabel = document.createElement('label');
+  typeLabel.className = 'settings-form-label';
+  typeLabel.textContent = 'Card type';
+  form.appendChild(typeLabel);
+
+  const typeRow = document.createElement('div');
+  typeRow.className = 'settings-provider-row';
+  const types = [
+    { value: 'basic', label: 'Basic (Q&A)' },
+    { value: 'cloze', label: 'Cloze' },
+    { value: 'formula', label: 'Formula' }
+  ];
+  for (const t of types) {
+    const optLabel = document.createElement('label');
+    optLabel.className = 'settings-provider-option';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'card-type';
+    radio.value = t.value;
+    radio.checked = t.value === 'basic';
+    radio.addEventListener('change', updateFieldVisibility);
+    optLabel.appendChild(radio);
+    optLabel.appendChild(document.createTextNode(` ${t.label}`));
+    typeRow.appendChild(optLabel);
+  }
+  form.appendChild(typeRow);
+
+  // --- front / back (always shown) ---
+  const frontLabel = document.createElement('label');
+  frontLabel.className = 'edit-step-field-label';
+  frontLabel.textContent = 'Front';
+  form.appendChild(frontLabel);
+  const frontInput = document.createElement('textarea');
+  frontInput.className = 'edit-step-textarea';
+  frontInput.required = true;
+  form.appendChild(frontInput);
+
+  const backLabel = document.createElement('label');
+  backLabel.className = 'edit-step-field-label';
+  backLabel.textContent = 'Back';
+  form.appendChild(backLabel);
+  const backInput = document.createElement('textarea');
+  backInput.className = 'edit-step-textarea';
+  backInput.placeholder = '(optional for cloze \u2014 the answer can live inline in Front via {{c1::...}})';
+  form.appendChild(backInput);
+
+  // --- formula-specific fields (hidden unless type === formula) ---
+  const formulaSection = document.createElement('div');
+  formulaSection.className = 'new-card-formula-section';
+  formulaSection.style.display = 'none';
+
+  const formulaLabel = document.createElement('label');
+  formulaLabel.className = 'edit-step-field-label';
+  formulaLabel.textContent = 'Formula';
+  formulaSection.appendChild(formulaLabel);
+  const formulaInput = document.createElement('input');
+  formulaInput.type = 'text';
+  formulaInput.className = 'settings-api-key-input';
+  formulaInput.placeholder = 'e.g. KE = \u00bdmv\u00b2';
+  formulaSection.appendChild(formulaInput);
+
+  const variablesLabel = document.createElement('label');
+  variablesLabel.className = 'edit-step-field-label';
+  variablesLabel.textContent = 'Variables';
+  formulaSection.appendChild(variablesLabel);
+
+  const variablesList = document.createElement('div');
+  variablesList.className = 'new-card-variables-list';
+  formulaSection.appendChild(variablesList);
+
+  let variableRows = [];
+  function addVariableRow() {
+    const row = document.createElement('div');
+    row.className = 'new-card-variable-row';
+    const symbolInput = document.createElement('input');
+    symbolInput.type = 'text';
+    symbolInput.placeholder = 'symbol (e.g. m)';
+    symbolInput.className = 'new-card-variable-symbol';
+    const meaningInput = document.createElement('input');
+    meaningInput.type = 'text';
+    meaningInput.placeholder = 'meaning (e.g. mass, kg)';
+    meaningInput.className = 'new-card-variable-meaning';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'new-card-variable-remove';
+    removeBtn.textContent = '\u2715';
+    removeBtn.addEventListener('click', () => {
+      variableRows = variableRows.filter((r) => r !== row);
+      row.remove();
+    });
+    row.appendChild(symbolInput);
+    row.appendChild(meaningInput);
+    row.appendChild(removeBtn);
+    variablesList.appendChild(row);
+    variableRows.push(row);
+  }
+  addVariableRow(); // start with one empty row
+
+  const addVariableBtn = document.createElement('button');
+  addVariableBtn.type = 'button';
+  addVariableBtn.className = 'new-card-add-variable-btn';
+  addVariableBtn.textContent = '+ Add variable';
+  addVariableBtn.addEventListener('click', addVariableRow);
+  formulaSection.appendChild(addVariableBtn);
+
+  const assumptionsLabel = document.createElement('label');
+  assumptionsLabel.className = 'edit-step-field-label';
+  assumptionsLabel.textContent = 'Assumptions';
+  formulaSection.appendChild(assumptionsLabel);
+  const assumptionsInput = document.createElement('textarea');
+  assumptionsInput.className = 'edit-step-textarea';
+  formulaSection.appendChild(assumptionsInput);
+
+  const mistakesLabel = document.createElement('label');
+  mistakesLabel.className = 'edit-step-field-label';
+  mistakesLabel.textContent = 'Common mistakes';
+  formulaSection.appendChild(mistakesLabel);
+  const mistakesInput = document.createElement('textarea');
+  mistakesInput.className = 'edit-step-textarea';
+  formulaSection.appendChild(mistakesInput);
+
+  const applicationsLabel = document.createElement('label');
+  applicationsLabel.className = 'edit-step-field-label';
+  applicationsLabel.textContent = 'Applications';
+  formulaSection.appendChild(applicationsLabel);
+  const applicationsInput = document.createElement('textarea');
+  applicationsInput.className = 'edit-step-textarea';
+  formulaSection.appendChild(applicationsInput);
+
+  form.appendChild(formulaSection);
+
+  function updateFieldVisibility() {
+    const type = form.querySelector('input[name="card-type"]:checked')?.value || 'basic';
+    formulaSection.style.display = type === 'formula' ? '' : 'none';
+    backInput.placeholder = type === 'cloze'
+      ? '(optional \u2014 the answer can live inline in Front via {{c1::...}})'
+      : '';
+  }
+
+  // --- relationships (available for every type) ---
+  const relLabel = document.createElement('label');
+  relLabel.className = 'edit-step-field-label';
+  relLabel.textContent = 'Depends on / related cards (optional, can be in any deck)';
+  form.appendChild(relLabel);
+
+  const relSearchInput = document.createElement('input');
+  relSearchInput.type = 'text';
+  relSearchInput.className = 'settings-api-key-input';
+  relSearchInput.placeholder = 'Search cards by their front text\u2026';
+  form.appendChild(relSearchInput);
+
+  const relResultsList = document.createElement('div');
+  relResultsList.className = 'new-card-rel-results';
+  form.appendChild(relResultsList);
+
+  const relAttachedList = document.createElement('div');
+  relAttachedList.className = 'new-card-rel-attached';
+  form.appendChild(relAttachedList);
+
+  let attachedRelationships = []; // { cardId, front, deckTitle, type }
+
+  function renderAttachedRelationships() {
+    relAttachedList.innerHTML = '';
+    for (const rel of attachedRelationships) {
+      const chip = document.createElement('div');
+      chip.className = 'new-card-rel-chip';
+      chip.innerHTML = `<span class="new-card-rel-chip-type">${rel.type === 'dependsOn' ? 'Depends on' : 'Related'}</span> ${escapeHtml(rel.front)} <span class="new-card-rel-chip-deck">(${escapeHtml(rel.deckTitle)})</span>`;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u2715';
+      removeBtn.addEventListener('click', () => {
+        attachedRelationships = attachedRelationships.filter((r) => r !== rel);
+        renderAttachedRelationships();
+      });
+      chip.appendChild(removeBtn);
+      relAttachedList.appendChild(chip);
+    }
+  }
+
+  let searchDebounce = null;
+  relSearchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(async () => {
+      const query = relSearchInput.value.trim();
+      relResultsList.innerHTML = '';
+      if (!query) return;
+      const results = await searchCardsByFront(query);
+      for (const card of results) {
+        if (attachedRelationships.some((r) => r.cardId === card.id)) continue;
+        const row = document.createElement('div');
+        row.className = 'new-card-rel-result-row';
+        row.innerHTML = `<span>${escapeHtml(card.front)} <span class="new-card-rel-chip-deck">(${escapeHtml(card.deckTitle)})</span></span>`;
+        const dependsBtn = document.createElement('button');
+        dependsBtn.type = 'button';
+        dependsBtn.textContent = '+ Depends on';
+        dependsBtn.addEventListener('click', () => {
+          attachedRelationships.push({ cardId: card.id, front: card.front, deckTitle: card.deckTitle, type: 'dependsOn' });
+          renderAttachedRelationships();
+        });
+        const relatedBtn = document.createElement('button');
+        relatedBtn.type = 'button';
+        relatedBtn.textContent = '+ Related';
+        relatedBtn.addEventListener('click', () => {
+          attachedRelationships.push({ cardId: card.id, front: card.front, deckTitle: card.deckTitle, type: 'related' });
+          renderAttachedRelationships();
+        });
+        row.appendChild(dependsBtn);
+        row.appendChild(relatedBtn);
+        relResultsList.appendChild(row);
+      }
+    }, 200);
+  });
+
+  wrap.appendChild(form);
+
+  // --- save actions ---
+  async function handleSave(addAnother) {
+    const type = form.querySelector('input[name="card-type"]:checked')?.value || 'basic';
+    const front = frontInput.value.trim();
+    if (!front) {
+      showToast('Front text is required.');
+      frontInput.focus();
+      return;
+    }
+
+    const cardData = {
+      deckId: deck.id,
+      front,
+      back: backInput.value.trim(),
+      type
+    };
+    if (type === 'formula') {
+      cardData.formula = formulaInput.value.trim();
+      cardData.variables = variableRows
+        .map((row) => ({
+          symbol: row.querySelector('.new-card-variable-symbol').value.trim(),
+          meaning: row.querySelector('.new-card-variable-meaning').value.trim()
+        }))
+        .filter((v) => v.symbol || v.meaning);
+      cardData.assumptions = assumptionsInput.value.trim();
+      cardData.commonMistakes = mistakesInput.value.trim();
+      cardData.applications = applicationsInput.value.trim();
+    }
+
+    const newCardId = await saveManualCard(cardData);
+    for (const rel of attachedRelationships) {
+      await addRelationship(newCardId, rel.cardId, rel.type);
+    }
+
+    showToast('Card added.');
+
+    if (addAnother) {
+      renderNewCardView(deck); // simplest reliable "reset the form" — re-render fresh
+    } else {
+      await renderDeckList();
+    }
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'settings-form-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'commit-cards-btn';
+  saveBtn.textContent = 'Save card';
+  saveBtn.addEventListener('click', () => handleSave(false));
+  actions.appendChild(saveBtn);
+
+  const saveAndAddBtn = document.createElement('button');
+  saveAndAddBtn.type = 'button';
+  saveAndAddBtn.className = 'settings-remove-btn';
+  saveAndAddBtn.textContent = 'Save & add another';
+  saveAndAddBtn.addEventListener('click', () => handleSave(true));
+  actions.appendChild(saveAndAddBtn);
+
+  wrap.appendChild(actions);
   root.appendChild(wrap);
 }
 
