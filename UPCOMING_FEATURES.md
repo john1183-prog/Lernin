@@ -16,14 +16,6 @@ not a queue.
 
 These can each be picked up independently, in any order.
 
-### Onboarding / empty states
-First-time open currently shows a mostly-blank home screen. Needs: a
-first-run explainer (what this app does, BYOK vs. manual-paste mode,
-where to start), and better empty states for Documents/Leeches/Course
-Recap when there's nothing there yet (some of these already have basic
-empty-state text; worth a pass to make them actually guide the next
-action rather than just stating "nothing here").
-
 ---
 
 ## Tier 2 — Needs a real spec before touching code
@@ -129,20 +121,15 @@ session-end summary, leech review with history context, deck
 edit/rename/re-territory, hard reload + storage usage in Settings,
 Reset-everything, RecallDB→Lernin rename with data migration, the
 green/gold rebrand, deck export/import (JSON, with a full-backup vs.
-progress-free share-copy choice), and a statistics dashboard (30-day
-retention, longest streak, per-deck breakdown, activity chart).
+progress-free share-copy choice), a statistics dashboard (30-day
+retention, longest streak, per-deck breakdown, activity chart), and a
+persistent, sectioned in-app Help view (reachable via the header's "?"
+button and from a rewritten first-run empty state) covering what the app
+is and how each feature works.
 
 ---
 
 ## Active — real user feedback, not yet fully addressed
-
-### Onboarding / "I don't know what this is"
-Multiple people reported not understanding what the app does or how to
-get started. This is the same as the onboarding/empty-states item above,
-but escalated from "nice to have" to "actively hurting adoption" based on
-direct feedback. Needs its own pass: what does someone see in their
-first 30 seconds, and does it explain BYOK vs. manual-paste mode clearly
-enough to get through generating their first deck without confusion.
 
 ### iOS Safari PDF upload (fixed, needs real-device confirmation)
 A user reported PDF import not working on iPhone Safari. Root cause:
@@ -158,3 +145,14 @@ existing opportunistic same-origin caching picks it up after first use.
 Could not be tested end-to-end in the working environment (pdf.js's
 browser build needs real DOM globals unavailable in plain Node) — needs
 confirmation on an actual iPhone.
+
+---
+
+## Maintenance conventions
+
+**Keep the in-app Help view in sync.** `app.js`'s `renderHelpView()` is a
+persistent, sectioned reference (not a one-time tour) covering what
+Lernin is and how each feature works — reachable via the "?" button in
+the header and from the first-run empty state. When a feature ships, add
+or update its section there in the same pass. An out-of-date Help view
+actively misleads, which is worse than not having one.

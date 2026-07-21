@@ -83,6 +83,13 @@ async function renderDeckList() {
   importBtn.addEventListener('click', () => triggerDeckImport());
   header.appendChild(importBtn);
 
+  const helpBtn = document.createElement('button');
+  helpBtn.className = 'help-btn';
+  helpBtn.setAttribute('aria-label', 'Help — what is Lernin and how does it work');
+  helpBtn.textContent = '?';
+  helpBtn.addEventListener('click', () => renderHelpView());
+  header.appendChild(helpBtn);
+
   const settingsBtn = document.createElement('button');
   settingsBtn.className = 'settings-btn';
   settingsBtn.setAttribute('aria-label', 'Settings');
@@ -639,6 +646,109 @@ function buildLeechRow(deck, card, history = []) {
 // screen's stats card summarizes, via db.js's getDashboardStats(). Read-only:
 // no actions here beyond navigating back.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Help — a persistent, in-app reference, not a one-time tour. People kept
+// reporting they didn't understand what the app was or how to use it, so
+// this needs to be thorough and always reachable, not a dismiss-once modal.
+//
+// MAINTENANCE: when a feature ships, add or update its <details> section
+// here in the same pass. This view is explicitly meant to stay in sync
+// with what the app actually does — an out-of-date Help view is worse
+// than none, since it actively misleads. Keep each section short enough
+// to read in under a minute; link concepts together rather than repeating
+// explanations across sections.
+// ---------------------------------------------------------------------------
+
+function renderHelpView() {
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'help-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+
+  const heading = document.createElement('h2');
+  heading.textContent = 'What is Lernin, and how does it work?';
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  const intro = document.createElement('p');
+  intro.className = 'help-intro';
+  intro.textContent = 'Lernin is a spaced repetition study app: instead of re-reading notes and hoping it sticks, you review small question-and-answer cards on a schedule that adapts to how well you actually know each one. Cards you find easy come back less often; cards you struggle with come back sooner. It runs entirely on your device — your decks, cards, and study history never leave your phone or computer unless you explicitly export or generate cards.';
+  wrap.appendChild(intro);
+
+  const sections = [
+    {
+      title: 'Getting cards into a deck',
+      body: `There's no manual "type a card" option yet — every card comes from a PDF you upload. Tap "Import PDF" on a deck, and Lernin extracts the text and turns it into cards. How that last step happens depends on what you've set up in Settings:
+      <ul>
+        <li><strong>Your own Claude or Gemini API key</strong> — one tap, cards generate automatically.</li>
+        <li><strong>"Paste into any AI" (no key needed)</strong> — you get a ready-made prompt to copy into ChatGPT, Claude.ai, Gemini, or whatever you already use, then paste the result back in.</li>
+      </ul>
+      Either way, you get a chance to review, edit, or discard each card before anything is saved — nothing is added to your deck automatically.`
+    },
+    {
+      title: 'Why you bring your own AI key',
+      body: `Card generation calls a real AI model, which costs money per use. Rather than the app quietly funding that (and eventually having to add ads or a subscription to cover it), you connect your own Claude or Gemini key, or generate cards for free by pasting into any AI chat tool you already have access to. Your key is stored only on your device and sent directly to your chosen provider when you generate cards — never stored on any server.`
+    },
+    {
+      title: 'Reviewing cards',
+      body: `Each card shows a question first; tap it to reveal the answer, then grade yourself honestly:
+      <ul>
+        <li><strong>Again</strong> — you didn't know it. You'll see it again soon.</li>
+        <li><strong>Hard</strong> — you got it, but it took real effort.</li>
+        <li><strong>Good</strong> — you knew it comfortably.</li>
+        <li><strong>Easy</strong> — trivial; you'll see it again much later.</li>
+      </ul>
+      Grading isn't about being right or wrong so much as being honest about how easily it came back to you — the schedule only works well if the grades reflect that.`
+    },
+    {
+      title: 'Leeches',
+      body: `A card that you keep getting wrong over and over (an "Again" streak) gets automatically suspended — pulled out of your regular review queue — rather than endlessly wasting review time on something that isn't sticking. Suspended cards show up under a deck's "Leeches" button, where you can see the card's recent grade history and either Reset it (start it over fresh) or Delete it, if it's a card that just isn't worth keeping.`
+    },
+    {
+      title: 'Streaks and freezes',
+      body: `Your streak counts consecutive days with at least one review. Every 7-day streak earns a "freeze" (up to 3 saved at once) — if you know you'll miss a day, spend a freeze from the home screen to protect your streak instead of losing it. Freezes aren't spent automatically; you choose when to use one.`
+    },
+    {
+      title: 'The map view',
+      body: `An alternative to the list view: each deck is a colored island. An island's color reflects two things — a warm-to-green progression showing how mastered that deck is, and a subtle per-deck tint so decks are visually distinguishable even before you've studied anything. Islands are grouped into "territories" by course (set when you create or edit a deck); drag an island to rearrange it within its group, or pinch to zoom out and see everything at once. Tap an island to jump straight into studying that deck.`
+    },
+    {
+      title: 'Documents and Course Recap',
+      body: `When you upload a PDF, Lernin keeps the filename and an AI-written summary of it — not the original file. This is deliberate: storing every PDF a student uploads across a term adds up fast, and the summary is what's actually useful to revisit. Under a deck's "Documents" button, you can view each summary. If a deck has multiple documents, "Course Recap" stitches all their summaries into one read-through, meant to be skimmable in a few minutes before an exam.`
+    },
+    {
+      title: 'Settings — Storage, Hard Reload, and Reset',
+      body: `<strong>Storage usage</strong> shows how much space Lernin is using on this device. <strong>Hard reload</strong> forces the app to fetch the latest version instead of a cached one — useful if an update was released but the app still looks or behaves like the old version, especially on mobile. It doesn't touch your decks or cards. <strong>Reset everything</strong> does the opposite — it permanently deletes every deck, card, and review history on this device. There's no undo, which is why it requires typing RESET to confirm. Export your decks first if there's anything you'd want back.`
+    },
+    {
+      title: 'Export and Import',
+      body: `Export a deck as a <strong>full backup</strong> (includes your study progress) or a <strong>share copy</strong> (just the cards, fresh — for sending to a classmate without handing over your personal stats). Importing a file always creates a brand-new deck; it never overwrites or merges into an existing one, so importing the same file twice just gives you two copies.`
+    },
+    {
+      title: 'What data leaves your device',
+      body: `Nothing, by default. Your decks, cards, and review history live only in your browser's local storage (IndexedDB) and are never sent to any Lernin server. The one exception: when you generate cards from a PDF, the extracted text is sent directly to whichever AI provider you've configured (Claude, Gemini, or whatever tool you paste into manually) — never to a Lernin-operated server in between.`
+    }
+  ];
+
+  for (const section of sections) {
+    const details = document.createElement('details');
+    details.className = 'help-section';
+    details.innerHTML = `<summary>${escapeHtml(section.title)}</summary><div class="help-section-body">${section.body}</div>`;
+    wrap.appendChild(details);
+  }
+
+  root.appendChild(wrap);
+}
 
 async function renderStatsView() {
   const stats = await getDashboardStats();
@@ -1214,10 +1324,14 @@ function buildEmptyDecksState() {
   const empty = document.createElement('div');
   empty.className = 'empty-decks-state';
   empty.innerHTML = `
-    <p>No decks yet.</p>
+    <h2 class="empty-decks-heading">Welcome to Lernin</h2>
+    <p class="empty-decks-explainer">A spaced repetition study app: you review small question-and-answer cards on a schedule that adapts to how well you know each one, so studying stays efficient instead of re-reading everything every time.</p>
+    <p class="empty-decks-explainer">To get started: create a deck, then upload a PDF to it — Lernin turns it into cards you can review.</p>
     <button class="create-deck-btn">Create your first deck</button>
+    <button class="empty-decks-help-btn">How does this all work? \u2192</button>
   `;
   empty.querySelector('.create-deck-btn').addEventListener('click', () => openDeckModal());
+  empty.querySelector('.empty-decks-help-btn').addEventListener('click', () => renderHelpView());
   return empty;
 }
 

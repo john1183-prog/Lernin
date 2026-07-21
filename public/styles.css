@@ -478,6 +478,22 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--ink-sub);
 }
 
+.empty-decks-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 8px 0 16px;
+}
+
+.empty-decks-explainer {
+  max-width: 420px;
+  margin: 0 auto 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-sub);
+}
+
 .create-deck-btn {
   border: none;
   background: var(--moss);
@@ -487,6 +503,88 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 14px;
   font-weight: 500;
   margin-top: 12px;
+}
+
+.empty-decks-help-btn {
+  display: block;
+  margin: 16px auto 0;
+  border: none;
+  background: transparent;
+  color: var(--ochre);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* --- Help (app.js) --- */
+
+.help-btn {
+  border: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.help-view { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.help-intro {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+  margin-bottom: 20px;
+}
+
+.help-section {
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.help-section summary {
+  padding: 14px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
+  list-style: none;
+}
+
+.help-section summary::-webkit-details-marker { display: none; }
+
+.help-section summary::after {
+  content: '+';
+  float: right;
+  color: var(--ink-sub);
+}
+
+.help-section[open] summary::after {
+  content: '\2212';
+}
+
+.help-section-body {
+  padding: 4px 14px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-sub);
+}
+
+.help-section-body ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.help-section-body li {
+  margin-bottom: 6px;
+}
+
+.help-section-body strong {
+  color: var(--ink);
 }
 
 /* --- Study mode (study.js) --- */
