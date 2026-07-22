@@ -35,9 +35,13 @@ live-search relationship picker. Rich rendering in Study Mode — formula,
 variables, assumptions, common mistakes, and applications all show on
 the back reveal (plain text/monospace, not real math typesetting —
 revisit if that turns out insufficient once people are actually using
-formula cards). All of it tested end-to-end against real IndexedDB
-semantics (fake-indexeddb) or, for the rendering, against realistic
-card data including HTML-unsafe characters — not just read through.
+formula cards). A card browser ("Cards" button per deck) and a
+relationship explorer — a card's detail view shows what it depends on,
+what depends on it, and what's related, in both directions, with
+add/remove and cross-deck navigation. All of it tested end-to-end
+against real IndexedDB semantics (fake-indexeddb) or, for the rendering,
+against realistic card data including HTML-unsafe characters — not just
+read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
 
@@ -47,18 +51,19 @@ card data including HTML-unsafe characters — not just read through.
 formula/variables/etc. from source text is real prompt-engineering work,
 deliberately deferred until the manually-created path is proven out.
 
-### Relationship explorer / reverse lookup
-Given a card, show what it depends on and what depends on it (the data
-functions — `getRelationshipsFrom`/`getRelationshipsTo` — already exist
-in `db.js`; this is the UI to browse them, separate from attaching them
-during creation). "Reverse lookup" = given an answer/formula, find which
-card(s) produce it.
+### Reverse lookup
+Given an answer/formula, find which card(s) produce it — different from
+the relationship explorer above (which navigates links between cards
+someone already connected); this is a search over answer/back/formula
+content, not front text. `searchCardsByFront` only searches `front` —
+this would need a new search function over the other fields.
 
 ### Smart daily session planner
 Currently `study.js` queues due cards by FSRS due date only. A smarter
 planner would factor in available study time, weak topics, and
 prerequisites (don't surface a card whose `dependsOn` cards haven't been
-reviewed recently) — now buildable against the real relationship data.
+reviewed recently) — now buildable against the real relationship data
+and a working explorer to reason about it against.
 
 ### Visual connections between related concepts on the map
 `canvas.js` could draw lines/arcs between related islands (possibly
@@ -109,8 +114,9 @@ persistent, sectioned in-app Help view (reachable via the header's "?"
 button and from a rewritten first-run empty state) covering what the app
 is and how each feature works, and rich formula cards end-to-end (schema,
 cross-deck dependsOn/related relationships, manual creation with a
-relationship picker, and Study Mode rendering) — only the AI generation
-pipeline doesn't populate these fields yet, see Tier 2 above.
+relationship picker, Study Mode rendering, and a card browser +
+relationship explorer to view/add/remove links after creation) — only
+the AI generation pipeline and reverse lookup remain, see Tier 2 above.
 
 ---
 

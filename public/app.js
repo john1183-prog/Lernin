@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, saveDeck, getCardsByDeck, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, searchCardsByFront } from './db.js';
+import { getAllDecks, getDeck, saveDeck, getCardsByDeck, getCard, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, getRelationshipsTo, searchCardsByFront } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -301,6 +301,7 @@ async function buildDeckCard(deck) {
   wrapper.appendChild(buildEditDeckButton(deck));
   wrapper.appendChild(buildExportDeckButton(deck));
   wrapper.appendChild(buildNewCardButton(deck));
+  wrapper.appendChild(buildCardsBrowserButton(deck));
 
   if (documents.length > 0) {
     wrapper.appendChild(buildDocumentsButton(deck, documents.length));
@@ -351,6 +352,18 @@ function buildNewCardButton(deck) {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     renderNewCardView(deck);
+  });
+  return btn;
+}
+
+function buildCardsBrowserButton(deck) {
+  const btn = document.createElement('button');
+  btn.className = 'deck-card-edit-btn';
+  btn.textContent = 'Cards';
+  btn.setAttribute('aria-label', `Browse cards in ${deck.title}`);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderCardsView(deck);
   });
   return btn;
 }
@@ -714,7 +727,7 @@ function renderHelpView() {
       <br><br>
       Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
       <br><br>
-      Relationships aren't surfaced anywhere yet beyond creation — a dedicated relationship explorer and prerequisite-aware study planner are planned but not built (see the repo's UPCOMING_FEATURES.md).`
+      Tap "Cards" on a deck to browse everything in it and open a card's detail view, which shows every relationship it's part of in both directions — what it depends on, what depends on it, and what's related — plus lets you add or remove links and jump straight to a related card, even one in a different deck. A prerequisite-aware study planner (skip a card if what it depends on hasn't been reviewed recently) is planned but not built yet (see the repo's UPCOMING_FEATURES.md).`
     },
     {
       title: 'Why you bring your own AI key',
@@ -1872,6 +1885,254 @@ function renderManualPasteView(extractedText, deckId, fileMeta = null) {
 // 'formula' type, but relationships themselves are offered for every type
 // (a basic card can legitimately relate to another one too).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Card browser + relationship explorer — lists every card in a deck;
+// tapping one opens a detail view showing its full content plus every
+// relationship it's part of, in both directions, with the ability to add
+// or remove links and jump to a related card even if it's in a different
+// deck. Relationships themselves were only ever attachable during manual
+// card creation before this — this is the first place to actually browse
+// the graph.
+// ---------------------------------------------------------------------------
+
+async function renderCardsView(deck) {
+  const cards = await getCardsByDeck(deck.id);
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cards-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderDeckList());
+  header.appendChild(backBtn);
+  const heading = document.createElement('h2');
+  heading.textContent = `Cards in ${deck.title} (${cards.length})`;
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  if (cards.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'leech-view-empty';
+    empty.textContent = 'No cards in this deck yet.';
+    wrap.appendChild(empty);
+    root.appendChild(wrap);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'cards-browser-list';
+  const typeLabels = { basic: 'Basic', cloze: 'Cloze', formula: 'Formula' };
+  for (const card of cards) {
+    const row = document.createElement('button');
+    row.className = 'cards-browser-row';
+    row.innerHTML = `
+      <span class="edit-step-type-badge edit-step-type-${card.type}">${typeLabels[card.type] || 'Basic'}</span>
+      <span class="cards-browser-row-front">${escapeHtml(card.front)}</span>
+    `;
+    row.addEventListener('click', () => renderCardDetailView(deck, card));
+    list.appendChild(row);
+  }
+  wrap.appendChild(list);
+  root.appendChild(wrap);
+}
+
+async function renderCardDetailView(deck, card) {
+  const [depsFrom, depsTo, allDecks] = await Promise.all([
+    getRelationshipsFrom(card.id),
+    getRelationshipsTo(card.id),
+    getAllDecks()
+  ]);
+  const deckTitleById = new Map(allDecks.map((d) => [d.id, d.title]));
+
+  root.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'card-detail-view';
+
+  const header = document.createElement('div');
+  header.className = 'settings-view-header';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'settings-view-back-btn';
+  backBtn.textContent = '\u2190 Back';
+  backBtn.addEventListener('click', () => renderCardsView(deck));
+  header.appendChild(backBtn);
+  const heading = document.createElement('h2');
+  heading.textContent = 'Card detail';
+  header.appendChild(heading);
+  wrap.appendChild(header);
+
+  const content = document.createElement('div');
+  content.className = 'card-detail-content';
+  content.innerHTML = `
+    <div class="edit-step-field-label">Front</div>
+    <div class="card-detail-text">${escapeHtml(card.front)}</div>
+    <div class="edit-step-field-label">Back</div>
+    <div class="card-detail-text">${card.back ? escapeHtml(card.back) : '<em>(none)</em>'}</div>
+  `;
+  wrap.appendChild(content);
+
+  if (card.type === 'formula') {
+    const formulaBlock = document.createElement('div');
+    formulaBlock.className = 'card-detail-content';
+    formulaBlock.innerHTML = renderFormulaDetailFields(card);
+    wrap.appendChild(formulaBlock);
+  }
+
+  // "Related" is stored as a single directed row but means the same thing
+  // either direction, so both directions are shown together as one list;
+  // "Depends on" and "Depended on by" are kept separate since direction
+  // is the whole point there.
+  const dependsOnList = depsFrom.filter((r) => r.type === 'dependsOn');
+  const dependedOnByList = depsTo.filter((r) => r.type === 'dependsOn');
+  const relatedList = [...depsFrom.filter((r) => r.type === 'related'), ...depsTo.filter((r) => r.type === 'related')];
+
+  wrap.appendChild(buildRelationshipSection('Depends on', dependsOnList, deck, card, deckTitleById));
+  wrap.appendChild(buildRelationshipSection('Depended on by', dependedOnByList, deck, card, deckTitleById));
+  wrap.appendChild(buildRelationshipSection('Related', relatedList, deck, card, deckTitleById));
+  wrap.appendChild(buildAddRelationshipSection(deck, card));
+
+  root.appendChild(wrap);
+}
+
+function renderFormulaDetailFields(card) {
+  let html = '';
+  if (card.formula) {
+    html += `<div class="edit-step-field-label">Formula</div><div class="formula-expression">${escapeHtml(card.formula)}</div>`;
+  }
+  if (Array.isArray(card.variables) && card.variables.length > 0) {
+    const items = card.variables
+      .filter((v) => v.symbol || v.meaning)
+      .map((v) => `<li><strong>${escapeHtml(v.symbol)}</strong> \u2014 ${escapeHtml(v.meaning)}</li>`)
+      .join('');
+    if (items) html += `<div class="edit-step-field-label">Variables</div><ul>${items}</ul>`;
+  }
+  if (card.assumptions) html += `<div class="edit-step-field-label">Assumptions</div><div class="card-detail-text">${escapeHtml(card.assumptions)}</div>`;
+  if (card.commonMistakes) html += `<div class="edit-step-field-label">Common mistakes</div><div class="card-detail-text">${escapeHtml(card.commonMistakes)}</div>`;
+  if (card.applications) html += `<div class="edit-step-field-label">Applications</div><div class="card-detail-text">${escapeHtml(card.applications)}</div>`;
+  return html;
+}
+
+function buildRelationshipSection(title, rels, deck, card, deckTitleById) {
+  const section = document.createElement('div');
+  section.className = 'card-detail-rel-section';
+
+  const heading = document.createElement('div');
+  heading.className = 'stats-section-heading';
+  heading.textContent = `${title} (${rels.length})`;
+  section.appendChild(heading);
+
+  if (rels.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'card-detail-rel-empty';
+    empty.textContent = 'None yet.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  for (const rel of rels) {
+    const chip = document.createElement('div');
+    chip.className = 'new-card-rel-chip card-detail-rel-chip';
+
+    if (rel.targetMissing || rel.sourceMissing) {
+      chip.innerHTML = `<span class="new-card-rel-chip-deck"><em>(deleted card)</em></span>`;
+    } else {
+      const navBtn = document.createElement('button');
+      navBtn.type = 'button';
+      navBtn.className = 'card-detail-rel-nav-btn';
+      navBtn.textContent = rel.front;
+      navBtn.addEventListener('click', async () => {
+        const targetDeck = await getDeck(rel.deckId);
+        const targetCard = await getCard(rel.cardId);
+        if (targetDeck && targetCard) renderCardDetailView(targetDeck, targetCard);
+      });
+      chip.appendChild(navBtn);
+
+      const deckLabel = document.createElement('span');
+      deckLabel.className = 'new-card-rel-chip-deck';
+      deckLabel.textContent = ` (${deckTitleById.get(rel.deckId) || 'Unknown deck'})`;
+      chip.appendChild(deckLabel);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '\u2715';
+    removeBtn.addEventListener('click', async () => {
+      await removeRelationship(rel.id);
+      showToast('Relationship removed.');
+      renderCardDetailView(deck, card);
+    });
+    chip.appendChild(removeBtn);
+
+    section.appendChild(chip);
+  }
+
+  return section;
+}
+
+function buildAddRelationshipSection(deck, card) {
+  const section = document.createElement('div');
+  section.className = 'card-detail-rel-section';
+
+  const heading = document.createElement('div');
+  heading.className = 'stats-section-heading';
+  heading.textContent = 'Add a relationship';
+  section.appendChild(heading);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'settings-api-key-input';
+  searchInput.placeholder = 'Search cards by their front text\u2026';
+  section.appendChild(searchInput);
+
+  const resultsList = document.createElement('div');
+  resultsList.className = 'new-card-rel-results';
+  section.appendChild(resultsList);
+
+  let searchDebounce = null;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(async () => {
+      const query = searchInput.value.trim();
+      resultsList.innerHTML = '';
+      if (!query) return;
+      const results = await searchCardsByFront(query, card.id);
+      for (const result of results) {
+        const row = document.createElement('div');
+        row.className = 'new-card-rel-result-row';
+        row.innerHTML = `<span>${escapeHtml(result.front)} <span class="new-card-rel-chip-deck">(${escapeHtml(result.deckTitle)})</span></span>`;
+
+        const dependsBtn = document.createElement('button');
+        dependsBtn.type = 'button';
+        dependsBtn.textContent = '+ Depends on';
+        dependsBtn.addEventListener('click', async () => {
+          await addRelationship(card.id, result.id, 'dependsOn');
+          showToast('Relationship added.');
+          renderCardDetailView(deck, card);
+        });
+
+        const relatedBtn = document.createElement('button');
+        relatedBtn.type = 'button';
+        relatedBtn.textContent = '+ Related';
+        relatedBtn.addEventListener('click', async () => {
+          await addRelationship(card.id, result.id, 'related');
+          showToast('Relationship added.');
+          renderCardDetailView(deck, card);
+        });
+
+        row.appendChild(dependsBtn);
+        row.appendChild(relatedBtn);
+        resultsList.appendChild(row);
+      }
+    }, 200);
+  });
+
+  return section;
+}
 
 function renderNewCardView(deck) {
   root.innerHTML = '';

@@ -516,6 +516,11 @@ export async function getAllDecks() {
   return db.getAll('decks');
 }
 
+export async function getDeck(deckId) {
+  const db = await getDB();
+  return db.get('decks', deckId);
+}
+
 export async function getDecksByTerritory(courseTerritoryId) {
   const db = await getDB();
   return db.getAllFromIndex('decks', 'by_courseTerritoryId', courseTerritoryId);
