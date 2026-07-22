@@ -1208,17 +1208,59 @@ export async function searchCardsByFront(query, excludeCardId) {
     .map((c) => ({ id: c.id, front: c.front, deckId: c.deckId, deckTitle: deckTitleById.get(c.deckId) || 'Unknown deck' }));
 }
 
+/**
+ * "Reverse lookup" — given an answer, formula, or any of a formula card's
+ * supplementary fields, find which card(s) produce it. Distinct from
+ * searchCardsByFront: that searches the question side (for building
+ * relationships between cards you already know the name of); this
+ * searches the answer side, for "I remember the formula/answer but not
+ * what card it's on." Searches back, formula, variables (both symbol and
+ * meaning), assumptions, commonMistakes, and applications — every field
+ * that could plausibly hold the thing someone half-remembers. Cross-deck,
+ * capped at 20 results, same as searchCardsByFront.
+ */
+export async function searchCardsByAnswer(query) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return [];
+
+  const db = await getDB();
+  const [allCards, decks] = await Promise.all([db.getAll('cards'), getAllDecks()]);
+  const deckTitleById = new Map(decks.map((d) => [d.id, d.title]));
+
+  function matches(card) {
+    if (card.back?.toLowerCase().includes(trimmed)) return true;
+    if (card.formula?.toLowerCase().includes(trimmed)) return true;
+    if (card.assumptions?.toLowerCase().includes(trimmed)) return true;
+    if (card.commonMistakes?.toLowerCase().includes(trimmed)) return true;
+    if (card.applications?.toLowerCase().includes(trimmed)) return true;
+    if (Array.isArray(card.variables)) {
+      return card.variables.some((v) =>
+        v.symbol?.toLowerCase().includes(trimmed) || v.meaning?.toLowerCase().includes(trimmed)
+      );
+    }
+    return false;
+  }
+
+  return allCards
+    .filter(matches)
+    .slice(0, 20)
+    .map((c) => ({
+      id: c.id,
+      front: c.front,
+      back: c.back,
+      type: c.type,
+      deckId: c.deckId,
+      deckTitle: deckTitleById.get(c.deckId) || 'Unknown deck'
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Documents — each uploaded PDF's filename + an LLM-written summary, kept
 // alongside the deck it was imported into (see app.js's "Documents" and
 // "Course Recap" views). The original file itself is never stored — see
 // saveDocument's doc comment for why.
-// store directly.
 // ---------------------------------------------------------------------------
 
-/**
- * @param {{id: string, deckId: string, filename: string, blob: Blob, size: number}} doc
- */
 /**
  * @param {{id: string, deckId: string, filename: string, summary: string, size: number}} doc
  *        Deliberately does NOT store the original file — only its filename,

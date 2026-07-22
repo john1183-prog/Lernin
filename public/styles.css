@@ -878,6 +878,14 @@ button { font-family: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 
+.cards-view-search-input {
+  margin-bottom: 16px;
+}
+
+.cards-browser-row-search-result {
+  border-color: var(--ochre);
+}
+
 .card-detail-view { padding: 16px; max-width: 560px; margin: 0 auto; }
 
 .card-detail-content {

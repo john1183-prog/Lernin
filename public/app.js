@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, getDeck, saveDeck, getCardsByDeck, getCard, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, getRelationshipsTo, searchCardsByFront } from './db.js';
+import { getAllDecks, getDeck, saveDeck, getCardsByDeck, getCard, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, getRelationshipsTo, searchCardsByFront, searchCardsByAnswer } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -727,7 +727,7 @@ function renderHelpView() {
       <br><br>
       Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
       <br><br>
-      Tap "Cards" on a deck to browse everything in it and open a card's detail view, which shows every relationship it's part of in both directions — what it depends on, what depends on it, and what's related — plus lets you add or remove links and jump straight to a related card, even one in a different deck. A prerequisite-aware study planner (skip a card if what it depends on hasn't been reviewed recently) is planned but not built yet (see the repo's UPCOMING_FEATURES.md).`
+      Tap "Cards" on a deck to browse everything in it and open a card's detail view, which shows every relationship it's part of in both directions — what it depends on, what depends on it, and what's related — plus lets you add or remove links and jump straight to a related card, even one in a different deck. The search box at the top of "Cards" is a reverse lookup: search by the <em>answer</em>, formula, or any of a formula card's notes (not the question) across every deck at once — useful when you remember the answer but not which card it's on. A prerequisite-aware study planner (skip a card if what it depends on hasn't been reviewed recently) is planned but not built yet (see the repo's UPCOMING_FEATURES.md).`
     },
     {
       title: 'Why you bring your own AI key',
@@ -1915,29 +1915,87 @@ async function renderCardsView(deck) {
   header.appendChild(heading);
   wrap.appendChild(header);
 
-  if (cards.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'leech-view-empty';
-    empty.textContent = 'No cards in this deck yet.';
-    wrap.appendChild(empty);
-    root.appendChild(wrap);
-    return;
+  // Reverse lookup: search by answer/formula content instead of browsing
+  // by front text. Cross-deck on purpose — the point of "I remember the
+  // answer but not which card it's on" doesn't stop at this deck's border.
+  // Below the search box: this deck's card list when empty, cross-deck
+  // search results when there's a query.
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'settings-api-key-input cards-view-search-input';
+  searchInput.placeholder = '\ud83d\udd0d Reverse lookup: search by answer, formula, or note\u2026';
+  wrap.appendChild(searchInput);
+
+  const typeLabels = { basic: 'Basic', cloze: 'Cloze', formula: 'Formula' };
+
+  const listContainer = document.createElement('div');
+  wrap.appendChild(listContainer);
+
+  function renderDeckCardList() {
+    listContainer.innerHTML = '';
+    if (cards.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'leech-view-empty';
+      empty.textContent = 'No cards in this deck yet.';
+      listContainer.appendChild(empty);
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'cards-browser-list';
+    for (const card of cards) {
+      const row = document.createElement('button');
+      row.className = 'cards-browser-row';
+      row.innerHTML = `
+        <span class="edit-step-type-badge edit-step-type-${card.type}">${typeLabels[card.type] || 'Basic'}</span>
+        <span class="cards-browser-row-front">${escapeHtml(card.front)}</span>
+      `;
+      row.addEventListener('click', () => renderCardDetailView(deck, card));
+      list.appendChild(row);
+    }
+    listContainer.appendChild(list);
   }
 
-  const list = document.createElement('div');
-  list.className = 'cards-browser-list';
-  const typeLabels = { basic: 'Basic', cloze: 'Cloze', formula: 'Formula' };
-  for (const card of cards) {
-    const row = document.createElement('button');
-    row.className = 'cards-browser-row';
-    row.innerHTML = `
-      <span class="edit-step-type-badge edit-step-type-${card.type}">${typeLabels[card.type] || 'Basic'}</span>
-      <span class="cards-browser-row-front">${escapeHtml(card.front)}</span>
-    `;
-    row.addEventListener('click', () => renderCardDetailView(deck, card));
-    list.appendChild(row);
+  async function renderSearchResults(query) {
+    listContainer.innerHTML = '';
+    const results = await searchCardsByAnswer(query);
+    if (results.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'leech-view-empty';
+      empty.textContent = 'No cards found with that in their answer.';
+      listContainer.appendChild(empty);
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'cards-browser-list';
+    for (const result of results) {
+      const row = document.createElement('button');
+      row.className = 'cards-browser-row cards-browser-row-search-result';
+      row.innerHTML = `
+        <span class="edit-step-type-badge edit-step-type-${result.type}">${typeLabels[result.type] || 'Basic'}</span>
+        <span class="cards-browser-row-front">${escapeHtml(result.front)} <span class="new-card-rel-chip-deck">(${escapeHtml(result.deckTitle)})</span></span>
+      `;
+      row.addEventListener('click', async () => {
+        const resultDeck = result.deckId === deck.id ? deck : await getDeck(result.deckId);
+        const resultCard = await getCard(result.id);
+        if (resultDeck && resultCard) renderCardDetailView(resultDeck, resultCard);
+      });
+      list.appendChild(row);
+    }
+    listContainer.appendChild(list);
   }
-  wrap.appendChild(list);
+
+  renderDeckCardList();
+
+  let searchDebounce = null;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    const query = searchInput.value.trim();
+    searchDebounce = setTimeout(() => {
+      if (query) renderSearchResults(query);
+      else renderDeckCardList();
+    }, 200);
+  });
+
   root.appendChild(wrap);
 }
 

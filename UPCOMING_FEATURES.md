@@ -38,10 +38,12 @@ revisit if that turns out insufficient once people are actually using
 formula cards). A card browser ("Cards" button per deck) and a
 relationship explorer — a card's detail view shows what it depends on,
 what depends on it, and what's related, in both directions, with
-add/remove and cross-deck navigation. All of it tested end-to-end
-against real IndexedDB semantics (fake-indexeddb) or, for the rendering,
-against realistic card data including HTML-unsafe characters — not just
-read through.
+add/remove and cross-deck navigation. Reverse lookup — a search box in
+the "Cards" view searches by answer/formula/notes content (not the
+question) across every deck at once, for "I remember the answer but not
+which card it's on." All of it tested end-to-end against real IndexedDB
+semantics (fake-indexeddb) or, for the rendering, against realistic card
+data including HTML-unsafe characters — not just read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
 
@@ -50,13 +52,6 @@ read through.
 `front`/`back`/`type`/`summary`. Extending them to actually extract
 formula/variables/etc. from source text is real prompt-engineering work,
 deliberately deferred until the manually-created path is proven out.
-
-### Reverse lookup
-Given an answer/formula, find which card(s) produce it — different from
-the relationship explorer above (which navigates links between cards
-someone already connected); this is a search over answer/back/formula
-content, not front text. `searchCardsByFront` only searches `front` —
-this would need a new search function over the other fields.
 
 ### Smart daily session planner
 Currently `study.js` queues due cards by FSRS due date only. A smarter
@@ -114,9 +109,10 @@ persistent, sectioned in-app Help view (reachable via the header's "?"
 button and from a rewritten first-run empty state) covering what the app
 is and how each feature works, and rich formula cards end-to-end (schema,
 cross-deck dependsOn/related relationships, manual creation with a
-relationship picker, Study Mode rendering, and a card browser +
-relationship explorer to view/add/remove links after creation) — only
-the AI generation pipeline and reverse lookup remain, see Tier 2 above.
+relationship picker, Study Mode rendering, a card browser + relationship
+explorer to view/add/remove links after creation, and cross-deck reverse
+lookup by answer/formula content) — only the AI generation pipeline
+remains, see Tier 2 above.
 
 ---
 
