@@ -138,10 +138,24 @@ MAX_TEXT_CHARS = 200_000  # generous bound; chunk_text() has no upper bound on
 # expect. Keep in sync with db.js's card shape (front, back, type).
 # ---------------------------------------------------------------------------
 
+class Variable(BaseModel):
+    symbol: str
+    meaning: str
+
 class Card(BaseModel):
     front: str
     back: str
-    type: Literal["basic", "cloze"]
+    type: Literal["basic", "cloze", "formula"]
+    # Only meaningful when type == "formula"; left at their defaults
+    # (empty string / empty list) for basic/cloze cards. Kept optional
+    # rather than a separate FormulaCard model so CardBatch/GenerateResponse
+    # don't need a discriminated union — the frontend already treats these
+    # as optional fields on any card record (see db.js's saveManualCard).
+    formula: str = ""
+    variables: list[Variable] = []
+    assumptions: str = ""
+    commonMistakes: str = ""
+    applications: str = ""
 
 class CardBatch(BaseModel):
     cards: list[Card]
@@ -168,7 +182,35 @@ GENERATE_CARDS_TOOL = {
                     "properties": {
                         "front": {"type": "string"},
                         "back": {"type": "string"},
-                        "type": {"type": "string", "enum": ["basic", "cloze"]}
+                        "type": {"type": "string", "enum": ["basic", "cloze", "formula"]},
+                        "formula": {
+                            "type": "string",
+                            "description": "The actual expression, e.g. 'KE = \u00bdmv\u00b2'. Only for type=formula."
+                        },
+                        "variables": {
+                            "type": "array",
+                            "description": "Each symbol in the formula and what it means. Only for type=formula.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "symbol": {"type": "string"},
+                                    "meaning": {"type": "string"}
+                                },
+                                "required": ["symbol", "meaning"]
+                            }
+                        },
+                        "assumptions": {
+                            "type": "string",
+                            "description": "What conditions the formula assumes (e.g. 'non-relativistic speeds'). Only for type=formula, and only if the source text actually states an assumption — do not invent one."
+                        },
+                        "commonMistakes": {
+                            "type": "string",
+                            "description": "A common error applying this formula, ONLY if the source text itself mentions one. Only for type=formula."
+                        },
+                        "applications": {
+                            "type": "string",
+                            "description": "Where this formula is used, ONLY if the source text itself states this. Only for type=formula."
+                        }
                     },
                     "required": ["front", "back", "type"]
                 }
@@ -197,7 +239,22 @@ GEMINI_RESPONSE_SCHEMA = {
                 "properties": {
                     "front": {"type": "string"},
                     "back": {"type": "string"},
-                    "type": {"type": "string", "enum": ["basic", "cloze"]}
+                    "type": {"type": "string", "enum": ["basic", "cloze", "formula"]},
+                    "formula": {"type": "string"},
+                    "variables": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "symbol": {"type": "string"},
+                                "meaning": {"type": "string"}
+                            },
+                            "required": ["symbol", "meaning"]
+                        }
+                    },
+                    "assumptions": {"type": "string"},
+                    "commonMistakes": {"type": "string"},
+                    "applications": {"type": "string"}
                 },
                 "required": ["front", "back", "type"]
             }
@@ -215,8 +272,30 @@ Rules:
 - Answers must be unambiguous — a grader could mark it right/wrong with no
   judgment call.
 - Prefer cloze deletion ("type": "cloze") for definitions and lists, where the
-  front contains {{c1::the answer}} inline. Use "basic" Q&A for everything else.
-- Do not invent facts not present in the source text.
+  front contains {{c1::the answer}} inline. Use "basic" Q&A for most other
+  factual content.
+- Use "type": "formula" ONLY when the source text presents an actual named
+  mathematical, physical, or chemical formula/equation with an explicit
+  expression (e.g. "KE = \u00bdmv\u00b2", not just a described relationship in
+  prose with no expression given). For formula cards:
+  - "formula": the expression exactly as it appears (or as close as plain
+    text allows — e.g. "v^2" for a superscript).
+  - "variables": every symbol in the formula and what it stands for, ONLY if
+    the source text actually defines them. If the text doesn't say what a
+    symbol means, omit that variable rather than guessing.
+  - "assumptions" / "commonMistakes" / "applications": include ONLY if the
+    source text explicitly states one — these are easy to hallucinate
+    plausible-sounding content for, and a wrong "common mistake" or
+    "assumption" is worse than an absent one. Leave empty ("") rather than
+    inventing something reasonable-sounding. Most formulas from source text
+    will legitimately have some of these fields empty — that's expected, not
+    a failure.
+  - Do not use "formula" type for a fact that merely mentions a quantity or
+    unit without an actual equation (e.g. "the speed of light is
+    3\u00d710^8 m/s" is a basic card, not a formula card, unless the source
+    text presents it as part of a named equation).
+- Do not invent facts not present in the source text — this applies with
+  extra weight to formula fields, per above.
 - Skip trivial or non-testable content (headers, page numbers, filler).
 - Also write a "summary": 2-4 sentences capturing the key points of this
   text, written for a student reviewing right before an exam — dense and

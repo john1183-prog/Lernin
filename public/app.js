@@ -723,7 +723,7 @@ function renderHelpView() {
     },
     {
       title: 'Formula cards and relationships',
-      body: `"+ Card" lets you add a Basic, Cloze, or Formula card. Formula cards have extra structured fields: the formula itself, its variables (symbol + meaning), assumptions it relies on, common mistakes, and real-world applications — useful for STEM material where the "answer" is more than a single fact. All of this shows up when you reveal the answer during a review, after the plain question like any other card — formulas render as plain text/monospace, not typeset math.
+      body: `Formula cards have extra structured fields: the formula itself, its variables (symbol + meaning), assumptions it relies on, common mistakes, and real-world applications — useful for STEM material where the "answer" is more than a single fact. You can add one by hand with "+ Card," or get them automatically: uploading a PDF now recognizes actual named formulas in the source text (not just facts and definitions) and generates formula cards for them, with the extra fields filled in only where the source text genuinely supports it — Lernin won't invent an assumption or a common mistake that isn't actually stated. All of this shows up when you reveal the answer during a review, after the plain question like any other card — formulas render as plain text/monospace, not typeset math.
       <br><br>
       Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
       <br><br>
@@ -1571,8 +1571,22 @@ Rules:
 - Answers must be unambiguous — a grader could mark it right/wrong with no
   judgment call.
 - Prefer cloze deletion ("type": "cloze") for definitions and lists, where the
-  front contains {{c1::the answer}} inline. Use "basic" Q&A for everything else.
-- Do not invent facts not present in the source text.
+  front contains {{c1::the answer}} inline. Use "basic" Q&A for most other
+  factual content.
+- Use "type": "formula" ONLY when the source text presents an actual named
+  mathematical, physical, or chemical formula/equation with an explicit
+  expression (e.g. "KE = \u00bdmv\u00b2", not just a described relationship in
+  prose with no expression given). For formula cards, add these fields:
+  - "formula": the expression exactly as it appears.
+  - "variables": array of {"symbol": "...", "meaning": "..."} for every
+    symbol the source text actually defines — omit a variable rather than
+    guessing its meaning if the text doesn't say.
+  - "assumptions" / "commonMistakes" / "applications": include ONLY if the
+    source text explicitly states one. Leave as "" rather than inventing
+    something plausible-sounding — most formulas will legitimately have
+    some of these empty, that's expected, not a failure.
+- Do not invent facts not present in the source text — this applies with
+  extra weight to formula fields, per above.
 - Skip trivial or non-testable content (headers, page numbers, filler).
 - Also write a "summary": 2-4 sentences capturing the key points of this
   text, written for a student reviewing right before an exam — dense and
@@ -1580,7 +1594,7 @@ Rules:
 
 Return ONLY valid JSON — no markdown formatting, no code fences, no
 commentary before or after — in exactly this shape:
-{"cards": [{"front": "...", "back": "...", "type": "basic"}, ...], "summary": "..."}
+{"cards": [{"front": "...", "back": "...", "type": "basic"}, {"front": "...", "back": "...", "type": "formula", "formula": "...", "variables": [{"symbol": "...", "meaning": "..."}], "assumptions": "", "commonMistakes": "", "applications": ""}, ...], "summary": "..."}
 
 Here is the source text:
 """
@@ -1757,7 +1771,7 @@ function parseManualCards(rawText) {
   for (const c of rawCards) {
     const front = typeof c?.front === 'string' ? c.front.trim() : '';
     const back = typeof c?.back === 'string' ? c.back.trim() : '';
-    const type = c?.type === 'cloze' ? 'cloze' : 'basic';
+    const type = (c?.type === 'cloze' || c?.type === 'formula') ? c.type : 'basic';
 
     // Only `front` is required. Cloze cards legitimately have an empty
     // `back` — the answer lives inline in `front` via {{c1::...}}, and
@@ -1768,7 +1782,20 @@ function parseManualCards(rawText) {
       skipped++;
       continue;
     }
-    cards.push({ front, back, type });
+
+    const card = { front, back, type };
+    if (type === 'formula') {
+      card.formula = typeof c?.formula === 'string' ? c.formula.trim() : '';
+      card.variables = Array.isArray(c?.variables)
+        ? c.variables
+            .filter((v) => v && (typeof v.symbol === 'string' || typeof v.meaning === 'string'))
+            .map((v) => ({ symbol: (v.symbol || '').trim(), meaning: (v.meaning || '').trim() }))
+        : [];
+      card.assumptions = typeof c?.assumptions === 'string' ? c.assumptions.trim() : '';
+      card.commonMistakes = typeof c?.commonMistakes === 'string' ? c.commonMistakes.trim() : '';
+      card.applications = typeof c?.applications === 'string' ? c.applications.trim() : '';
+    }
+    cards.push(card);
   }
 
   return { cards, skipped, summary };
@@ -2518,16 +2545,28 @@ function renderEditStep(cards, deckId) {
   const list = document.createElement('div');
   list.className = 'edit-step-list';
 
-  // null = discarded (recoverable via Undo — nothing is destroyed until
-  // "Add to deck" is actually clicked), not removed from the array.
+  // Full copies of every generated card, including formula-specific
+  // fields (formula/variables/assumptions/commonMistakes/applications)
+  // that this view doesn't render editable inputs for — kept on the
+  // object regardless, so they survive through to commitGeneratedCards()
+  // unedited rather than being silently dropped.
   const editable = cards.map(c => ({ ...c }));
+  // Discarded state tracked separately from the data itself — a card
+  // being temporarily discarded must never destroy or reconstruct its
+  // record, since reconstructing a stripped-down {front, back, type}
+  // object on Undo would permanently lose every other field a formula
+  // card carries (this used to happen: editable[i] was set to null then
+  // rebuilt from scratch on undo).
+  const discarded = cards.map(() => false);
 
   function updateHeading() {
-    const remaining = editable.filter(Boolean).length;
+    const remaining = discarded.filter((d) => !d).length;
     heading.textContent = remaining === editable.length
       ? `Review ${editable.length} generated card${editable.length === 1 ? '' : 's'}`
       : `Review \u2014 ${remaining} of ${editable.length} will be added`;
   }
+
+  const typeLabels = { basic: 'Basic', cloze: 'Cloze', formula: 'Formula' };
 
   editable.forEach((card, i) => {
     const row = document.createElement('div');
@@ -2538,7 +2577,7 @@ function renderEditStep(cards, deckId) {
 
     const typeBadge = document.createElement('span');
     typeBadge.className = `edit-step-type-badge edit-step-type-${card.type}`;
-    typeBadge.textContent = card.type === 'cloze' ? 'Cloze' : 'Basic';
+    typeBadge.textContent = typeLabels[card.type] || 'Basic';
     rowHeader.appendChild(typeBadge);
 
     const discardBtn = document.createElement('button');
@@ -2571,13 +2610,23 @@ function renderEditStep(cards, deckId) {
     backInput.addEventListener('input', () => { editable[i].back = backInput.value; });
     row.appendChild(backInput);
 
+    // Formula fields are shown read-only here rather than as editable
+    // inputs — this step is for deciding keep/discard/tweak front-back,
+    // not full field-by-field editing (that's available after the fact
+    // via the "Cards" browser's detail view once the card is saved).
+    if (card.type === 'formula' && (card.formula || (card.variables && card.variables.length > 0) || card.assumptions || card.commonMistakes || card.applications)) {
+      const formulaPreview = document.createElement('div');
+      formulaPreview.className = 'new-card-formula-section';
+      formulaPreview.innerHTML = renderFormulaDetailFields(card);
+      row.appendChild(formulaPreview);
+    }
+
     discardBtn.addEventListener('click', () => {
-      const discarded = editable[i] !== null;
-      editable[i] = discarded ? null : { front: frontInput.value, back: backInput.value, type: card.type };
-      row.classList.toggle('edit-step-row-discarded', discarded);
-      frontInput.disabled = discarded;
-      backInput.disabled = discarded;
-      discardBtn.textContent = discarded ? 'Undo' : 'Discard';
+      discarded[i] = !discarded[i];
+      row.classList.toggle('edit-step-row-discarded', discarded[i]);
+      frontInput.disabled = discarded[i];
+      backInput.disabled = discarded[i];
+      discardBtn.textContent = discarded[i] ? 'Undo' : 'Discard';
       updateHeading();
     });
 
@@ -2591,7 +2640,7 @@ function renderEditStep(cards, deckId) {
   commitBtn.className = 'commit-cards-btn';
   commitBtn.textContent = 'Add to deck';
   commitBtn.addEventListener('click', async () => {
-    const approved = editable.filter(Boolean);
+    const approved = editable.filter((_, i) => !discarded[i]);
     if (approved.length === 0) {
       showToast('Nothing to add \u2014 every card was discarded.');
       return;

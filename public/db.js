@@ -247,11 +247,23 @@ export async function saveNewCards(deckId, newCards) {
         deckId,
         front: card.front,
         back: card.back,
-        type: card.type || 'basic', // 'basic' | 'cloze'
+        type: card.type || 'basic', // 'basic' | 'cloze' | 'formula'
         createdAt: Date.now(),
         ...DEFAULT_FSRS_FIELDS,
         due_date: Date.now() // explicit: new cards enter the due queue now
       };
+      // Formula fields only exist for type === 'formula', but generated
+      // cards (unlike saveManualCard's caller) may legitimately include
+      // them for any card if the AI/manual-paste JSON included them —
+      // only persist if actually present, rather than writing empty
+      // strings/arrays onto every basic/cloze card.
+      if (card.type === 'formula') {
+        record.formula = card.formula || '';
+        record.variables = Array.isArray(card.variables) ? card.variables : [];
+        record.assumptions = card.assumptions || '';
+        record.commonMistakes = card.commonMistakes || '';
+        record.applications = card.applications || '';
+      }
       await store.put(record);
     }
     await tx.done;

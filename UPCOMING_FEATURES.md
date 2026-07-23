@@ -41,17 +41,24 @@ what depends on it, and what's related, in both directions, with
 add/remove and cross-deck navigation. Reverse lookup — a search box in
 the "Cards" view searches by answer/formula/notes content (not the
 question) across every deck at once, for "I remember the answer but not
-which card it's on." All of it tested end-to-end against real IndexedDB
-semantics (fake-indexeddb) or, for the rendering, against realistic card
-data including HTML-unsafe characters — not just read through.
+which card it's on." AI pipeline extraction — both the API-key path
+(`api/index.py`'s Anthropic tool schema + Gemini response schema) and
+manual-paste mode's prompt now recognize actual named formulas in
+source text and populate the same structured fields, with explicit
+anti-hallucination guardrails (assumptions/commonMistakes/applications
+are left empty rather than invented when the source text doesn't state
+one — the prompt is explicit that an absent field is expected, not a
+failure). Also fixed two real bugs found while wiring this up: generated
+formula cards' extra fields were being silently dropped at save time
+(`saveNewCards` only ever copied front/back/type), and the review/edit
+step's Undo action destroyed and rebuilt cards from a stripped-down
+{front, back, type} object, which would have permanently lost a formula
+card's fields the moment it was discarded-then-undone. All of it tested
+end-to-end against real IndexedDB semantics (fake-indexeddb) or, for
+the rendering/parsing, against realistic card data including
+HTML-unsafe characters — not just read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
-
-### Improved PDF-to-rich-card pipeline
-`api/index.py`'s generation prompts still only populate
-`front`/`back`/`type`/`summary`. Extending them to actually extract
-formula/variables/etc. from source text is real prompt-engineering work,
-deliberately deferred until the manually-created path is proven out.
 
 ### Smart daily session planner
 Currently `study.js` queues due cards by FSRS due date only. A smarter
@@ -107,12 +114,14 @@ progress-free share-copy choice), a statistics dashboard (30-day
 retention, longest streak, per-deck breakdown, activity chart), a
 persistent, sectioned in-app Help view (reachable via the header's "?"
 button and from a rewritten first-run empty state) covering what the app
-is and how each feature works, and rich formula cards end-to-end (schema,
-cross-deck dependsOn/related relationships, manual creation with a
-relationship picker, Study Mode rendering, a card browser + relationship
-explorer to view/add/remove links after creation, and cross-deck reverse
-lookup by answer/formula content) — only the AI generation pipeline
-remains, see Tier 2 above.
+is and how each feature works, and rich formula cards fully end-to-end
+(schema, cross-deck dependsOn/related relationships, manual creation
+with a relationship picker, Study Mode rendering, a card browser +
+relationship explorer, cross-deck reverse lookup, and AI generation —
+both the API-key path and manual-paste mode — actually populating
+formula fields from source text with anti-hallucination guardrails) —
+only the smart session planner and map connections remain, see Tier 2
+above.
 
 ---
 
