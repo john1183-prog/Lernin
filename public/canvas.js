@@ -102,7 +102,7 @@ const LOD_SIMPLE_DOT_RADIUS = 10;
 
 export async function initCanvasView(targetContainer, opts = {}) {
   container = targetContainer;
-  onExitCallback = opts.onExit || null;
+  onExitCallback = opts.onExit || onExitCallback;
 
   container.innerHTML = '';
   canvasEl = document.createElement('canvas');
@@ -115,8 +115,65 @@ export async function initCanvasView(targetContainer, opts = {}) {
   window.addEventListener('resize', resizeCanvas);
 
   await buildWorldModel();
+  fitCameraToContent();
   attachGestureHandlers();
   requestAnimationFrame(render);
+
+  // Built here — not appended externally by app.js after the fact — so it
+  // exists on every single path that (re-)initializes the map view,
+  // including the internal one below where entering and then exiting a
+  // study session re-runs initCanvasView() directly. That path used to
+  // skip whatever appended this button from the outside, silently
+  // dropping the only way back to list view. Reuses onExitCallback (the
+  // same callback app.js passes as onExit when first opening the map) —
+  // it already means "the map-view experience as a whole is done," which
+  // is exactly what this button should trigger.
+  if (onExitCallback) {
+    const listViewBtn = document.createElement('button');
+    listViewBtn.className = 'map-overlay-list-btn';
+    listViewBtn.textContent = 'List view';
+    listViewBtn.addEventListener('click', () => onExitCallback());
+    container.appendChild(listViewBtn);
+  }
+}
+
+/**
+ * Centers and zooms the camera to fit every island currently on the map,
+ * called once right after buildWorldModel() resolves on every view open.
+ * Previously the camera always started at a fixed {x:0, y:0, zoom:1} —
+ * fine by coincidence for a single territory (which now sits at the
+ * origin, see territoryPosition()'s comment), but with multiple
+ * territories or islands dragged away from their default spot, that fixed
+ * start could easily show mostly empty space with nothing on screen.
+ */
+function fitCameraToContent() {
+  const allIslands = worldTerritories.flatMap((t) => t.islands);
+  if (allIslands.length === 0) return; // nothing to fit; keep the default camera
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const island of allIslands) {
+    minX = Math.min(minX, island.pos.x);
+    minY = Math.min(minY, island.pos.y);
+    maxX = Math.max(maxX, island.pos.x);
+    maxY = Math.max(maxY, island.pos.y);
+  }
+
+  camera.x = (minX + maxX) / 2;
+  camera.y = (minY + maxY) / 2;
+
+  if (allIslands.length === 1) {
+    // A single island has a zero-size bounding box — dividing the
+    // viewport by a near-zero content size below would compute an
+    // extreme, meaningless zoom. A fixed, comfortable default instead.
+    camera.zoom = 1;
+    return;
+  }
+
+  const contentWidth = Math.max(maxX - minX, 1);
+  const contentHeight = Math.max(maxY - minY, 1);
+  const padding = 1.6; // breathing room around the content, not a tight crop
+  const { width, height } = canvasEl;
+  camera.zoom = clampZoom(Math.min(width / (contentWidth * padding), height / (contentHeight * padding)));
 }
 
 /**
@@ -135,8 +192,13 @@ export async function initCanvasView(targetContainer, opts = {}) {
  */
 function refreshThemeColors() {
   const style = getComputedStyle(document.documentElement);
-  MAP_BG = style.getPropertyValue('--bg').trim() || MAP_BG;
-  MAP_INK = style.getPropertyValue('--ink').trim() || MAP_INK;
+  // --map-bg/--map-ink, not --bg/--ink: the map deliberately has its own
+  // neutral, brand-independent backdrop — see styles.css's :root comment
+  // for why using the general --bg (which shares a hue family with
+  // --moss, also the color of a fully-mastered island) made mastered
+  // islands visually blend into the background.
+  MAP_BG = style.getPropertyValue('--map-bg').trim() || MAP_BG;
+  MAP_INK = style.getPropertyValue('--map-ink').trim() || MAP_INK;
 }
 
 export function destroyCanvasView() {
@@ -184,6 +246,7 @@ async function buildWorldModel() {
     const center = territoryPosition(territoryId, ti);
 
     const islands = [];
+    let allCardsInTerritory = [];
     for (let di = 0; di < decksInTerritory.length; di++) {
       const deck = decksInTerritory[di];
       const cards = await getCardsByDeck(deck.id);
@@ -196,10 +259,29 @@ async function buildWorldModel() {
         pos,
         mastery
       });
+      allCardsInTerritory = allCardsInTerritory.concat(cards);
     }
 
-    worldTerritories.push({ id: territoryId, center, islands });
+    worldTerritories.push({ id: territoryId, center, islands, activityLevel: computeActivityLevel(allCardsInTerritory) });
   }
+}
+
+/**
+ * 0 (untouched) to 1 (heavily studied), from total review reps across
+ * every card in a territory — distinct from computeMastery(), which is
+ * per-island and driven by FSRS stability. Two territories could have
+ * identical average mastery but very different amounts of actual time
+ * invested (a territory with 3 cards reviewed 40 times each vs. one with
+ * 40 cards reviewed 3 times each); this reflects cumulative effort/
+ * "aliveness," not how well any individual card is retained. Drawn as an
+ * ambient halo behind a territory's islands — see drawTerritoryActivityHalo.
+ */
+function computeActivityLevel(cardsInTerritory) {
+  const totalReps = cardsInTerritory.reduce((sum, c) => sum + (c.reps || 0), 0);
+  // Soft cap: 100 cumulative reps across a territory reads as "highly
+  // active" for display purposes, same style of display heuristic as
+  // computeMastery's 30-day stability cap below — not a precise metric.
+  return Math.min(1, totalReps / 100);
 }
 
 /**
@@ -224,8 +306,8 @@ function computeMastery(cards) {
 // update this to match. (--moss/--ochre don't need a canvas-side copy
 // anymore now that island glows derive their color from islandColor()'s
 // HSL values directly, rather than a fixed rgba() tint.)
-let MAP_BG = '#0F1810';   // fallback only — refreshThemeColors() overwrites this from CSS on view init
-let MAP_INK = '#E4F1E5';  // fallback only — same
+let MAP_BG = '#14181C';   // fallback only — refreshThemeColors() overwrites this from CSS on view init
+let MAP_INK = '#EDEFF1';  // fallback only — same
 
 function render() {
   if (!ctx) return; // view was destroyed
@@ -309,6 +391,8 @@ function drawTerritory(territory, viewport) {
   // Fixed by making the glow per-island (see drawIslandGlow) instead of
   // per-territory, so it's always concentric with the thing it's under.
 
+  drawTerritoryActivityHalo(territory);
+
   const showFullDetail = camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD;
 
   for (const island of territory.islands) {
@@ -341,6 +425,33 @@ function drawIslandGlow(island, radius) {
   const gradient = ctx.createRadialGradient(screen.x, screen.y, 0, screen.x, screen.y, radius);
   gradient.addColorStop(0, `hsla(${h}, ${s}%, ${l}%, 0.28)`);
   gradient.addColorStop(1, `hsla(${h}, ${s}%, ${l}%, 0)`);
+  ctx.beginPath();
+  ctx.fillStyle = gradient;
+  ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
+ * A very large, low-opacity ambient glow behind a territory's islands,
+ * scaled by computeActivityLevel() rather than any single island's
+ * mastery — a territory that's been heavily studied overall feels
+ * subtly "alive" even before every individual deck is mastered. Fixed
+ * ochre hue rather than tying it to the mastery color progression
+ * (sand->ochre->moss): this halo sits at a much larger radius and lower
+ * opacity than the per-island glows, so it needed a hue that reads as
+ * "ambient warmth" distinct from both the neutral map background and
+ * whatever color the islands themselves happen to be — using moss here
+ * would risk exactly the same background/foreground hue collision that
+ * MAP_BG's own fix (see refreshThemeColors) was about.
+ */
+function drawTerritoryActivityHalo(territory) {
+  if (territory.activityLevel <= 0) return;
+  const screen = worldToScreen(territory.center.x, territory.center.y);
+  const radius = TERRITORY_SPACING * 0.55 * camera.zoom;
+  const opacity = territory.activityLevel * 0.12; // capped subtle — ambience, not a competing shape
+  const gradient = ctx.createRadialGradient(screen.x, screen.y, 0, screen.x, screen.y, radius);
+  gradient.addColorStop(0, `hsla(33, 65%, 50%, ${opacity})`);
+  gradient.addColorStop(1, 'hsla(33, 65%, 50%, 0)');
   ctx.beginPath();
   ctx.fillStyle = gradient;
   ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);

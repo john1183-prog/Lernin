@@ -6,7 +6,7 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'lernin-shell-v18';
+const CACHE_VERSION = 'lernin-shell-v19';
 
 // Bump CACHE_VERSION on every deploy that changes any of these files, or
 // returning users will keep serving a stale shell from cache. Wiring this
@@ -111,6 +111,21 @@ self.addEventListener('fetch', (event) => {
           }
           throw new Error('Offline and asset not cached');
         });
+    })
+  );
+});
+
+// Focuses an already-open tab if one exists, otherwise opens a new one —
+// standard pattern for "tapping a notification should bring you to the
+// app," used by the study reminder in app.js's checkAndShowStudyReminder().
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('/');
     })
   );
 });

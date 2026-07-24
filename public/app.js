@@ -5,7 +5,7 @@
 // call the same startStudySession() entry point this file uses, and will
 // read the view-mode preference this file owns.
 
-import { getAllDecks, getDeck, saveDeck, getCardsByDeck, getCard, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, getRelationshipsTo, searchCardsByFront, searchCardsByAnswer } from './db.js';
+import { getAllDecks, getDeck, saveDeck, getCardsByDeck, getCard, getCardsDueTodayOrEarlier, getDeckStateCounts, getReviewStats, getSuspendedCards, resetLeech, deleteCard, getApiConfig, saveApiConfig, clearApiConfig, wipeAllData, saveDocument, getDocumentsByDeck, deleteDocument, clearIslandPosition, useStreakFreeze, getReviewHistoryForCard, migrateFromOldDatabaseIfNeeded, exportDeckData, importDeckData, getDashboardStats, saveManualCard, addRelationship, removeRelationship, getRelationshipsFrom, getRelationshipsTo, searchCardsByFront, searchCardsByAnswer, getReminderSettings, setReminderEnabled, markReminderShownToday, localDayKey } from './db.js';
 import { startStudySession, endStudySession } from './study.js';
 import { generateCards, commitGeneratedCards, retryQueuedGenerations, dedupeAgainstDeck } from './api.js';
 import { initCanvasView } from './canvas.js';
@@ -36,6 +36,46 @@ export async function initApp() {
   retryQueuedGenerations(); // in case there's a queue left from a prior offline session
   wireGenerationEvents();
   await renderDeckList();
+  checkAndShowStudyReminder(); // fire-and-forget — never blocks the first render
+}
+
+/**
+ * See db.js's "Study reminders" section comment for why this exists
+ * instead of true push notifications. Shows at most one local
+ * notification per calendar day, only if: reminders are turned on,
+ * permission was already granted (never requested here — that only
+ * happens from the explicit Settings toggle), it's evening local time,
+ * and today hasn't been studied yet.
+ */
+async function checkAndShowStudyReminder() {
+  try {
+    const settings = await getReminderSettings();
+    if (!settings.enabled) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    const todayKey = localDayKey(Date.now());
+    if (settings.lastShownDayKey === todayKey) return;
+
+    const hour = new Date().getHours();
+    if (hour < 18) return; // evening-only nudge, not an anytime interruption
+
+    const stats = await getReviewStats();
+    if (stats.studiedToday) return;
+
+    const registration = await navigator.serviceWorker?.getRegistration();
+    const title = 'Keep your streak going';
+    const body = stats.streakDays > 0
+      ? `You have a ${stats.streakDays}-day streak \u2014 study today to keep it.`
+      : 'You have cards waiting whenever you\u2019re ready.';
+    if (registration) {
+      registration.showNotification(title, { body, icon: '/icons/icon-192.png' });
+    } else {
+      new Notification(title, { body, icon: '/icons/icon-192.png' });
+    }
+    await markReminderShownToday();
+  } catch {
+    // Notifications are a nice-to-have, never worth surfacing an error for.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -50,10 +90,6 @@ async function renderDeckList() {
         renderDeckList();
       }
     });
-    // The canvas view renders its own toggle-back affordance is out of
-    // scope here; simplest v1 path is a fixed "List view" button overlaid
-    // outside the canvas element itself, appended after init:
-    root.appendChild(buildMapOverlayControls());
     return;
   }
 
@@ -252,17 +288,6 @@ function buildMasteryBar({ newCount, inProgress, mastered, total }) {
   bar.appendChild(seg(inProgress, 'mastery-seg-progress'));
   bar.appendChild(seg(mastered, 'mastery-seg-mastered'));
   return bar;
-}
-
-function buildMapOverlayControls() {
-  const overlay = document.createElement('button');
-  overlay.className = 'map-overlay-list-btn';
-  overlay.textContent = 'List view';
-  overlay.addEventListener('click', () => {
-    uiState.view = 'list';
-    renderDeckList();
-  });
-  return overlay;
 }
 
 async function buildDeckCard(deck) {
@@ -727,7 +752,7 @@ function renderHelpView() {
       <br><br>
       Any card (not just formula cards) can be linked to others as <strong>Depends on</strong> (a prerequisite you should know first) or <strong>Related</strong> (a connected but non-prerequisite concept) — search for an existing card by its front text while creating a new one. These links can cross decks, so a formula in one course can depend on a concept from an earlier one.
       <br><br>
-      Tap "Cards" on a deck to browse everything in it and open a card's detail view, which shows every relationship it's part of in both directions — what it depends on, what depends on it, and what's related — plus lets you add or remove links and jump straight to a related card, even one in a different deck. The search box at the top of "Cards" is a reverse lookup: search by the <em>answer</em>, formula, or any of a formula card's notes (not the question) across every deck at once — useful when you remember the answer but not which card it's on. A prerequisite-aware study planner (skip a card if what it depends on hasn't been reviewed recently) is planned but not built yet (see the repo's UPCOMING_FEATURES.md).`
+      Tap "Cards" on a deck to browse everything in it and open a card's detail view, which shows every relationship it's part of in both directions — what it depends on, what depends on it, and what's related — plus lets you add or remove links and jump straight to a related card, even one in a different deck. The search box at the top of "Cards" is a reverse lookup: search by the <em>answer</em>, formula, or any of a formula card's notes (not the question) across every deck at once — useful when you remember the answer but not which card it's on. A prerequisite-aware study planner (skip a card if what it depends on hasn't been reviewed recently) is planned but not built yet.`
     },
     {
       title: 'Why you bring your own AI key',
@@ -759,6 +784,10 @@ function renderHelpView() {
     {
       title: 'Documents and Course Recap',
       body: `When you upload a PDF, Lernin keeps the filename and an AI-written summary of it — not the original file. This is deliberate: storing every PDF a student uploads across a term adds up fast, and the summary is what's actually useful to revisit. Under a deck's "Documents" button, you can view each summary. If a deck has multiple documents, "Course Recap" stitches all their summaries into one read-through, meant to be skimmable in a few minutes before an exam.`
+    },
+    {
+      title: 'Study reminders',
+      body: `Turn on "Show evening study reminders" in Settings to get a local notification if you haven't studied by evening. This isn't true push notification — it can't wake up the app if it's been fully closed all day, since that would need a server storing something about your device, which Lernin deliberately doesn't do. It shows at most once a day, and only if the app gets opened at some point that day.`
     },
     {
       title: 'Settings — Storage, Hard Reload, and Reset',
@@ -1028,6 +1057,55 @@ async function renderSettingsView() {
   });
 
   wrap.appendChild(form);
+
+  // --- study reminders ---
+  const reminderSettings = await getReminderSettings();
+  const reminderSection = document.createElement('div');
+  reminderSection.className = 'settings-danger-zone';
+
+  const reminderHeading = document.createElement('h3');
+  reminderHeading.className = 'settings-danger-heading';
+  reminderHeading.style.color = 'var(--ink)';
+  reminderHeading.textContent = 'Study reminders';
+  reminderSection.appendChild(reminderHeading);
+
+  const reminderIntro = document.createElement('p');
+  reminderIntro.className = 'settings-key-help';
+  reminderIntro.textContent = 'If you haven\u2019t studied by evening, Lernin can show a local reminder \u2014 at most once a day, only while the app has been opened that day. This isn\u2019t true push notification (which would need a server storing your device\u2019s subscription, and Lernin doesn\u2019t store anything about you on a server) \u2014 it can\u2019t wake up a fully closed app or browser.';
+  reminderSection.appendChild(reminderIntro);
+
+  const reminderToggleLabel = document.createElement('label');
+  reminderToggleLabel.className = 'settings-provider-option';
+  reminderToggleLabel.style.marginTop = '8px';
+
+  const reminderToggle = document.createElement('input');
+  reminderToggle.type = 'checkbox';
+  reminderToggle.checked = reminderSettings.enabled;
+  reminderToggleLabel.appendChild(reminderToggle);
+  reminderToggleLabel.appendChild(document.createTextNode(' Show evening study reminders'));
+  reminderSection.appendChild(reminderToggleLabel);
+
+  reminderToggle.addEventListener('change', async () => {
+    if (reminderToggle.checked) {
+      if (typeof Notification === 'undefined') {
+        showToast('This browser doesn\u2019t support notifications.');
+        reminderToggle.checked = false;
+        return;
+      }
+      const permission = Notification.permission === 'granted'
+        ? 'granted'
+        : await Notification.requestPermission();
+      if (permission !== 'granted') {
+        showToast('Notification permission was not granted.');
+        reminderToggle.checked = false;
+        return;
+      }
+    }
+    await setReminderEnabled(reminderToggle.checked);
+    showToast(reminderToggle.checked ? 'Reminders on.' : 'Reminders off.');
+  });
+
+  wrap.appendChild(reminderSection);
 
   // --- storage section: usage estimate + hard reload ---
   const storageSection = document.createElement('div');

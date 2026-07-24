@@ -847,7 +847,7 @@ function startOfLocalDay(ms) {
   return d.getTime();
 }
 
-function localDayKey(ms) {
+export function localDayKey(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
@@ -945,6 +945,47 @@ export async function saveApiConfig({ provider, apiKey }) {
 export async function clearApiConfig() {
   const db = await getDB();
   return db.delete('settings', API_CONFIG_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Study reminders — a deliberately scoped-down alternative to true push
+// notifications. Real push (a notification arriving even when the app/tab
+// isn't open at all) needs a Web Push subscription stored server-side and
+// something to trigger sends on a schedule (e.g. a cron job) — this app
+// has no server-side storage of any kind by design (see the Help view's
+// "what data leaves your device" section), and adding one just for this
+// would be a real architecture change, not a client-only feature. What
+// this actually does: checks, every time the app is opened, whether
+// today hasn't been studied yet and it's evening local time, and shows a
+// local notification if so (once per day, not on every single open).
+// This only fires while the app/tab has been opened at least once that
+// day — it cannot wake up a fully closed app the way true push can.
+// ---------------------------------------------------------------------------
+
+const REMINDER_SETTINGS_KEY = 'studyReminderSettings';
+
+/**
+ * @returns {Promise<{enabled: boolean, lastShownDayKey: string|null}>}
+ */
+export async function getReminderSettings() {
+  const db = await getDB();
+  const record = await db.get('settings', REMINDER_SETTINGS_KEY);
+  return record
+    ? { enabled: !!record.enabled, lastShownDayKey: record.lastShownDayKey || null }
+    : { enabled: false, lastShownDayKey: null };
+}
+
+export async function setReminderEnabled(enabled) {
+  const db = await getDB();
+  const existing = await getReminderSettings();
+  return db.put('settings', { key: REMINDER_SETTINGS_KEY, ...existing, enabled: !!enabled });
+}
+
+/** Marks today as "already shown a reminder" so it doesn't repeat on every app open for the rest of the day. */
+export async function markReminderShownToday() {
+  const db = await getDB();
+  const existing = await getReminderSettings();
+  return db.put('settings', { key: REMINDER_SETTINGS_KEY, ...existing, lastShownDayKey: localDayKey(Date.now()) });
 }
 
 /**

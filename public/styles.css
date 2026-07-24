@@ -36,6 +36,21 @@
   --danger: #B5482E;
   --danger-ink: #fff;
 
+  /* --map-bg / --map-ink deliberately kept OUT of the brand palette above.
+     The map's islands are colored on a sand->ochre->moss progression (see
+     canvas.js's SAND_HSL/OCHRE_HSL/MOSS_HSL), and --moss is also the
+     brand's primary color — if the map's own background shared that same
+     hue family (as it did briefly, when it read the general --bg token
+     during the green rebrand), a mastered island and the backdrop behind
+     it both being green meant they visually camouflaged each other even
+     though their raw contrast ratio was technically fine. A neutral,
+     desaturated dark backdrop has no hue to collide with ANY island color
+     regardless of what the brand palette becomes in a future redesign —
+     figure-ground separation here matters more than palette consistency
+     with the rest of the UI chrome. */
+  --map-bg: #14181C;
+  --map-ink: #EDEFF1;
+
   --font-display: 'Fraunces', Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
@@ -62,6 +77,11 @@
 
     --danger: #E0604A;
     --danger-ink: #2A0800;
+
+    /* Deliberately NOT redefined here — --map-bg/--map-ink stay the same
+       neutral values in both light and dark mode. See the :root comment
+       above for why the map's backdrop is intentionally decoupled from
+       the rest of the theme. */
 
     color-scheme: dark;
   }
@@ -1104,7 +1124,7 @@ button { font-family: inherit; cursor: pointer; }
   height: 100vh;
   display: block;
   touch-action: none; /* let pointer events own pan/zoom, not the browser */
-  background: var(--bg);
+  background: var(--map-bg);
 }
 
 .map-overlay-list-btn {
