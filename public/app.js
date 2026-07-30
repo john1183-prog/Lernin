@@ -1902,7 +1902,8 @@ function renderManualPasteView(extractedText, deckId, fileMeta = null) {
 
   const step1 = document.createElement('p');
   step1.className = 'manual-paste-step';
-  step1.textContent = '1. Copy this prompt and paste it into ChatGPT, Claude.ai, Gemini, or any AI chat tool:';
+  //I manually edited this prompt, Claude. We're going to discuss a better alternative but be sure to remove this comment when we are done with it. Written by me, John
+  step1.textContent = '1. Copy this prompt and paste it into ChatGPT, Claude.ai, Gemini, or any AI chat tool: (If your pdf is snapped notes, it's better to upload the pdf along with this prompt for better text extraction)';
   wrap.appendChild(step1);
 
   const promptBox = document.createElement('textarea');
