@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'Lernin';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 // Renamed from 'RecallDB' -> 'Lernin' to match the repo/product name.
 // IndexedDB database names can't be renamed in place, so on first load
@@ -145,7 +145,14 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 7) { ... }` etc. Never delete
+      // --- conceptLayouts (v7): user-dragged positions in the Concept Graph.
+      if (oldVersion < 7) {
+        if (!db.objectStoreNames.contains('conceptLayouts')) {
+          db.createObjectStore('conceptLayouts', { keyPath: 'cardId' });
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 8) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -361,7 +368,8 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
         cardId,
         grade: reviewLogEntry.grade,           // 'again' | 'hard' | 'good' | 'easy'
         reviewedAt: reviewLogEntry.reviewedAt || Date.now(),
-        elapsedDays: reviewLogEntry.elapsedDays ?? null
+        elapsedDays: reviewLogEntry.elapsedDays ?? null,
+        teachingNote: reviewLogEntry.teachingNote || null
       });
     }
 
@@ -1342,4 +1350,145 @@ export async function getDocument(id) {
 export async function deleteDocument(id) {
   const db = await getDB();
   return db.delete('documents', id);
+}
+
+// ---------------------------------------------------------------------------
+// v7 additions — Concept Graph positions + Theme
+// ---------------------------------------------------------------------------
+
+export async function saveConceptPosition(cardId, x, y) {
+  const db = await getDB();
+  return db.put('conceptLayouts', { cardId, x, y, updatedAt: Date.now() });
+}
+
+export async function getConceptPositionOverrides() {
+  const db = await getDB();
+  const all = await db.getAll('conceptLayouts');
+  const map = new Map();
+  for (const rec of all) map.set(rec.cardId, { x: rec.x, y: rec.y });
+  return map;
+}
+
+export async function getTheme() {
+  const db = await getDB();
+  const rec = await db.get('settings', 'theme');
+  return rec?.value || 'system';
+}
+
+export async function saveTheme(value) {
+  const db = await getDB();
+  localStorage.setItem('lernin-theme', value);
+  return db.put('settings', { key: 'theme', value });
+}
+
+// ---------------------------------------------------------------------------
+// Aliases and missing functions for new app.js / study.js
+// ---------------------------------------------------------------------------
+
+/** Alias for getAllDecks */
+export const getDecks = getAllDecks;
+
+/** Alias for getDocumentsByDeck */
+export const getDocuments = getDocumentsByDeck;
+
+/** Alias for getReviewHistoryForCard */
+export const getReviewLogForCard = getReviewHistoryForCard;
+
+/** Cards due for a specific deck (alias for getCardsDueTodayOrEarlier with deckId) */
+export async function getCardsDueForDeck(deckId) {
+  return getCardsDueTodayOrEarlier({ deckId });
+}
+
+/** Get all cards across all decks */
+export async function getAllCards() {
+  const db = await getDB();
+  return db.getAll('cards');
+}
+
+/** Generic settings get */
+export async function getSetting(key) {
+  const db = await getDB();
+  const rec = await db.get('settings', key);
+  return rec?.value ?? null;
+}
+
+/** Generic settings save */
+export async function saveSetting(key, value) {
+  const db = await getDB();
+  return db.put('settings', { key, value });
+}
+
+/** Alias for exportDeckData */
+export const exportDecks = exportDeckData;
+
+/** Alias for importDeckData */
+export const importDecks = importDeckData;
+
+/** Add a new deck */
+export async function addDeck({ title, courseTerritoryId = 'uncategorized' }) {
+  const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await saveDeck({ id, title, courseTerritoryId, createdAt: Date.now() });
+  return id;
+}
+
+/** Delete a deck and all its cards */
+export async function deleteDeck(deckId) {
+  const db = await getDB();
+  const cards = await db.getAllFromIndex('cards', 'by_deckId', deckId);
+  const tx = db.transaction(['decks', 'cards', 'documents'], 'readwrite');
+  await tx.objectStore('decks').delete(deckId);
+  for (const card of cards) {
+    await tx.objectStore('cards').delete(card.id);
+  }
+  const docs = await db.getAllFromIndex('documents', 'by_deckId', deckId);
+  for (const doc of docs) {
+    await tx.objectStore('documents').delete(doc.id);
+  }
+  await tx.done;
+}
+
+/** Rename a deck */
+export async function renameDeck(deckId, newTitle) {
+  const db = await getDB();
+  const deck = await db.get('decks', deckId);
+  if (!deck) throw new Error(`renameDeck: deck ${deckId} not found`);
+  deck.title = newTitle;
+  return db.put('decks', deck);
+}
+
+/**
+ * Bulk-save cards into a deck (used by manual JSON import).
+ * Equivalent to saveNewCards but accepts the full card shape from an AI response.
+ */
+export async function saveCards(deckId, cardsArray) {
+  const db = await getDB();
+  const tx = db.transaction(['cards'], 'readwrite');
+  const store = tx.objectStore('cards');
+  const now = Date.now();
+  for (const c of cardsArray) {
+    const card = {
+      id: crypto.randomUUID ? crypto.randomUUID() : `${now}-${Math.random().toString(36).slice(2)}`,
+      deckId,
+      front: c.front,
+      back: c.back,
+      type: c.type || 'basic',
+      formula: c.formula || null,
+      variables: c.variables || null,
+      assumptions: c.assumptions || null,
+      commonMistakes: c.commonMistakes || null,
+      applications: c.applications || null,
+      createdAt: now,
+      state: 'new',
+      difficulty: 0,
+      stability: 0,
+      reps: 0,
+      lapses: 0,
+      last_review: null,
+      due_date: now,
+      suspended: false,
+      leech: false
+    };
+    store.add(card);
+  }
+  await tx.done;
 }

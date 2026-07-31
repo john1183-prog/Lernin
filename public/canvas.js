@@ -66,12 +66,14 @@ function islandPosition(territoryCenter, islandId, index, total) {
 let ctx = null;
 let canvasEl = null;
 let camera = { x: 0, y: 0, zoom: 1 };
+let targetCamera = { x: 0, y: 0, zoom: 1 };
 let worldTerritories = []; // [{ id, center, islands: [{ id, deckId, title, pos, mastery }] }]
 let container = null;
 let onExitCallback = null;
 
 let isPanning = false;
 let lastPointer = null;
+let hoveredIsland = null;
 let pinchStartDist = null;
 let pinchStartZoom = null;
 const activePointers = new Map();
@@ -158,14 +160,15 @@ function fitCameraToContent() {
     maxY = Math.max(maxY, island.pos.y);
   }
 
-  camera.x = (minX + maxX) / 2;
-  camera.y = (minY + maxY) / 2;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
 
   if (allIslands.length === 1) {
     // A single island has a zero-size bounding box — dividing the
     // viewport by a near-zero content size below would compute an
     // extreme, meaningless zoom. A fixed, comfortable default instead.
-    camera.zoom = 1;
+    targetCamera = { x: cx, y: cy, zoom: 1 };
+    camera.x = cx; camera.y = cy; camera.zoom = 1; // snap on first load
     return;
   }
 
@@ -173,7 +176,10 @@ function fitCameraToContent() {
   const contentHeight = Math.max(maxY - minY, 1);
   const padding = 1.6; // breathing room around the content, not a tight crop
   const { width, height } = canvasEl;
-  camera.zoom = clampZoom(Math.min(width / (contentWidth * padding), height / (contentHeight * padding)));
+  const zoom = clampZoom(Math.min(width / (contentWidth * padding), height / (contentHeight * padding)));
+  targetCamera = { x: cx, y: cy, zoom };
+  // Snap on first render so there's no "zoom in from space" on open
+  camera.x = cx; camera.y = cy; camera.zoom = zoom;
 }
 
 /**
@@ -310,6 +316,11 @@ let MAP_BG = '#14181C';   // fallback only — refreshThemeColors() overwrites t
 let MAP_INK = '#EDEFF1';  // fallback only — same
 
 function render() {
+  // Camera smoothing — lerp toward target
+  camera.x += (targetCamera.x - camera.x) * 0.12;
+  camera.y += (targetCamera.y - camera.y) * 0.12;
+  camera.zoom += (targetCamera.zoom - camera.zoom) * 0.12;
+
   if (!ctx) return; // view was destroyed
 
   const { width, height } = canvasEl;
@@ -392,6 +403,30 @@ function drawTerritory(territory, viewport) {
   // per-territory, so it's always concentric with the thing it's under.
 
   drawTerritoryActivityHalo(territory);
+
+  // Territory label — show deck group name above the cluster
+  if (camera.zoom > 0.25) {
+    const islands = territory.islands;
+    if (islands.length > 0) {
+      // Find bounding center of all islands in this territory
+      const sumX = islands.reduce((s, i) => s + i.pos.x, 0) / islands.length;
+      const sumY = islands.reduce((s, i) => s + i.pos.y, 0) / islands.length;
+      const labelScreen = worldToScreen(sumX, sumY - ISLAND_SPACING * 1.4);
+      const labelAlpha = Math.min(1, (camera.zoom - 0.25) / 0.25);
+      ctx.save();
+      ctx.globalAlpha = labelAlpha * 0.85;
+      ctx.font = `bold ${Math.max(9, 13 * camera.zoom)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = getComputedStyle(document.documentElement)
+        .getPropertyValue('--map-ink').trim() || '#1A1F1B';
+      ctx.fillText(
+        territory.id === 'uncategorized' ? 'Other' : territory.id,
+        labelScreen.x, labelScreen.y
+      );
+      ctx.restore();
+    }
+  }
 
   const showFullDetail = camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD;
 
@@ -516,6 +551,7 @@ function islandColor(mastery, seedId) {
 }
 
 function drawIsland(island) {
+  const _isHovered = island === hoveredIsland;
   const screen = worldToScreen(island.pos.x, island.pos.y);
   const radius = ISLAND_RADIUS_BASE * camera.zoom;
 
@@ -525,6 +561,15 @@ function drawIsland(island) {
   const { h, s, l } = islandColor(island.mastery, island.id);
 
   drawIslandGlow(island, radius * 2.2);
+
+  // Hover ring
+  if (_isHovered) {
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, radius + 7, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(46, 125, 50, 0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
 
   ctx.beginPath();
   ctx.fillStyle = `hsl(${h}, ${s}%, ${l}%)`;
@@ -616,6 +661,13 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   if (!activePointers.has(e.pointerId)) return;
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  // Update hover state for island glow effect
+  if (activePointers.size === 1) {
+    const rect = canvasEl.getBoundingClientRect();
+    hoveredIsland = hitTestIsland(e.clientX - rect.left, e.clientY - rect.top);
+    canvasEl.style.cursor = hoveredIsland ? 'pointer' : (isPanning ? 'grabbing' : 'grab');
+  }
 
   if (activePointers.size === 2) {
     const [p1, p2] = Array.from(activePointers.values());
