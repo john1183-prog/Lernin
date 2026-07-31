@@ -136,7 +136,8 @@ function goBack() {
 
 async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
-  const [route, id] = path.split('/');
+  const [_, route, id] = path.split('/');
+
 
   // Cleanup: prevent stuck modals when user navigates back
   document.querySelectorAll('.sheet-backdrop, .sheet').forEach(el => el.remove());
