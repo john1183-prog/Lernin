@@ -1492,3 +1492,22 @@ export async function saveCards(deckId, cardsArray) {
   }
   await tx.done;
 }
+
+/* ---------- Undo support ---------- */
+export async function removeLastReviewLogForCard(cardId) {
+  const db = await getDB();
+  const tx = db.transaction('reviewLog', 'readwrite');
+  const index = tx.store.index('by_cardId');
+  
+  // Open cursor going backward ('prev') to get the most recent entry
+  let cursor = await index.openCursor(cardId, 'prev');
+  
+  if (cursor) {
+    await cursor.delete();
+    await tx.done;
+    return true; // Successfully removed
+  }
+  
+  await tx.done;
+  return false; // Nothing to remove
+}

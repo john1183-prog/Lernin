@@ -3,7 +3,7 @@
 
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
-  getReviewLogForCard, getDeck
+  getReviewLogForCard, getDeck, removeLastReviewLogForCard
 } from './db.js';
 import { gradeCard, previewIntervals } from './scheduler.js';
 import { renderMath, showToast } from './app.js';
@@ -18,8 +18,10 @@ let session = {
   isActive: false,
   currentCard: null,
   isRevealed: false,
+  hintVisible: false,
   touchStart: null,
-  keyboardHandler: null
+  keyboardHandler: null,
+  undoStack: []
 };
 
 const GRADE_MAP = { '1': 'again', '2': 'hard', '3': 'good', '4': 'easy' };
@@ -36,8 +38,10 @@ export async function startStudySession(container, opts = {}) {
     isActive: true,
     currentCard: null,
     isRevealed: false,
+    hintVisible: false,
     touchStart: null,
-    keyboardHandler: null
+    keyboardHandler: null,
+    undoStack: []
   };
 
   let cards;
@@ -101,26 +105,62 @@ function renderStudyUI(container) {
   container.innerHTML = '';
   container.className = 'study-session';
 
+  // Header with counter, undo, help
+  const header = document.createElement('div');
+  header.className = 'study-header';
+  header.id = 'studyHeader';
+  container.appendChild(header);
+
+  // Context bar
   const contextBar = document.createElement('div');
   contextBar.className = 'study-context-bar';
   contextBar.id = 'studyContext';
   container.appendChild(contextBar);
 
+  // Card area
   const cardArea = document.createElement('div');
   cardArea.className = 'study-card-area';
   cardArea.id = 'cardArea';
   container.appendChild(cardArea);
 
+  // Controls
   const controls = document.createElement('div');
   controls.className = 'study-controls';
   controls.id = 'studyControls';
   container.appendChild(controls);
 
+  // Live region for screen readers
   const live = document.createElement('div');
   live.className = 'sr-only';
   live.setAttribute('aria-live', 'polite');
   live.id = 'studyLive';
   container.appendChild(live);
+}
+
+function updateHeader() {
+  const header = document.getElementById('studyHeader');
+  if (!header) return;
+  const total = session.queue.length;
+  const current = Math.min(session.index + 1, total);
+  const canUndo = session.undoStack.length > 0;
+
+  header.innerHTML = `
+    <div class="study-header-counter">Card ${current} of ${total}</div>
+    <div class="study-header-actions">
+      <button class="study-undo-btn" id="studyUndoBtn" aria-label="Undo last grade" ${canUndo ? '' : 'disabled'}>↩</button>
+      <button class="study-help-btn" id="studyHelpBtn" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  `;
+
+  const undoBtn = header.querySelector('#studyUndoBtn');
+  if (undoBtn && canUndo) {
+    undoBtn.addEventListener('click', undoLastGrade);
+  }
+
+  const helpBtn = header.querySelector('#studyHelpBtn');
+  if (helpBtn) {
+    helpBtn.addEventListener('click', showShortcutsOverlay);
+  }
 }
 
 function updateContextBar(card) {
@@ -152,12 +192,15 @@ async function showCard() {
   const card = session.queue[session.index];
   session.currentCard = card;
   session.isRevealed = false;
+  session.hintVisible = false;
 
+  // Fetch deck title if not cached
   if (!card._deckTitle && card.deckId) {
     const deck = await getDeck(card.deckId);
     card._deckTitle = deck?.title || 'Deck';
   }
 
+  updateHeader();
   updateContextBar(card);
 
   const cardArea = document.getElementById('cardArea');
@@ -171,10 +214,12 @@ async function showCard() {
   inner.className = 'study-card-inner';
   inner.id = 'cardInner';
 
+  // Front
   const front = document.createElement('div');
   front.className = 'study-card-front';
   front.innerHTML = `<div class="study-card-content">${renderFront(card)}</div>`;
 
+  // Back (hidden until flip)
   const back = document.createElement('div');
   back.className = 'study-card-back';
   back.innerHTML = `<div class="study-card-content">${renderBack(card)}</div>`;
@@ -186,10 +231,19 @@ async function showCard() {
 
   renderMath(wrap);
 
+  // Touch handlers for swipe
   wrap.addEventListener('touchstart', onTouchStart, { passive: true });
   wrap.addEventListener('touchmove', onTouchMove, { passive: true });
   wrap.addEventListener('touchend', onTouchEnd, { passive: true });
 
+  // Click to flip (before reveal)
+  wrap.addEventListener('click', (e) => {
+    if (!session.isRevealed && !session.hintVisible) {
+      revealCard();
+    }
+  });
+
+  // Remove enter animation class after it plays
   requestAnimationFrame(() => {
     wrap.classList.remove('is-entering');
   });
@@ -203,7 +257,7 @@ function renderFront(card) {
     html = html.replace(/\{\{c\d+::([^}]+)\}\}/g, '<span style="color:var(--ink-muted);">[...]</span>');
   }
   if (card.formula) {
-    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}\[ </div>`;
+    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}$$</div>`;
   }
   return html;
 }
@@ -216,10 +270,10 @@ function renderBack(card) {
   }
 
   if (card.type === 'formula' || card.formula) {
-    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)} \]</div>`;
+    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}$$</div>`;
     if (card.variables && card.variables.length) {
       html += `<div class="formula-extras">`;
-      html += renderFormulaExtra('Variables', card.variables.map(v => `${v.name}: ${v.description}`).join(' • '));
+      html += renderFormulaExtra('Variables', card.variables.map(v => `${v.name}: ${v.description}`).join(' · '));
       if (card.assumptions) html += renderFormulaExtra('Assumptions', card.assumptions);
       if (card.commonMistakes) html += renderFormulaExtra('Common Mistakes', card.commonMistakes);
       if (card.applications) html += renderFormulaExtra('Applications', card.applications);
@@ -239,14 +293,74 @@ function renderFormulaExtra(label, value) {
   `;
 }
 
+/* ---------- Hint ---------- */
+function getHintText(card) {
+  if (card.hint) return card.hint;
+  if (card.type === 'formula' || card.formula) {
+    const parts = [];
+    if (card.variables && card.variables.length) {
+      parts.push('Variables: ' + card.variables.map(v => `${v.symbol || v.name}: ${v.meaning || v.description}`).join(', '));
+    }
+    if (card.assumptions) parts.push('Assumptions: ' + card.assumptions);
+    return parts.join('\n') || null;
+  }
+  return null;
+}
+
+function toggleHint() {
+  session.hintVisible = !session.hintVisible;
+  const front = document.querySelector('.study-card-front');
+  if (!front) return;
+
+  let hintArea = front.querySelector('.study-hint-area');
+  if (session.hintVisible) {
+    if (!hintArea) {
+      hintArea = document.createElement('div');
+      hintArea.className = 'study-hint-area';
+      const hintText = getHintText(session.currentCard);
+      if (hintText) {
+        hintArea.innerHTML = `
+          <div class="study-hint-label">Hint</div>
+          <div class="study-hint-text">${escapeHtml(hintText).replace(/\n/g, '<br>')}</div>
+        `;
+      } else {
+        hintArea.innerHTML = `
+          <div class="study-hint-label">Hint</div>
+          <div class="study-hint-empty">No hint for this card</div>
+        `;
+      }
+      front.appendChild(hintArea);
+    }
+  } else {
+    if (hintArea) hintArea.remove();
+  }
+}
+
 /* ---------- Controls ---------- */
 function renderControls() {
   const controls = document.getElementById('studyControls');
   if (!controls) return;
 
   if (!session.isRevealed) {
-    controls.innerHTML = `<button class="study-reveal-btn" id="revealBtn">Show answer</button>`;
-    controls.querySelector('#revealBtn').addEventListener('click', revealCard);
+    controls.innerHTML = `
+      <div class="study-action-bar">
+        <button class="study-action-btn is-explain" id="explainBtn" aria-label="Explain (show hint)">
+          <span>💡</span> Explain
+        </button>
+        <button class="study-action-btn is-flip" id="revealBtn" aria-label="Flip card">
+          <span>👁</span> Flip
+        </button>
+      </div>
+      <div class="study-gesture-hints">← Swipe left = Explain &nbsp;&nbsp; → Swipe right = Flip</div>
+    `;
+    controls.querySelector('#explainBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleHint();
+    });
+    controls.querySelector('#revealBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      revealCard();
+    });
   } else {
     const card = session.currentCard;
     const intervals = previewIntervals(card);
@@ -269,6 +383,7 @@ function renderControls() {
           <div class="study-grade-hint">${formatInterval(intervals.easy)}</div>
         </button>
       </div>
+      <div class="study-gesture-hints">← Again &nbsp;&nbsp; ↑ Hard &nbsp;&nbsp; ↓ Good &nbsp;&nbsp; → Easy</div>
     `;
     controls.querySelectorAll('.study-grade-btn').forEach(btn => {
       btn.addEventListener('click', () => handleGrade(btn.dataset.grade));
@@ -292,16 +407,26 @@ async function handleGrade(grade) {
   if (!session.currentCard) return;
 
   const card = session.currentCard;
-  // gradeCard returns { fsrsUpdate, reviewLogEntry, leech }
-  const result = gradeCard(card, grade);
-  const fsrsUpdate = result.fsrsUpdate;
+
+  // Save for undo
+  session.undoStack.push({
+    card: JSON.parse(JSON.stringify(card)), // deep copy
+    grade,
+    index: session.index
+  });
+
+  const fsrsUpdate = gradeCard(card, grade);
+
   const reviewLogEntry = {
-    ...result.reviewLogEntry,
+    grade,
+    reviewedAt: Date.now(),
+    elapsedDays: fsrsUpdate.elapsed_days ?? null,
     teachingNote: null
   };
 
   session.results[grade]++;
 
+  // Teach It for Good/Easy
   if (grade === 'good' || grade === 'easy') {
     showTeachIt(card, fsrsUpdate, reviewLogEntry);
     return;
@@ -350,6 +475,44 @@ async function persistGrade(card, fsrsUpdate, reviewLogEntry) {
   await updateCardAfterReview(card.id, fsrsUpdate, reviewLogEntry);
 }
 
+async function undoLastGrade() {
+  if (session.undoStack.length === 0) return;
+
+  const lastAction = session.undoStack.pop();
+  const card = lastAction.card;
+
+  try {
+    // Restore card to previous state
+    await updateCardAfterReview(card.id, {
+      state: card.state,
+      difficulty: card.difficulty,
+      stability: card.stability,
+      reps: card.reps,
+      lapses: card.lapses,
+      last_review: card.last_review,
+      due_date: card.due_date,
+      suspended: card.suspended
+    }, null);
+
+    // Remove the last review log entry
+    await removeLastReviewLogForCard(card.id);
+
+    // Decrement result count
+    session.results[lastAction.grade]--;
+
+    // Go back to that card
+    session.index = lastAction.index;
+    session.isRevealed = false;
+    session.hintVisible = false;
+
+    showToast('Undo last grade');
+    showCard();
+  } catch (err) {
+    console.error('Undo failed:', err);
+    showToast('Undo failed');
+  }
+}
+
 function animateCardExit() {
   const wrap = document.getElementById('cardWrap');
   if (!wrap) {
@@ -367,7 +530,6 @@ function animateCardExit() {
 
 /* ---------- Swipe Gestures ---------- */
 function onTouchStart(e) {
-  if (!session.isRevealed) return;
   session.touchStart = {
     x: e.touches[0].clientX,
     y: e.touches[0].clientY
@@ -375,7 +537,7 @@ function onTouchStart(e) {
 }
 
 function onTouchMove(e) {
-  if (!session.isRevealed || !session.touchStart) return;
+  if (!session.touchStart) return;
   const dx = e.touches[0].clientX - session.touchStart.x;
   const dy = e.touches[0].clientY - session.touchStart.y;
   const wrap = document.getElementById('cardWrap');
@@ -384,14 +546,15 @@ function onTouchMove(e) {
   if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
     const inner = document.getElementById('cardInner');
     if (inner) {
+      const baseTransform = session.isRevealed ? 'rotateY(180deg)' : '';
       inner.style.transition = 'none';
-      inner.style.transform = `rotateY(180deg) translateX(\( {dx * 0.3}px) translateY( \){dy * 0.3}px)`;
+      inner.style.transform = `${baseTransform} translateX(${dx * 0.3}px) translateY(${dy * 0.3}px)`;
     }
   }
 }
 
 function onTouchEnd(e) {
-  if (!session.isRevealed || !session.touchStart) return;
+  if (!session.touchStart) return;
   const dx = e.changedTouches[0].clientX - session.touchStart.x;
   const dy = e.changedTouches[0].clientY - session.touchStart.y;
   session.touchStart = null;
@@ -399,16 +562,27 @@ function onTouchEnd(e) {
   const inner = document.getElementById('cardInner');
   if (inner) {
     inner.style.transition = '';
-    inner.style.transform = '';
+    inner.style.transform = session.isRevealed ? 'rotateY(180deg)' : '';
   }
 
   const threshold = 50;
+
+  if (!session.isRevealed) {
+    // Before flip: left = Explain, right = Flip
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (dx < -threshold) toggleHint();
+      else if (dx > threshold) revealCard();
+    }
+    return;
+  }
+
+  // After flip
   if (Math.abs(dx) > Math.abs(dy)) {
     if (dx < -threshold) handleGrade('again');
-    else if (dx > threshold) handleGrade('good');
+    else if (dx > threshold) handleGrade('easy');
   } else {
     if (dy < -threshold) handleGrade('hard');
-    else if (dy > threshold) handleGrade('easy');
+    else if (dy > threshold) handleGrade('good');
   }
 }
 
@@ -417,19 +591,50 @@ function attachKeyboard() {
   session.keyboardHandler = (e) => {
     if (!session.isActive) return;
 
-    if (e.code === 'Space') {
+    // ? key shows shortcuts
+    if (e.key === '?' || e.key === 'Slash') {
       e.preventDefault();
-      if (!session.isRevealed) revealCard();
+      showShortcutsOverlay();
       return;
     }
 
-    if (!session.isRevealed) return;
+    // Escape ends session
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      endStudySession();
+      return;
+    }
 
+    // U = Undo
+    if (e.code === 'KeyU' || e.key === 'u' || e.key === 'U') {
+      e.preventDefault();
+      undoLastGrade();
+      return;
+    }
+
+    if (!session.isRevealed) {
+      // Space / Enter / Right arrow = Flip
+      if (e.code === 'Space' || e.code === 'Enter' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        revealCard();
+        return;
+      }
+      // Left arrow = Explain (toggle hint)
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        toggleHint();
+        return;
+      }
+      return;
+    }
+
+    // After flip: grading
     if (e.code === 'Digit1' || e.key === '1') { e.preventDefault(); handleGrade('again'); }
     else if (e.code === 'Digit2' || e.key === '2') { e.preventDefault(); handleGrade('hard'); }
     else if (e.code === 'Digit3' || e.key === '3') { e.preventDefault(); handleGrade('good'); }
     else if (e.code === 'Digit4' || e.key === '4') { e.preventDefault(); handleGrade('easy'); }
-    else if (e.code === 'Escape') { e.preventDefault(); endStudySession(); }
+    // Left arrow = Again (after flip)
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); handleGrade('again'); }
   };
   document.addEventListener('keydown', session.keyboardHandler);
 }
@@ -439,6 +644,44 @@ function detachKeyboard() {
     document.removeEventListener('keydown', session.keyboardHandler);
     session.keyboardHandler = null;
   }
+}
+
+/* ---------- Shortcuts Overlay ---------- */
+function showShortcutsOverlay() {
+  // Remove existing overlay if any
+  const existing = document.querySelector('.study-shortcuts-overlay');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'study-shortcuts-overlay';
+  overlay.innerHTML = `
+    <div class="study-shortcuts-card" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+      <div class="study-shortcuts-title">⌨️ Keyboard Shortcuts</div>
+      <div class="study-shortcuts-list">
+        <div class="study-shortcut-row"><span>Space / Enter / →</span><span class="study-shortcut-key">Flip card</span></div>
+        <div class="study-shortcut-row"><span>← (before flip)</span><span class="study-shortcut-key">Explain</span></div>
+        <div class="study-shortcut-row"><span>← (after flip)</span><span class="study-shortcut-key">Again</span></div>
+        <div class="study-shortcut-row"><span>1</span><span class="study-shortcut-key">Again</span></div>
+        <div class="study-shortcut-row"><span>2</span><span class="study-shortcut-key">Hard</span></div>
+        <div class="study-shortcut-row"><span>3</span><span class="study-shortcut-key">Good</span></div>
+        <div class="study-shortcut-row"><span>4</span><span class="study-shortcut-key">Easy</span></div>
+        <div class="study-shortcut-row"><span>U</span><span class="study-shortcut-key">Undo last grade</span></div>
+        <div class="study-shortcut-row"><span>?</span><span class="study-shortcut-key">Show / hide this</span></div>
+        <div class="study-shortcut-row"><span>Esc</span><span class="study-shortcut-key">End session</span></div>
+      </div>
+      <button class="study-shortcuts-close" id="shortcutsClose">Got it</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const closeOverlay = () => overlay.remove();
+  overlay.querySelector('#shortcutsClose').addEventListener('click', closeOverlay);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeOverlay();
+  });
 }
 
 /* ---------- Session Summary ---------- */
@@ -460,7 +703,7 @@ function renderSessionSummary() {
         <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="session-summary-ring-bg" cx="60" cy="60" r="52"/>
           <circle class="session-summary-ring-fg" cx="60" cy="60" r="52"
-            stroke-dasharray="\( {circumference}" stroke-dashoffset=" \){offset}"/>
+            stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
         </svg>
         <div class="session-summary-score">${accuracy}%</div>
       </div>

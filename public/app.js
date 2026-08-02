@@ -8,7 +8,8 @@ import {
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
   getReminderSettings, setReminderEnabled, wipeAllData, saveDeck,
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
-  exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument
+  exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument,
+  getSetting, saveSetting
 } from './db.js';
 import { startStudySession } from './study.js';
 import { initCanvasView } from './canvas.js';
@@ -64,6 +65,28 @@ function cycleTheme() {
   applyTheme(next);
   setupThemeListener(next);
   saveTheme(next).catch(err => console.error('Failed to save theme:', err));
+}
+
+/* ---------- Font ---------- */
+const FONT_OPTIONS = [
+  { value: 'default', label: 'Default', stack: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" },
+  { value: 'serif', label: 'Serif', stack: "Georgia, 'Times New Roman', serif" },
+  { value: 'mono', label: 'Monospace', stack: "'SF Mono', 'Courier New', monospace" },
+  { value: 'clean', label: 'Clean', stack: "'Helvetica Neue', Arial, sans-serif" }
+];
+
+async function initFont() {
+  try {
+    const saved = await getSetting('fontFamily');
+    applyFont(saved || 'default');
+  } catch (err) {
+    console.error('Failed to init font:', err);
+  }
+}
+
+function applyFont(fontKey) {
+  const option = FONT_OPTIONS.find(f => f.value === fontKey) || FONT_OPTIONS[0];
+  document.documentElement.style.setProperty('--font-body', option.stack);
 }
 
 /* ---------- KaTeX Helper ---------- */
@@ -169,7 +192,7 @@ export async function renderDeckList() {
       getReviewStats()
     ]);
   } catch (err) {
-    showToast('Failed to load dashboard.');
+    showToast('Failed to load dashboard.', 5000);
     console.error(err);
     return;
   }
@@ -181,7 +204,9 @@ export async function renderDeckList() {
   header.innerHTML = `
     <div class="app-header-title">Lernin</div>
     <div class="app-header-actions">
-      <button class="icon-btn" id="viewToggle" aria-label="Toggle view">${viewMode === 'grid' ? '⊞' : viewMode === 'horizontal' ? '⬌' : '☰'}</button>
+      <button class="icon-btn" id="viewToggle" aria-label="Change view">☰</button>
+      <button class="icon-btn" id="importBtn" aria-label="Import deck">📥</button>
+      <button class="icon-btn" id="mapBtn" aria-label="Map view">🗺️</button>
       <button class="icon-btn" id="helpBtn" aria-label="Help">❓</button>
       <button class="icon-btn" id="themeToggle" aria-label="Toggle theme">🌓</button>
       <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
@@ -192,6 +217,8 @@ export async function renderDeckList() {
   header.querySelector('#helpBtn').addEventListener('click', () => navigate('/help'));
   header.querySelector('#themeToggle').addEventListener('click', cycleTheme);
   header.querySelector('#settingsBtn').addEventListener('click', () => navigate('/settings'));
+  header.querySelector('#importBtn').addEventListener('click', triggerDeckImport);
+  header.querySelector('#mapBtn').addEventListener('click', () => navigate('/map'));
 
   header.querySelector('#viewToggle').addEventListener('click', () => {
     const modes = ['list', 'grid', 'horizontal'];
@@ -210,7 +237,7 @@ export async function renderDeckList() {
     hero.innerHTML = `
       <div class="hero-cta-title">${dueToday} card${dueToday !== 1 ? 's' : ''} due today</div>
       <div class="hero-cta-sub">${streak > 0 ? `🔥 ${streak}-day streak` : 'Start building your streak'}</div>
-      <button class="hero-cta-btn" id="heroStudy">Study Now</button>
+      <button class="hero-cta-btn" id="heroStudy">Study now</button>
     `;
     root.appendChild(hero);
     hero.querySelector('#heroStudy').addEventListener('click', () => navigate('/study/all'));
@@ -220,16 +247,8 @@ export async function renderDeckList() {
     const strip = document.createElement('div');
     strip.className = 'stats-strip';
     strip.innerHTML = `
-      <div class="stat-item">
-        <span>🔥</span>
-        <span class="stat-value">${streak}</span>
-        <span>day streak</span>
-      </div>
-      <div class="stat-item">
-        <span>📚</span>
-        <span class="stat-value">${dueToday}</span>
-        <span>due</span>
-      </div>
+      <div class="stat-item"><span class="stat-value">🔥${streak}</span>day streak</div>
+      <div class="stat-item"><span class="stat-value">📚${dueToday}</span>due</div>
       <a href="#" class="stat-link" id="viewStats">View full statistics →</a>
     `;
     root.appendChild(strip);
@@ -248,8 +267,14 @@ export async function renderDeckList() {
         <div class="empty-state-icon">📚</div>
         <div class="empty-state-title">No decks yet</div>
         <div class="empty-state-text">Create a deck or import a PDF to get started with active recall.</div>
+        <div class="empty-state-actions">
+          <button class="btn-secondary" id="emptyImportBtn">📥 Import deck</button>
+          <button class="btn-secondary" id="emptyHelpBtn">❓ How Lernin works</button>
+        </div>
       </div>
     `;
+    list.querySelector('#emptyImportBtn').addEventListener('click', triggerDeckImport);
+    list.querySelector('#emptyHelpBtn').addEventListener('click', () => navigate('/help'));
   } else {
     for (const deck of decks) {
       const tile = await buildDeckTile(deck);
@@ -290,13 +315,6 @@ export async function renderDeckList() {
   newBtn.addEventListener('click', () => renderNewDeckForm());
   root.appendChild(newBtn);
 
-  const mapBtn = document.createElement('button');
-  mapBtn.className = 'btn-secondary';
-  mapBtn.style.cssText = 'margin: 0 var(--space-md) var(--space-md); width: calc(100% - var(--space-md)*2);';
-  mapBtn.innerHTML = '🗺️ Map view';
-  mapBtn.addEventListener('click', () => navigate('/map'));
-  root.appendChild(mapBtn);
-
   renderMath(root);
 }
 
@@ -317,13 +335,13 @@ async function buildDeckTile(deck) {
   tile.innerHTML = `
     <div class="deck-tile-header">
       <div class="deck-tile-title">${escapeHtml(deck.title)}</div>
-      <div style="display:flex; align-items:center; gap:6px;">
-        ${due > 0 ? `<div class="deck-tile-badge">${due} due</div>` : ''}
-        <button class="icon-btn deck-menu-btn" aria-label="Menu" style="opacity:0.6;font-size:18px;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;">⋮</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${due > 0 ? `<span class="deck-tile-badge">${due} due</span>` : ''}
+        <button class="deck-menu-btn" aria-label="Open actions">⋮</button>
       </div>
     </div>
     <div class="deck-tile-bar">
-      <div class="deck-tile-bar-fill" style="width: ${masteryPct}%"></div>
+      <div class="deck-tile-bar-fill" style="width:${masteryPct}%"></div>
     </div>
   `;
 
@@ -332,8 +350,6 @@ async function buildDeckTile(deck) {
     e.stopPropagation();
     openBottomSheet(deck);
   });
-  menuBtn.addEventListener('mouseenter', () => { menuBtn.style.opacity = '1'; });
-  menuBtn.addEventListener('mouseleave', () => { menuBtn.style.opacity = '0.6'; });
 
   let tileLongPressTimer = null;
   let tileIsLongPress = false;
@@ -386,9 +402,9 @@ function openBottomSheet(deck) {
   actions.forEach((a, i) => {
     if (i === 4) html += '<div class="sheet-divider"></div>';
     html += `
-      <button class="sheet-action ${a.primary ? 'is-primary' : ''}" data-action="${i}">
+      <button class="sheet-action ${a.primary ? 'is-primary' : ''}">
         <span class="sheet-action-icon">${a.icon}</span>
-        <span>${escapeHtml(a.label)}</span>
+        ${escapeHtml(a.label)}
       </button>
     `;
   });
@@ -429,7 +445,8 @@ function openBottomSheet(deck) {
   document.addEventListener('keydown', trapKeys);
 
   backdrop.addEventListener('click', closeSheet);
-  sheet.querySelector('.sheet-handle').addEventListener('click', closeSheet);
+  const handle = sheet.querySelector('.sheet-handle');
+  if (handle) handle.addEventListener('click', closeSheet);
 
   sheet.querySelectorAll('.sheet-action').forEach((btn, i) => {
     btn.addEventListener('click', () => {
@@ -474,7 +491,7 @@ async function renderSettings() {
     existing = await getApiConfig();
     reminderSettings = await getReminderSettings();
   } catch (err) {
-    showToast('Failed to load settings.');
+    showToast('Failed to load settings.', 5000);
     return navigate('/');
   }
 
@@ -488,16 +505,16 @@ async function renderSettings() {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="settingsBack" aria-label="Back">←</button>
+    <button class="back-btn" id="settingsBack" aria-label="Back">←</button>
     <div class="app-header-title">Settings</div>
-    <div style="width:40px;"></div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#settingsBack').addEventListener('click', goBack);
 
-const intro = document.createElement('p');
+  const intro = document.createElement('p');
   intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; color:var(--ink-secondary); font-size:14px; line-height:1.6;';
-  intro.textContent = 'Choose how you generate cards. Use your own Claude or Gemini API key for one-tap generation, or choose “Paste into any AI” (the default) — copy a prompt into ChatGPT/Claude/Gemini and paste the JSON back. There is no server-side API key; without your own key, manual paste is the only generation path.';
+  intro.textContent = 'Choose how you\'d like to generate cards. Bring your own Claude or Gemini API key for one-tap generation, or use "Paste into any AI" if you don\'t have a key — no key is stored or sent anywhere except directly to the provider you choose at the moment you generate cards.';
   wrap.appendChild(intro);
 
   const form = document.createElement('form');
@@ -548,7 +565,7 @@ const intro = document.createElement('p');
 
   const keyHelp = document.createElement('p');
   keyHelp.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:var(--space-md); line-height:1.5;';
-  keyHelp.innerHTML = 'Get a key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:var(--accent);">console.anthropic.com</a> (Claude) or <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent);">aistudio.google.com</a> (Gemini).';
+  keyHelp.innerHTML = 'Get a key from console.anthropic.com (Claude) or aistudio.google.com (Gemini).';
   form.appendChild(keyHelp);
 
   const manualNote = document.createElement('p');
@@ -609,6 +626,45 @@ const intro = document.createElement('p');
   });
 
   wrap.appendChild(form);
+
+  /* Appearance section with font selector */
+  const appearanceSection = makeSection('Appearance');
+  const fontLabel = document.createElement('div');
+  fontLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
+  fontLabel.textContent = 'Font';
+  appearanceSection.appendChild(fontLabel);
+
+  const fontRow = document.createElement('div');
+  fontRow.className = 'font-selector';
+  const currentFont = (await getSetting('fontFamily')) || 'default';
+
+  for (const f of FONT_OPTIONS) {
+    const opt = document.createElement('label');
+    opt.className = 'font-option';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'fontFamily';
+    radio.value = f.value;
+    radio.checked = f.value === currentFont;
+    opt.appendChild(radio);
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = f.label;
+    nameSpan.style.fontFamily = f.stack;
+    opt.appendChild(nameSpan);
+    fontRow.appendChild(opt);
+  }
+  appearanceSection.appendChild(fontRow);
+
+  fontRow.querySelectorAll('input[name="fontFamily"]').forEach(radio => {
+    radio.addEventListener('change', async () => {
+      const value = fontRow.querySelector('input[name="fontFamily"]:checked')?.value || 'default';
+      await saveSetting('fontFamily', value);
+      applyFont(value);
+      showToast('Font updated.');
+    });
+  });
+
+  wrap.appendChild(appearanceSection);
 
   const reminderSection = makeSection('Study reminders');
   const reminderIntro = document.createElement('p');
@@ -671,13 +727,6 @@ const intro = document.createElement('p');
   const storageBtnRow = document.createElement('div');
   storageBtnRow.style.cssText = 'display:flex; gap:10px; margin-bottom:12px;';
 
-  const importBtn = document.createElement('button');
-  importBtn.type = 'button';
-  importBtn.style.cssText = 'flex:1; padding:12px 16px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px; font-weight:500; cursor:pointer; box-shadow:var(--shadow-sm);';
-  importBtn.textContent = 'Import deck (.json)';
-  importBtn.addEventListener('click', triggerDeckImport);
-  storageBtnRow.appendChild(importBtn);
-
   const hardReloadBtn = document.createElement('button');
   hardReloadBtn.type = 'button';
   hardReloadBtn.style.cssText = 'flex:1; padding:12px 16px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px; font-weight:500; cursor:pointer; box-shadow:var(--shadow-sm);';
@@ -717,17 +766,10 @@ const intro = document.createElement('p');
   confirmWrap.style.cssText = 'display:none; margin-top:12px;';
   confirmWrap.innerHTML = `
     <p style="font-size:13px; color:var(--ink-muted); margin-bottom:8px;">Type RESET to confirm:</p>
-    <input type="text" id="resetConfirmInput" autocomplete="off" spellcheck="false"
-      style="width:100%; padding:12px 14px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:15px; margin-bottom:10px; box-sizing:border-box;" />
-    <div style="display:flex; gap:10px;">
-      <button type="button" id="resetConfirmBtn" disabled
-        style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--danger); color:white; font-size:14px; font-weight:600; cursor:pointer; opacity:0.5;">
-        Permanently delete everything
-      </button>
-      <button type="button" id="resetCancelBtn"
-        style="padding:12px 16px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:14px; cursor:pointer; box-shadow:var(--shadow-sm);">
-        Cancel
-      </button>
+    <input type="text" id="resetConfirmInput" placeholder="RESET" style="width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;">
+    <div style="display:flex; gap:8px;">
+      <button type="button" id="resetCancelBtn" style="flex:1; padding:10px; border:none; border-radius:var(--radius-sm); background:var(--surface); color:var(--ink-secondary); font-size:14px; cursor:pointer;">Cancel</button>
+      <button type="button" id="resetConfirmBtn" disabled style="flex:1; padding:10px; border:none; border-radius:var(--radius-sm); background:var(--danger); color:white; font-size:14px; font-weight:600; cursor:pointer; opacity:0.5;">Permanently delete everything</button>
     </div>
   `;
   dangerSection.appendChild(confirmWrap);
@@ -757,7 +799,7 @@ const intro = document.createElement('p');
       window.location.hash = '';
       window.location.reload();
     } catch (err) {
-      showToast(err.message || 'Reset failed.');
+      showToast(err.message || 'Reset failed.', 5000);
       confirmBtn.disabled = false;
       confirmBtn.textContent = 'Permanently delete everything';
     }
@@ -787,9 +829,9 @@ function renderHelp() {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="helpBack" aria-label="Back">←</button>
-    <div class="app-header-title" style="font-size:16px;">Help</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="helpBack" aria-label="Back">←</button>
+    <div class="app-header-title">Help</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#helpBack').addEventListener('click', goBack);
@@ -803,15 +845,15 @@ function renderHelp() {
     {
       title: 'Getting cards into a deck',
       body: `Two ways to add cards: generate from a PDF/notes (long-press a deck → Import / AI), or add a single card by hand (+ Card). How generation works depends on Settings:
-<ul style="margin:8px 0 0; padding-left:18px;">
-  <li><strong>Your own Claude or Gemini API key</strong> — one-tap generation.</li>
-  <li><strong>"Paste into any AI"</strong> — copy a ready-made prompt into ChatGPT, Claude.ai, Gemini, etc., then paste the JSON result back in.</li>
-</ul>
+
+- **Your own Claude or Gemini API key** — one-tap generation.
+- **"Paste into any AI"** — copy a ready-made prompt into ChatGPT, Claude.ai, Gemini, etc., then paste the JSON result back in.
+
 Either way, you review, edit, or discard cards before they\'re saved.`
     },
     {
       title: 'Formula cards and relationships',
-      body: `Formula cards have extra fields: the expression, variables, assumptions, common mistakes, and applications. Any card can be linked as <strong>Depends on</strong> or <strong>Related</strong>. Open Cards on a deck to browse, search by answer (reverse lookup), and manage relationships — including cards in other decks.`
+      body: `Formula cards have extra fields: the expression, variables, assumptions, common mistakes, and applications. Any card can be linked as **Depends on** or **Related**. Open Cards on a deck to browse, search by answer (reverse lookup), and manage relationships — including cards in other decks.`
     },
     {
       title: 'Why you bring your own AI key',
@@ -820,12 +862,12 @@ Either way, you review, edit, or discard cards before they\'re saved.`
     {
       title: 'Reviewing cards',
       body: `Each card shows a question first; flip it to reveal the answer, then grade honestly:
-<ul style="margin:8px 0 0; padding-left:18px;">
-  <li><strong>Again</strong> — didn\'t know it.</li>
-  <li><strong>Hard</strong> — got it, but it took effort.</li>
-  <li><strong>Good</strong> — knew it comfortably.</li>
-  <li><strong>Easy</strong> — trivial; see it much later.</li>
-</ul>
+
+- **Again** — didn\'t know it.
+- **Hard** — got it, but it took effort.
+- **Good** — knew it comfortably.
+- **Easy** — trivial; see it much later.
+
 The schedule only works well if grades reflect how easily the answer came back.`
     },
     {
@@ -867,7 +909,7 @@ async function renderStats() {
   try {
     stats = await getDashboardStats();
   } catch (err) {
-    showToast('Failed to load statistics.');
+    showToast('Failed to load statistics.', 5000);
     return navigate('/');
   }
 
@@ -880,9 +922,9 @@ async function renderStats() {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="statsBack" aria-label="Back">←</button>
+    <button class="back-btn" id="statsBack" aria-label="Back">←</button>
     <div class="app-header-title">Statistics</div>
-    <div style="width:40px;"></div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#statsBack').addEventListener('click', goBack);
@@ -902,7 +944,7 @@ async function renderStats() {
     const card = document.createElement('div');
     card.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:var(--space-md); box-shadow:var(--shadow-sm); text-align:center;';
     card.innerHTML = `
-      <div style="font-size:22px; font-weight:700; color:var(--ink);">${m.value}</div>
+      <div style="font-size:24px; font-weight:700; color:var(--ink);">${m.value}</div>
       <div style="font-size:12px; color:var(--ink-muted); margin-top:2px;">${m.label}</div>
     `;
     metricsGrid.appendChild(card);
@@ -951,10 +993,8 @@ async function renderStats() {
       const row = document.createElement('div');
       row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:12px 14px; box-shadow:var(--shadow-sm);';
       row.innerHTML = `
-        <div style="font-size:14px; font-weight:600; color:var(--ink);">${escapeHtml(d.title)}</div>
-        <div style="font-size:12px; color:var(--ink-muted); margin-top:2px;">
-          ${d.total} card${d.total === 1 ? '' : 's'} · ${d.mastered} mastered · ${d.dueToday} due today
-        </div>
+        <div style="font-weight:600; color:var(--ink); margin-bottom:2px;">${escapeHtml(d.title)}</div>
+        <div style="font-size:13px; color:var(--ink-muted);">${d.total} card${d.total === 1 ? '' : 's'} · ${d.mastered} mastered · ${d.dueToday} due today</div>
       `;
       deckList.appendChild(row);
     }
@@ -977,7 +1017,7 @@ async function openDeckSheet(existingDeck = null) {
   try {
     decks = await getDecks();
   } catch(e) {
-    showToast('Failed to load dependencies.');
+    showToast('Failed to load dependencies.', 5000);
     return;
   }
   const isEdit = !!existingDeck;
@@ -997,39 +1037,20 @@ async function openDeckSheet(existingDeck = null) {
 
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div style="padding:0 var(--space-lg) var(--space-lg);">
-      <h2 style="font-size:18px; font-weight:700; margin-bottom:var(--space-md); color:var(--ink);">
-        ${isEdit ? 'Edit deck' : 'New deck'}
-      </h2>
-
-      <label style="display:block; font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:6px;">
-        Title
-      </label>
-      <input type="text" id="deckTitleInput"
-        placeholder="e.g. EEE 307 — Field Theory"
-        style="width:100%; padding:12px 14px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:16px; margin-bottom:var(--space-md); box-sizing:border-box;"
-      />
-
-      <label style="display:block; font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:6px;">
-        Territory / course <span style="font-weight:400; color:var(--ink-muted);">(optional)</span>
-      </label>
-      <input type="text" id="deckTerritoryInput" list="territoryOptions"
-        placeholder="e.g. EEE 307"
-        style="width:100%; padding:12px 14px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:16px; margin-bottom:var(--space-lg); box-sizing:border-box;"
-      />
-      <datalist id="territoryOptions">
-        ${existingTerritories.map(t => `<option value="${escapeAttr(t)}"></option>`).join('')}
-      </datalist>
-
-      <div style="display:flex; gap:10px;">
-        <button type="button" id="deckCancelBtn"
-          style="flex:1; padding:14px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:15px; font-weight:500; cursor:pointer; box-shadow:var(--shadow-sm);">
-          Cancel
-        </button>
-        <button type="button" id="deckSaveBtn"
-          style="flex:1; padding:14px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;">
-          ${isEdit ? 'Save' : 'Create'}
-        </button>
+    <h2 style="padding:0 var(--space-lg); margin-bottom:var(--space-md); font-size:18px;">${isEdit ? 'Edit deck' : 'New deck'}</h2>
+    <div style="padding:0 var(--space-lg); display:flex; flex-direction:column; gap:12px;">
+      <div>
+        <label style="font-size:13px; font-weight:600; color:var(--ink-secondary); display:block; margin-bottom:4px;">Title</label>
+        <input type="text" id="deckTitleInput" placeholder="e.g. Biology 101" style="width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:13px; font-weight:600; color:var(--ink-secondary); display:block; margin-bottom:4px;">Territory / course (optional)</label>
+        <input type="text" id="deckTerritoryInput" list="territoryList" placeholder="e.g. Science" style="width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; box-sizing:border-box;">
+        <datalist id="territoryList">${existingTerritories.map(t => `<option value="${escapeAttr(t)}">`).join('')}</datalist>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:4px;">
+        <button type="button" id="deckCancelBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:15px; cursor:pointer; box-shadow:var(--shadow-sm);">Cancel</button>
+        <button type="button" id="deckSaveBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;">Save</button>
       </div>
     </div>
   `;
@@ -1090,7 +1111,7 @@ async function openDeckSheet(existingDeck = null) {
       closeSheet();
       await renderDeckList();
     } catch (err) {
-      showToast(err.message || 'Could not save deck.');
+      showToast(err.message || 'Could not save deck.', 5000);
     }
   });
 }
@@ -1109,9 +1130,9 @@ async function renderImportView(deckId) {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="importBack" aria-label="Back">←</button>
-    <div class="app-header-title">Import to deck</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="importBack" aria-label="Back">←</button>
+    <div class="app-header-title">Import</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#importBack').addEventListener('click', () => navigate('/'));
@@ -1164,7 +1185,7 @@ async function renderImportView(deckId) {
     const isPpt = ['ppt', 'pptx'].includes(ext);
 
     if (!isPdf && !isText && !isImage && !isPpt) {
-      showToast('Please select a .pdf, .txt, .md, .jpg, .png, or .ppt file');
+      showToast('Please select a .pdf, .txt, .md, .jpg, .png, or .ppt file', 5000);
       return;
     }
 
@@ -1181,7 +1202,7 @@ async function renderImportView(deckId) {
         progressFill.style.width = '100%';
         await handleExtractedText(text, deckId, config, file.name);
       } catch (err) {
-        showToast('Failed to read file.');
+        showToast('Failed to read file.', 5000);
         progressArea.style.display = 'none';
       }
       return;
@@ -1215,7 +1236,7 @@ async function renderImportView(deckId) {
         await handleExtractedText(text, deckId, config, file.name);
       } catch (err) {
         console.error('PDF extraction failed:', err);
-        showToast('Could not extract text. Try the manual copy-paste flow instead.');
+        showToast('Could not extract text. Try the manual copy-paste flow instead.', 5000);
         renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
       }
       return;
@@ -1245,14 +1266,13 @@ async function handleExtractedText(text, deckId, config, filename) {
       renderEditStep(result.cards, deckId);
       return;
     }
-    // Offline queue returns empty cards intentionally — toast already shown.
-    // Any other empty result: offer manual paste so the user isn't stuck.
+    // Offline queue returns empty intentionally — toast already shown.
+    // Online empty result: offer manual paste so the user isn't stuck.
     if (navigator.onLine) {
       showToast('Generation returned no cards. You can paste JSON from any AI instead.');
       renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
     }
   } else {
-    // Default fallback: copy prompt → paste JSON
     renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
   }
 }
@@ -1284,7 +1304,7 @@ async function uploadVisionFile(file, deckId, config) {
       showToast('No cards generated from this file.');
     }
   } catch (err) {
-    showToast('Generation failed: ' + err.message);
+    showToast('Generation failed: ' + err.message, 5000);
   }
 }
 
@@ -1301,9 +1321,9 @@ function renderEditStep(cards, deckId) {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="editBack" aria-label="Back">←</button>
-    <div class="app-header-title">Review ${cards.length} cards</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="editBack" aria-label="Back">←</button>
+    <div class="app-header-title">Review cards</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#editBack').addEventListener('click', () => navigate('/'));
@@ -1337,6 +1357,24 @@ function renderEditStep(cards, deckId) {
       back.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
       back.textContent = card.back;
       row.appendChild(back);
+
+      // Hint field (editable)
+      const hintWrap = document.createElement('div');
+      hintWrap.style.cssText = 'margin-top:8px;';
+      const hintLabel = document.createElement('div');
+      hintLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;';
+      hintLabel.textContent = 'Hint / Explanation';
+      hintWrap.appendChild(hintLabel);
+      const hintInput = document.createElement('textarea');
+      hintInput.rows = 2;
+      hintInput.placeholder = 'Optional hint shown before revealing the answer…';
+      hintInput.style.cssText = 'width:100%; padding:8px 10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:13px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+      hintInput.value = card.hint || '';
+      hintInput.addEventListener('input', () => {
+        card.hint = hintInput.value.trim() || undefined;
+      });
+      hintWrap.appendChild(hintInput);
+      row.appendChild(hintWrap);
 
       if (card.type === 'formula') {
         if (card.formula) {
@@ -1385,7 +1423,7 @@ function renderEditStep(cards, deckId) {
   importBtn.textContent = 'Import all selected';
   importBtn.addEventListener('click', async () => {
     if (approved.length === 0) {
-      showToast('No cards selected to import.');
+      showToast('No cards selected to import.', 5000);
       return;
     }
     importBtn.disabled = true;
@@ -1395,7 +1433,7 @@ function renderEditStep(cards, deckId) {
       showToast(`Imported ${approved.length} card${approved.length !== 1 ? 's' : ''}.`);
       navigate('/');
     } catch (err) {
-      showToast(err.message || 'Import failed.');
+      showToast(err.message || 'Import failed.', 5000);
       importBtn.disabled = false;
       importBtn.textContent = 'Import all selected';
     }
@@ -1411,12 +1449,12 @@ async function renderNewCardForm(deckId) {
   try {
     deck = await getDeck(deckId);
   } catch (err) {
-    showToast('Failed to load deck data.');
+    showToast('Failed to load deck data.', 5000);
     return goBack();
   }
 
   if (!deck) {
-    showToast('Deck not found.');
+    showToast('Deck not found.', 5000);
     return goBack();
   }
 
@@ -1429,9 +1467,9 @@ async function renderNewCardForm(deckId) {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="newCardBack" aria-label="Cancel">←</button>
-    <div class="app-header-title" style="font-size:16px;">Add card</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="newCardBack" aria-label="Back">←</button>
+    <div class="app-header-title">New card</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
   header.querySelector('#newCardBack').addEventListener('click', goBack);
@@ -1442,287 +1480,196 @@ async function renderNewCardForm(deckId) {
   wrap.appendChild(sub);
 
   const form = document.createElement('form');
-  form.style.cssText = 'padding:0 var(--space-md);';
+  form.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:12px;';
 
   const typeLabel = document.createElement('div');
-  typeLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
+  typeLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
   typeLabel.textContent = 'Card type';
   form.appendChild(typeLabel);
 
   const typeRow = document.createElement('div');
-  typeRow.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-bottom:var(--space-md);';
+  typeRow.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
   const types = [
-    { value: 'basic', label: 'Basic (Q&A)' },
+    { value: 'basic', label: 'Basic' },
     { value: 'cloze', label: 'Cloze' },
     { value: 'formula', label: 'Formula' }
   ];
   for (const t of types) {
-    const opt = document.createElement('label');
-    opt.style.cssText = 'display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm);';
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex; align-items:center; gap:6px; padding:8px 12px; background:var(--surface); border-radius:var(--radius-sm); cursor:pointer; box-shadow:var(--shadow-sm); font-size:14px;';
     const radio = document.createElement('input');
     radio.type = 'radio';
-    radio.name = 'card-type';
+    radio.name = 'cardType';
     radio.value = t.value;
     radio.checked = t.value === 'basic';
-    radio.addEventListener('change', updateFieldVisibility);
-    opt.appendChild(radio);
-    opt.appendChild(document.createTextNode(t.label));
-    typeRow.appendChild(opt);
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(t.label));
+    typeRow.appendChild(label);
   }
   form.appendChild(typeRow);
 
-  form.appendChild(fieldLabel('Front'));
+  const frontLabel = document.createElement('div');
+  frontLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  frontLabel.textContent = 'Front (question)';
+  form.appendChild(frontLabel);
+
   const frontInput = document.createElement('textarea');
-  frontInput.required = true;
   frontInput.rows = 3;
-  styleTextarea(frontInput);
+  frontInput.placeholder = 'What is the capital of France?';
+  frontInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; font-family:inherit; resize:vertical; box-sizing:border-box;';
   form.appendChild(frontInput);
 
-  form.appendChild(fieldLabel('Back'));
+  const backLabel = document.createElement('div');
+  backLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  backLabel.textContent = 'Back (answer)';
+  form.appendChild(backLabel);
+
   const backInput = document.createElement('textarea');
   backInput.rows = 3;
-  backInput.placeholder = '(optional for cloze — answer can live in Front via {{c1::...}})';
-  styleTextarea(backInput);
+  backInput.placeholder = 'Paris';
+  backInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; font-family:inherit; resize:vertical; box-sizing:border-box;';
   form.appendChild(backInput);
 
-  const formulaSection = document.createElement('div');
-  formulaSection.style.cssText = 'display:none; border-left:3px solid var(--accent); padding-left:12px; margin:var(--space-md) 0;';
+  // Hint / Explanation field
+  const hintLabel = document.createElement('div');
+  hintLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  hintLabel.textContent = 'Hint / Explanation (optional)';
+  form.appendChild(hintLabel);
 
-  formulaSection.appendChild(fieldLabel('Formula'));
-  const formulaInput = document.createElement('input');
-  formulaInput.type = 'text';
-  formulaInput.placeholder = 'e.g. KE = ½mv²  or  KE = \\frac{1}{2}mv^2';
-  styleInput(formulaInput);
-  formulaSection.appendChild(formulaInput);
+  const hintInput = document.createElement('textarea');
+  hintInput.rows = 2;
+  hintInput.placeholder = 'Shown before the answer is revealed to help recall…';
+  hintInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+  form.appendChild(hintInput);
 
-  formulaSection.appendChild(fieldLabel('Variables'));
-  const variablesList = document.createElement('div');
-  variablesList.style.cssText = 'display:flex; flex-direction:column; gap:6px; margin-bottom:8px;';
-  formulaSection.appendChild(variablesList);
+  const formulaFields = document.createElement('div');
+  formulaFields.style.cssText = 'display:none; flex-direction:column; gap:12px;';
+  formulaFields.id = 'formulaFields';
 
-  let variableRows = [];
-  function addVariableRow() {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex; gap:6px;';
-    const symbolInput = document.createElement('input');
-    symbolInput.type = 'text';
-    symbolInput.placeholder = 'symbol';
-    symbolInput.style.cssText = 'flex:0 0 80px; padding:8px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:13px;';
-    const meaningInput = document.createElement('input');
-    meaningInput.type = 'text';
-    meaningInput.placeholder = 'meaning';
-    meaningInput.style.cssText = 'flex:1; padding:8px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:13px;';
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.textContent = '✕';
-    removeBtn.style.cssText = 'border:none; background:transparent; color:var(--danger); font-size:14px; cursor:pointer; width:28px;';
-    removeBtn.addEventListener('click', () => {
-      variableRows = variableRows.filter(r => r !== row);
-      row.remove();
-    });
-    row.appendChild(symbolInput);
-    row.appendChild(meaningInput);
-    row.appendChild(removeBtn);
-    variablesList.appendChild(row);
-    variableRows.push(row);
-  }
-  addVariableRow();
+  const formulaInput = document.createElement('textarea');
+  formulaInput.rows = 2;
+  formulaInput.placeholder = 'E = mc^2';
+  formulaInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:15px; font-family:var(--font-mono); resize:vertical; box-sizing:border-box;';
+  const formulaLabel = document.createElement('div');
+  formulaLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  formulaLabel.textContent = 'Formula (LaTeX)';
+  formulaFields.appendChild(formulaLabel);
+  formulaFields.appendChild(formulaInput);
 
-  const addVarBtn = document.createElement('button');
-  addVarBtn.type = 'button';
-  addVarBtn.textContent = '+ Add variable';
-  addVarBtn.style.cssText = 'border:1px dashed rgba(0,0,0,0.15); background:transparent; color:var(--ink-muted); border-radius:var(--radius-sm); padding:8px; font-size:13px; cursor:pointer; margin-bottom:12px; width:100%;';
-  addVarBtn.addEventListener('click', addVariableRow);
-  formulaSection.appendChild(addVarBtn);
+  const varsInput = document.createElement('textarea');
+  varsInput.rows = 2;
+  varsInput.placeholder = 'E: energy\nm: mass\nc: speed of light';
+  varsInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+  const varsLabel = document.createElement('div');
+  varsLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  varsLabel.textContent = 'Variables (one per line: name: description)';
+  formulaFields.appendChild(varsLabel);
+  formulaFields.appendChild(varsInput);
 
-  formulaSection.appendChild(fieldLabel('Assumptions'));
   const assumptionsInput = document.createElement('textarea');
   assumptionsInput.rows = 2;
-  styleTextarea(assumptionsInput);
-  formulaSection.appendChild(assumptionsInput);
+  assumptionsInput.placeholder = 'c is constant in vacuum';
+  assumptionsInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+  const assumptionsLabel = document.createElement('div');
+  assumptionsLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  assumptionsLabel.textContent = 'Assumptions (optional)';
+  formulaFields.appendChild(assumptionsLabel);
+  formulaFields.appendChild(assumptionsInput);
 
-  formulaSection.appendChild(fieldLabel('Common mistakes'));
   const mistakesInput = document.createElement('textarea');
   mistakesInput.rows = 2;
-  styleTextarea(mistakesInput);
-  formulaSection.appendChild(mistakesInput);
+  mistakesInput.placeholder = 'Forgetting to square c';
+  mistakesInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+  const mistakesLabel = document.createElement('div');
+  mistakesLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  mistakesLabel.textContent = 'Common mistakes (optional)';
+  formulaFields.appendChild(mistakesLabel);
+  formulaFields.appendChild(mistakesInput);
 
-  formulaSection.appendChild(fieldLabel('Applications'));
   const applicationsInput = document.createElement('textarea');
   applicationsInput.rows = 2;
-  styleTextarea(applicationsInput);
-  formulaSection.appendChild(applicationsInput);
+  applicationsInput.placeholder = 'Nuclear energy, particle physics';
+  applicationsInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+  const applicationsLabel = document.createElement('div');
+  applicationsLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:4px;';
+  applicationsLabel.textContent = 'Applications (optional)';
+  formulaFields.appendChild(applicationsLabel);
+  formulaFields.appendChild(applicationsInput);
 
-  form.appendChild(formulaSection);
+  form.appendChild(formulaFields);
 
-  function updateFieldVisibility() {
-    const type = form.querySelector('input[name="card-type"]:checked')?.value || 'basic';
-    formulaSection.style.display = type === 'formula' ? 'block' : 'none';
-    backInput.placeholder = type === 'cloze' ? '(optional — answer can live in Front via {{c1::...}})' : '';
-  }
-
-  form.appendChild(fieldLabel('Depends on / related cards (optional)'));
-  const relSearchInput = document.createElement('input');
-  relSearchInput.type = 'text';
-  relSearchInput.placeholder = 'Search cards by front text…';
-  styleInput(relSearchInput);
-  form.appendChild(relSearchInput);
-
-  const relResultsList = document.createElement('div');
-  relResultsList.style.cssText = 'display:flex; flex-direction:column; gap:6px; margin-bottom:8px;';
-  form.appendChild(relResultsList);
-
-  const relAttachedList = document.createElement('div');
-  relAttachedList.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin-bottom:var(--space-md);';
-  form.appendChild(relAttachedList);
-
-  let attachedRelationships = [];
-
-  function renderAttached() {
-    relAttachedList.innerHTML = '';
-    for (const rel of attachedRelationships) {
-      const chip = document.createElement('div');
-      chip.style.cssText = 'display:flex; align-items:center; gap:6px; background:var(--surface); border-radius:999px; padding:6px 10px; font-size:12px; box-shadow:var(--shadow-sm);';
-      chip.innerHTML = `<strong style="color:var(--accent);">${rel.type === 'dependsOn' ? 'Depends on' : 'Related'}</strong> ${escapeHtml(rel.front)} <span style="color:var(--ink-muted);">(${escapeHtml(rel.deckTitle)})</span>`;
-      const rm = document.createElement('button');
-      rm.type = 'button';
-      rm.textContent = '✕';
-      rm.style.cssText = 'border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:12px;';
-      rm.addEventListener('click', () => {
-        attachedRelationships = attachedRelationships.filter(r => r !== rel);
-        renderAttached();
-      });
-      chip.appendChild(rm);
-      relAttachedList.appendChild(chip);
-    }
-  }
-
-  let searchDebounce = null;
-  relSearchInput.addEventListener('input', () => {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(async () => {
-      const query = relSearchInput.value.trim();
-      relResultsList.innerHTML = '';
-      if (!query) return;
-      const results = await searchCardsByFront(query);
-      for (const card of results) {
-        if (attachedRelationships.some(r => r.cardId === card.id)) continue;
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; background:var(--surface); border-radius:var(--radius-sm); padding:8px 10px; font-size:13px;';
-        row.innerHTML = `<span>${escapeHtml(card.front)} <span style="color:var(--ink-muted);">(${escapeHtml(card.deckTitle)})</span></span>`;
-        const btns = document.createElement('div');
-        btns.style.cssText = 'display:flex; gap:4px; flex-shrink:0;';
-
-        const dependsBtn = document.createElement('button');
-        dependsBtn.type = 'button';
-        dependsBtn.textContent = '+ Depends';
-        dependsBtn.style.cssText = 'border:none; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;';
-        dependsBtn.addEventListener('click', () => {
-          attachedRelationships.push({ cardId: card.id, front: card.front, deckTitle: card.deckTitle, type: 'dependsOn' });
-          renderAttached();
-        });
-
-        const relatedBtn = document.createElement('button');
-        relatedBtn.type = 'button';
-        relatedBtn.textContent = '+ Related';
-        relatedBtn.style.cssText = 'border:none; background:var(--surface); color:var(--ink-secondary); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer; box-shadow:var(--shadow-sm);';
-        relatedBtn.addEventListener('click', () => {
-          attachedRelationships.push({ cardId: card.id, front: card.front, deckTitle: card.deckTitle, type: 'related' });
-          renderAttached();
-        });
-
-        btns.appendChild(dependsBtn);
-        btns.appendChild(relatedBtn);
-        row.appendChild(btns);
-        relResultsList.appendChild(row);
-      }
-    }, 200);
+  typeRow.querySelectorAll('input[name="cardType"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      formulaFields.style.display = radio.value === 'formula' && radio.checked ? 'flex' : 'none';
+    });
   });
 
-  wrap.appendChild(form);
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex; gap:10px; margin-top:4px;';
 
-  async function handleSave(addAnother) {
-    const type = form.querySelector('input[name="card-type"]:checked')?.value || 'basic';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.style.cssText = 'flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:15px; cursor:pointer; box-shadow:var(--shadow-sm);';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', goBack);
+  actions.appendChild(cancelBtn);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.style.cssText = 'flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;';
+  saveBtn.textContent = 'Save';
+  actions.appendChild(saveBtn);
+
+  form.appendChild(actions);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const type = form.querySelector('input[name="cardType"]:checked')?.value || 'basic';
     const front = frontInput.value.trim();
-    if (!front) {
-      showToast('Front text is required.');
-      frontInput.focus();
+    const back = backInput.value.trim();
+    const hint = hintInput.value.trim() || undefined;
+
+    if (!front || !back) {
+      showToast('Fill in both front and back.', 5000);
       return;
     }
 
-    const cardData = { deckId: deck.id, front, back: backInput.value.trim(), type };
+    const card = { front, back, hint, type, deckId: deck.id };
 
     if (type === 'formula') {
-      cardData.formula = formulaInput.value.trim();
-      cardData.variables = variableRows
-        .map(row => ({
-          symbol: row.querySelector('input:first-child').value.trim(),
-          meaning: row.querySelectorAll('input')[1].value.trim()
-        }))
-        .filter(v => v.symbol || v.meaning);
-      cardData.assumptions = assumptionsInput.value.trim();
-      cardData.commonMistakes = mistakesInput.value.trim();
-      cardData.applications = applicationsInput.value.trim();
+      card.formula = formulaInput.value.trim() || undefined;
+      const varsText = varsInput.value.trim();
+      if (varsText) {
+        card.variables = varsText.split('\n').map(line => {
+          const [name, ...rest] = line.split(':');
+          return { name: name.trim(), description: rest.join(':').trim() };
+        }).filter(v => v.name);
+      }
+      card.assumptions = assumptionsInput.value.trim() || undefined;
+      card.commonMistakes = mistakesInput.value.trim() || undefined;
+      card.applications = applicationsInput.value.trim() || undefined;
     }
 
     try {
-      const newCardId = await saveManualCard(cardData);
-      for (const rel of attachedRelationships) {
-        await addRelationship(newCardId, rel.cardId, rel.type);
-      }
-      showToast('Card added.');
-      if (addAnother) {
-        await renderNewCardForm(deckId);
-      } else {
-        goBack();
-      }
+      await saveManualCard(card);
+      showToast('Card saved.');
+      goBack();
     } catch (err) {
-      showToast(err.message || 'Could not save card.');
+      showToast(err.message || 'Failed to save card.', 5000);
     }
-  }
+  });
 
-  const actions = document.createElement('div');
-  actions.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:10px; margin-top:var(--space-md);';
-
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.textContent = 'Save card';
-  saveBtn.style.cssText = 'width:100%; padding:14px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;';
-  saveBtn.addEventListener('click', () => handleSave(false));
-  actions.appendChild(saveBtn);
-
-  const saveAndAddBtn = document.createElement('button');
-  saveAndAddBtn.type = 'button';
-  saveAndAddBtn.textContent = 'Save & add another';
-  saveAndAddBtn.style.cssText = 'width:100%; padding:14px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:14px; font-weight:500; cursor:pointer; box-shadow:var(--shadow-sm);';
-  saveAndAddBtn.addEventListener('click', () => handleSave(true));
-  actions.appendChild(saveAndAddBtn);
-
-  wrap.appendChild(actions);
+  wrap.appendChild(form);
   root.appendChild(wrap);
-
-  function fieldLabel(text) {
-    const el = document.createElement('div');
-    el.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin:10px 0 4px;';
-    el.textContent = text;
-    return el;
-  }
-  function styleTextarea(el) {
-    el.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; font-family:inherit; resize:vertical; box-sizing:border-box; margin-bottom:4px;';
-  }
-  function styleInput(el) {
-    el.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; box-sizing:border-box; margin-bottom:8px;';
-  }
 }
 
 async function renderCardBrowser(deckId) {
   let deck, cards;
   try {
     deck = await getDeck(deckId);
-    if (!deck) throw new Error('Deck not found');
-    cards = await getCardsByDeck(deck.id);
+    cards = await getCardsByDeck(deckId);
   } catch (err) {
-    showToast('Failed to load cards.');
+    showToast('Failed to load cards.', 5000);
     return goBack();
   }
 
@@ -1735,384 +1682,79 @@ async function renderCardBrowser(deckId) {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="cardsBack" aria-label="Back">←</button>
-    <div class="app-header-title" style="font-size:16px;">Cards (${cards.length})</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="browserBack" aria-label="Back">←</button>
+    <div class="app-header-title">${escapeHtml(deck.title)}</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
-  header.querySelector('#cardsBack').addEventListener('click', goBack);
+  header.querySelector('#browserBack').addEventListener('click', goBack);
 
-  const sub = document.createElement('p');
-  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0; font-size:13px; color:var(--ink-muted);';
-  sub.textContent = deck.title;
-  wrap.appendChild(sub);
-
+  const searchWrap = document.createElement('div');
+  searchWrap.style.cssText = 'padding:var(--space-sm) var(--space-md);';
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
-  searchInput.placeholder = '🔍 Reverse lookup: search by answer, formula, or note…';
-  searchInput.style.cssText = 'display:block; width:calc(100% - 32px); margin:0 var(--space-md) var(--space-md); padding:12px 14px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px; box-sizing:border-box;';
-  wrap.appendChild(searchInput);
-
-  const typeLabels = { basic: 'Basic', cloze: 'Cloze', formula: 'Formula' };
-  const listContainer = document.createElement('div');
-  listContainer.style.cssText = 'padding:0 var(--space-md);';
-  wrap.appendChild(listContainer);
-
-  function renderDeckCardList() {
-    listContainer.innerHTML = '';
-    if (cards.length === 0) {
-      listContainer.innerHTML = `<p style="color:var(--ink-muted); font-size:14px; text-align:center; padding:var(--space-xl) 0;">No cards in this deck yet.</p>`;
-      return;
-    }
-    const list = document.createElement('div');
-    list.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
-    for (const card of cards) {
-      list.appendChild(buildCardRow(card, deck, () => renderCardDetailView(deck, card)));
-    }
-    listContainer.appendChild(list);
-  }
-
-  async function renderSearchResults(query) {
-    listContainer.innerHTML = '';
-    try {
-      const results = await searchCardsByAnswer(query);
-      if (results.length === 0) {
-        listContainer.innerHTML = `<p style="color:var(--ink-muted); font-size:14px; text-align:center; padding:var(--space-xl) 0;">No cards found with that in their answer.</p>`;
-        return;
-      }
-      const list = document.createElement('div');
-      list.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
-      for (const result of results) {
-        const row = buildCardRow(result, null, async () => {
-          const resultDeck = result.deckId === deck.id ? deck : await getDeck(result.deckId);
-          const resultCard = await getCard(result.id);
-          if (resultDeck && resultCard) renderCardDetailView(resultDeck, resultCard);
-        });
-        if (result.deckTitle) {
-          const frontSpan = row.querySelector('.card-row-front');
-          if (frontSpan) frontSpan.innerHTML += ` <span style="color:var(--ink-muted); font-size:12px;">(${escapeHtml(result.deckTitle)})</span>`;
-        }
-        list.appendChild(row);
-      }
-      listContainer.appendChild(list);
-    } catch(err) {
-      showToast('Search failed.');
-    }
-  }
-
-  function buildCardRow(card, _deck, onClick) {
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.style.cssText = 'display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:12px 14px; border:none; background:var(--surface); border-radius:var(--radius-md); box-shadow:var(--shadow-sm); cursor:pointer; color:var(--ink); font-size:14px;';
-    const badge = document.createElement('span');
-    badge.style.cssText = 'flex-shrink:0; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
-    badge.textContent = typeLabels[card.type] || 'Basic';
-    const front = document.createElement('span');
-    front.className = 'card-row-front';
-    front.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-    front.textContent = card.front;
-    row.appendChild(badge);
-    row.appendChild(front);
-    row.addEventListener('click', onClick);
-    return row;
-  }
-
-  renderDeckCardList();
-
-  let searchDebounce = null;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchDebounce);
-    const query = searchInput.value.trim();
-    searchDebounce = setTimeout(() => {
-      if (query) renderSearchResults(query);
-      else renderDeckCardList();
-    }, 200);
-  });
-
-  root.appendChild(wrap);
-}
-
-async function renderCardDetailView(deck, card) {
-  let depsFrom, depsTo, allDecks;
-  try {
-    [depsFrom, depsTo, allDecks] = await Promise.all([
-      getRelationshipsFrom(card.id),
-      getRelationshipsTo(card.id),
-      getDecks()
-    ]);
-  } catch (err) {
-    showToast('Failed to load card details.');
-    return;
-  }
-
-  const deckTitleById = new Map(allDecks.map(d => [d.id, d.title]));
-
-  root.innerHTML = '';
-  root.style.padding = '0';
-
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
-
-  const header = document.createElement('div');
-  header.className = 'app-header';
-  header.innerHTML = `
-    <button class="icon-btn" id="detailBack" aria-label="Back">←</button>
-    <div class="app-header-title" style="font-size:16px;">Card detail</div>
-    <div style="width:40px;"></div>
-  `;
-  wrap.appendChild(header);
-  header.querySelector('#detailBack').addEventListener('click', () => renderCardBrowser(deck.id));
-
-  const content = document.createElement('div');
-  content.style.cssText = 'padding:var(--space-md);';
-  content.innerHTML = `
-    <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Front</div>
-    <div style="font-size:15px; line-height:1.6; color:var(--ink); margin-bottom:var(--space-md); word-break:break-word;">${escapeHtml(card.front)}</div>
-    <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Back</div>
-    <div style="font-size:15px; line-height:1.6; color:var(--ink); margin-bottom:var(--space-md); word-break:break-word;">${card.back ? escapeHtml(card.back) : '<em style="color:var(--ink-muted);">(none)</em>'}</div>
-  `;
-  wrap.appendChild(content);
-
-  if (card.type === 'formula') {
-    const formulaBlock = document.createElement('div');
-    formulaBlock.style.cssText = 'padding:0 var(--space-md) var(--space-md);';
-    formulaBlock.innerHTML = renderFormulaDetailFields(card);
-    wrap.appendChild(formulaBlock);
-  }
-
-  const dependsOnList = depsFrom.filter(r => r.type === 'dependsOn');
-  const dependedOnByList = depsTo.filter(r => r.type === 'dependsOn');
-  const relatedList = [...depsFrom.filter(r => r.type === 'related'), ...depsTo.filter(r => r.type === 'related')];
-
-  wrap.appendChild(buildRelationshipSection('Depends on', dependsOnList, deck, card, deckTitleById));
-  wrap.appendChild(buildRelationshipSection('Depended on by', dependedOnByList, deck, card, deckTitleById));
-  wrap.appendChild(buildRelationshipSection('Related', relatedList, deck, card, deckTitleById));
-  wrap.appendChild(buildAddRelationshipSection(deck, card));
-
-  root.appendChild(wrap);
-  if (typeof renderMath === 'function') renderMath(wrap);
-}
-
-function renderFormulaDetailFields(card) {
-  let html = '';
-  if (card.formula) {
-    html += `<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Formula</div>`;
-    html += `<div style="font-family:var(--font-mono); font-size:15px; color:var(--ink); margin-bottom:var(--space-md);">$$${escapeHtml(card.formula)}$$</div>`;
-  }
-  if (Array.isArray(card.variables) && card.variables.length > 0) {
-    const items = card.variables
-      .filter(v => v.symbol || v.meaning || v.name || v.description)
-      .map(v => {
-        const sym = v.symbol || v.name || '';
-        const mean = v.meaning || v.description || '';
-        return `<li><strong>${escapeHtml(sym)}</strong> — ${escapeHtml(mean)}</li>`;
-      })
-      .join('');
-    if (items) {
-      html += `<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Variables</div>`;
-      html += `<ul style="margin:0 0 var(--space-md); padding-left:20px; font-size:14px; color:var(--ink); line-height:1.6;">${items}</ul>`;
-    }
-  }
-  if (card.assumptions) {
-    html += `<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Assumptions</div>`;
-    html += `<div style="font-size:14px; color:var(--ink); margin-bottom:var(--space-md); line-height:1.5;">${escapeHtml(card.assumptions)}</div>`;
-  }
-  if (card.commonMistakes) {
-    html += `<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Common mistakes</div>`;
-    html += `<div style="font-size:14px; color:var(--ink); margin-bottom:var(--space-md); line-height:1.5;">${escapeHtml(card.commonMistakes)}</div>`;
-  }
-  if (card.applications) {
-    html += `<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Applications</div>`;
-    html += `<div style="font-size:14px; color:var(--ink); margin-bottom:var(--space-md); line-height:1.5;">${escapeHtml(card.applications)}</div>`;
-  }
-  return html;
-}
-
-function buildRelationshipSection(title, rels, deck, card, deckTitleById) {
-  const section = document.createElement('div');
-  section.style.cssText = 'padding:0 var(--space-md) var(--space-md);';
-
-  const heading = document.createElement('div');
-  heading.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink); margin-bottom:8px;';
-  heading.textContent = `${title} (${rels.length})`;
-  section.appendChild(heading);
-
-  if (rels.length === 0) {
-    const empty = document.createElement('p');
-    empty.style.cssText = 'font-size:13px; color:var(--ink-muted); margin:0;';
-    empty.textContent = 'None yet.';
-    section.appendChild(empty);
-    return section;
-  }
-
-  for (const rel of rels) {
-    const chip = document.createElement('div');
-    chip.style.cssText = 'display:flex; align-items:center; gap:8px; background:var(--surface); border-radius:var(--radius-md); padding:10px 12px; margin-bottom:6px; box-shadow:var(--shadow-sm); font-size:13px;';
-
-    if (rel.targetMissing || rel.sourceMissing) {
-      chip.innerHTML = `<em style="color:var(--ink-muted);">(deleted card)</em>`;
-    } else {
-      const navBtn = document.createElement('button');
-      navBtn.type = 'button';
-      navBtn.style.cssText = 'border:none; background:none; color:var(--accent); font-size:13px; font-weight:500; cursor:pointer; text-align:left; padding:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-      navBtn.textContent = rel.front;
-      navBtn.addEventListener('click', async () => {
-        const targetDeck = await getDeck(rel.deckId);
-        const targetCard = await getCard(rel.cardId);
-        if (targetDeck && targetCard) renderCardDetailView(targetDeck, targetCard);
-      });
-      chip.appendChild(navBtn);
-
-      const deckLabel = document.createElement('span');
-      deckLabel.style.cssText = 'color:var(--ink-muted); font-size:12px; flex-shrink:0;';
-      deckLabel.textContent = `(${deckTitleById.get(rel.deckId) || 'Unknown'})`;
-      chip.appendChild(deckLabel);
-    }
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.textContent = '✕';
-    removeBtn.style.cssText = 'border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:14px; flex-shrink:0;';
-    removeBtn.addEventListener('click', async () => {
-      await removeRelationship(rel.id);
-      showToast('Relationship removed.');
-      renderCardDetailView(deck, card);
-    });
-    chip.appendChild(removeBtn);
-
-    section.appendChild(chip);
-  }
-  return section;
-}
-
-function buildAddRelationshipSection(deck, card) {
-  const section = document.createElement('div');
-  section.style.cssText = 'padding:0 var(--space-md) var(--space-md);';
-
-  const heading = document.createElement('div');
-  heading.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink); margin-bottom:8px;';
-  heading.textContent = 'Add a relationship';
-  section.appendChild(heading);
-
-  const searchInput = document.createElement('input');
-  searchInput.type = 'text';
-  searchInput.placeholder = 'Search cards by their front text…';
-  searchInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; box-sizing:border-box; margin-bottom:8px;';
-  section.appendChild(searchInput);
-
-  const resultsList = document.createElement('div');
-  resultsList.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
-  section.appendChild(resultsList);
-
-  let searchDebounce = null;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(async () => {
-      const query = searchInput.value.trim();
-      resultsList.innerHTML = '';
-      if (!query) return;
-      const results = await searchCardsByFront(query, card.id);
-      for (const result of results) {
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; background:var(--surface); border-radius:var(--radius-sm); padding:8px 10px; font-size:13px;';
-        row.innerHTML = `<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(result.front)} <span style="color:var(--ink-muted);">(${escapeHtml(result.deckTitle)})</span></span>`;
-        const btns = document.createElement('div');
-        btns.style.cssText = 'display:flex; gap:4px; flex-shrink:0;';
-
-        const dependsBtn = document.createElement('button');
-        dependsBtn.type = 'button';
-        dependsBtn.textContent = '+ Depends';
-        dependsBtn.style.cssText = 'border:none; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;';
-        dependsBtn.addEventListener('click', async () => {
-          await addRelationship(card.id, result.id, 'dependsOn');
-          showToast('Relationship added.');
-          renderCardDetailView(deck, card);
-        });
-
-        const relatedBtn = document.createElement('button');
-        relatedBtn.type = 'button';
-        relatedBtn.textContent = '+ Related';
-        relatedBtn.style.cssText = 'border:none; background:var(--surface); color:var(--ink-secondary); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer; box-shadow:var(--shadow-sm);';
-        relatedBtn.addEventListener('click', async () => {
-          await addRelationship(card.id, result.id, 'related');
-          showToast('Relationship added.');
-          renderCardDetailView(deck, card);
-        });
-
-        btns.appendChild(dependsBtn);
-        btns.appendChild(relatedBtn);
-        row.appendChild(btns);
-        resultsList.appendChild(row);
-      }
-    }, 200);
-  });
-
-  return section;
-}
-
-async function renderDocuments(deckId) {
-  let deck, documents;
-  try {
-    deck = await getDeck(deckId);
-    if (!deck) throw new Error('Deck not found.');
-    documents = await getDocumentsByDeck(deck.id);
-  } catch (err) {
-    showToast('Failed to load documents.');
-    return goBack();
-  }
-
-  root.innerHTML = '';
-  root.style.padding = '0';
-
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
-
-  const header = document.createElement('div');
-  header.className = 'app-header';
-  header.innerHTML = `
-    <button class="icon-btn" id="docsBack" aria-label="Back">←</button>
-    <div class="app-header-title" style="font-size:16px;">Documents (${documents.length})</div>
-    <div style="width:40px;"></div>
-  `;
-  wrap.appendChild(header);
-  header.querySelector('#docsBack').addEventListener('click', goBack);
-
-  const sub = document.createElement('p');
-  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted);';
-  sub.textContent = deck.title;
-  wrap.appendChild(sub);
-
-  if (documents.length === 0) {
-    const empty = document.createElement('p');
-    empty.style.cssText = 'text-align:center; color:var(--ink-muted); font-size:14px; padding:var(--space-xl) var(--space-md);';
-    empty.textContent = 'No documents uploaded to this deck yet. Summaries appear here after you generate cards from a PDF or import.';
-    wrap.appendChild(empty);
-    root.appendChild(wrap);
-    return;
-  }
-
-  const withSummaries = documents.filter(d => d.summary && d.summary.trim());
-  if (withSummaries.length > 0) {
-    const recapBtn = document.createElement('button');
-    recapBtn.type = 'button';
-    recapBtn.style.cssText = 'display:block; width:calc(100% - 32px); margin:0 var(--space-md) var(--space-md); padding:14px; border:none; border-radius:var(--radius-md); background:var(--accent-soft); color:var(--accent); font-size:15px; font-weight:600; cursor:pointer; text-align:center;';
-    recapBtn.textContent = '📖 Course Recap — 5 min read';
-    recapBtn.addEventListener('click', () => renderCourseRecapView(deck, withSummaries));
-    wrap.appendChild(recapBtn);
-  }
+  searchInput.placeholder = 'Search cards…';
+  searchInput.style.cssText = 'width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:15px; box-sizing:border-box;';
+  searchWrap.appendChild(searchInput);
+  wrap.appendChild(searchWrap);
 
   const list = document.createElement('div');
   list.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:8px;';
 
-  for (const doc of documents) {
-    list.appendChild(buildDocumentRow(deck, doc));
+  function renderCardList(filteredCards) {
+    list.innerHTML = '';
+    if (filteredCards.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
+      empty.textContent = 'No cards found.';
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const card of filteredCards) {
+      const row = document.createElement('div');
+      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); cursor:pointer;';
+      row.innerHTML = `
+        <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:4px;">${escapeHtml(card.front.substring(0, 100))}${card.front.length > 100 ? '…' : ''}</div>
+        <div style="font-size:12px; color:var(--ink-muted);">${card.type || 'basic'} · ${card.state || 'new'}</div>
+      `;
+      row.addEventListener('click', () => renderCardDetailView(card, deck));
+      list.appendChild(row);
+    }
   }
 
+  renderCardList(cards);
+
+  searchInput.addEventListener('input', async () => {
+    const query = searchInput.value.trim();
+    if (!query) {
+      renderCardList(cards);
+      return;
+    }
+    try {
+      const byFront = await searchCardsByFront(query);
+      const byBack = await searchCardsByAnswer(query);
+      const merged = [...byFront, ...byBack].filter(c => c.deckId === deckId);
+      const unique = Array.from(new Map(merged.map(c => [c.id, c])).values());
+      renderCardList(unique);
+    } catch (err) {
+      console.error('Search failed:', err);
+    }
+  });
+
   wrap.appendChild(list);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn-primary';
+  addBtn.style.cssText = 'width:calc(100% - 32px); margin:var(--space-md); padding:14px;';
+  addBtn.textContent = '+ Add card';
+  addBtn.addEventListener('click', () => navigate(`/new-card/${deckId}`));
+  wrap.appendChild(addBtn);
+
   root.appendChild(wrap);
 }
 
-function renderCourseRecapView(deck, documents) {
+async function renderCardDetailView(card, deck) {
   root.innerHTML = '';
   root.style.padding = '0';
 
@@ -2122,248 +1764,293 @@ function renderCourseRecapView(deck, documents) {
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
-    <button class="icon-btn" id="recapBack" aria-label="Back">←</button>
-    <div class="app-header-title" style="font-size:16px;">Course Recap</div>
-    <div style="width:40px;"></div>
+    <button class="back-btn" id="detailBack" aria-label="Back">←</button>
+    <div class="app-header-title">Card</div>
+    <div style="width:48px;"></div>
   `;
   wrap.appendChild(header);
-  header.querySelector('#recapBack').addEventListener('click', () => navigate(`/documents/${deck.id}`));
+  header.querySelector('#detailBack').addEventListener('click', () => navigate(`/cards/${deck.id}`));
 
-  const intro = document.createElement('p');
-  intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; font-size:13px; color:var(--ink-muted); line-height:1.5;';
-  intro.textContent = `A quick recap of everything uploaded to "${deck.title}", built from ${documents.length} document summar${documents.length === 1 ? 'y' : 'ies'} — meant to be skimmed in a few minutes before an exam.`;
-  wrap.appendChild(intro);
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:12px;';
 
-  for (const doc of documents) {
-    const section = document.createElement('div');
-    section.style.cssText = 'margin:0 var(--space-md) var(--space-lg); padding:var(--space-md); background:var(--surface); border-radius:var(--radius-md); box-shadow:var(--shadow-sm);';
-    section.innerHTML = `
-      <h3 style="font-size:15px; font-weight:600; color:var(--ink); margin-bottom:8px;">${escapeHtml(doc.filename)}</h3>
-      <div style="font-size:14px; color:var(--ink-secondary); line-height:1.65; white-space:pre-wrap;">${escapeHtml(doc.summary)}</div>
-    `;
-    wrap.appendChild(section);
+  const frontBlock = document.createElement('div');
+  frontBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+  frontBlock.innerHTML = `<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Front</div><div style="font-size:15px; color:var(--ink); line-height:1.6;">${escapeHtml(card.front)}</div>`;
+  body.appendChild(frontBlock);
+
+  const backBlock = document.createElement('div');
+  backBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+  backBlock.innerHTML = `<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Back</div><div style="font-size:15px; color:var(--ink); line-height:1.6;">${escapeHtml(card.back)}</div>`;
+  body.appendChild(backBlock);
+
+  if (card.hint) {
+    const hintBlock = document.createElement('div');
+    hintBlock.style.cssText = 'background:var(--accent-soft); border-radius:var(--radius-md); padding:14px; border-left:3px solid var(--accent);';
+    hintBlock.innerHTML = `<div style="font-size:12px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Hint</div><div style="font-size:14px; color:var(--ink-secondary); line-height:1.6;">${escapeHtml(card.hint)}</div>`;
+    body.appendChild(hintBlock);
   }
 
+  if (card.formula) {
+    const formulaBlock = document.createElement('div');
+    formulaBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+    formulaBlock.innerHTML = `<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Formula</div><div style="font-family:var(--font-mono); font-size:15px; color:var(--ink);">$$${escapeHtml(card.formula)}$$</div>`;
+    body.appendChild(formulaBlock);
+  }
+
+  // Relationships
+  const relsFrom = await getRelationshipsFrom(card.id);
+  const relsTo = await getRelationshipsTo(card.id);
+
+  if (relsFrom.length > 0 || relsTo.length > 0) {
+    const relBlock = document.createElement('div');
+    relBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+    let relHtml = '<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Relationships</div>';
+    for (const r of relsFrom) {
+      relHtml += `<div style="font-size:13px; color:var(--ink-secondary); margin-bottom:4px;">→ ${escapeHtml(r.type)}: ${escapeHtml(r.toCard?.front?.substring(0, 60) || 'Card')}…</div>`;
+    }
+    for (const r of relsTo) {
+      relHtml += `<div style="font-size:13px; color:var(--ink-secondary); margin-bottom:4px;">← ${escapeHtml(r.type)}: ${escapeHtml(r.fromCard?.front?.substring(0, 60) || 'Card')}…</div>`;
+    }
+    relBlock.innerHTML = relHtml;
+    body.appendChild(relBlock);
+  }
+
+  // Add relationship
+  const addRelBlock = document.createElement('div');
+  addRelBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+  addRelBlock.innerHTML = '<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Add relationship</div>';
+
+  const relTypeSelect = document.createElement('select');
+  relTypeSelect.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
+  relTypeSelect.innerHTML = `
+    <option value="depends_on">Depends on</option>
+    <option value="related_to">Related to</option>
+    <option value="prerequisite">Prerequisite</option>
+  `;
+  addRelBlock.appendChild(relTypeSelect);
+
+  const relSearch = document.createElement('input');
+  relSearch.type = 'text';
+  relSearch.placeholder = 'Search cards by answer…';
+  relSearch.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
+  addRelBlock.appendChild(relSearch);
+
+  const relResults = document.createElement('div');
+  relResults.style.cssText = 'display:flex; flex-direction:column; gap:4px; max-height:200px; overflow-y:auto;';
+  addRelBlock.appendChild(relResults);
+
+  relSearch.addEventListener('input', async () => {
+    const query = relSearch.value.trim();
+    if (!query) {
+      relResults.innerHTML = '';
+      return;
+    }
+    try {
+      const results = await searchCardsByAnswer(query);
+      relResults.innerHTML = '';
+      for (const c of results.slice(0, 10)) {
+        if (c.id === card.id) continue;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.style.cssText = 'text-align:left; padding:8px 10px; border:none; background:var(--bg); border-radius:var(--radius-sm); cursor:pointer; font-size:13px; color:var(--ink);';
+        row.textContent = c.front.substring(0, 80);
+        row.addEventListener('click', async () => {
+          try {
+            await addRelationship(card.id, c.id, relTypeSelect.value);
+            showToast('Relationship added.');
+            renderCardDetailView(card, deck);
+          } catch (err) {
+            showToast(err.message || 'Failed to add relationship.', 5000);
+          }
+        });
+        relResults.appendChild(row);
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+    }
+  });
+
+  body.appendChild(addRelBlock);
+
+  const studyBtn = document.createElement('button');
+  studyBtn.className = 'btn-primary';
+  studyBtn.style.cssText = 'width:100%; padding:14px; margin-top:4px;';
+  studyBtn.textContent = 'Study this card';
+  studyBtn.addEventListener('click', () => {
+    root.innerHTML = '';
+    startStudySession(root, { deckId: deck.id, startCardId: card.id });
+  });
+  body.appendChild(studyBtn);
+
+  wrap.appendChild(body);
+  root.appendChild(wrap);
+  renderMath(wrap);
+}
+
+async function renderDocuments(deckId) {
+  let deck, docs;
+  try {
+    deck = await getDeck(deckId);
+    docs = await getDocumentsByDeck(deckId);
+  } catch (err) {
+    showToast('Failed to load documents.', 5000);
+    return goBack();
+  }
+
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="back-btn" id="docsBack" aria-label="Back">←</button>
+    <div class="app-header-title">${escapeHtml(deck.title)}</div>
+    <div style="width:48px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#docsBack').addEventListener('click', goBack);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:var(--space-md);';
+
+  if (docs.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
+    empty.textContent = 'No documents imported yet.';
+    body.appendChild(empty);
+  } else {
+    for (const doc of docs) {
+      const row = document.createElement('div');
+      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); margin-bottom:8px; display:flex; align-items:center; justify-content:space-between;';
+      row.innerHTML = `
+        <div>
+          <div style="font-size:14px; font-weight:600; color:var(--ink);">${escapeHtml(doc.filename)}</div>
+          <div style="font-size:12px; color:var(--ink-muted);">${formatFileSize(doc.size)} · ${formatUploadDate(doc.uploadedAt)}</div>
+        </div>
+        <button class="doc-delete-btn" data-id="${doc.id}" style="width:32px;height:32px;border:none;background:transparent;color:var(--danger);font-size:18px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🗑</button>
+      `;
+      row.querySelector('.doc-delete-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this document?')) return;
+        try {
+          await deleteDocument(doc.id);
+          showToast('Document deleted.');
+          renderDocuments(deckId);
+        } catch (err) {
+          showToast(err.message || 'Failed to delete.', 5000);
+        }
+      });
+      body.appendChild(row);
+    }
+  }
+
+  const recapBtn = document.createElement('button');
+  recapBtn.className = 'btn-secondary';
+  recapBtn.style.cssText = 'width:100%; padding:14px; margin-top:var(--space-md);';
+  recapBtn.textContent = '📋 Course Recap';
+  recapBtn.addEventListener('click', () => renderCourseRecapView(deckId));
+  body.appendChild(recapBtn);
+
+  wrap.appendChild(body);
   root.appendChild(wrap);
 }
 
-function buildDocumentRow(deck, doc) {
-  const row = document.createElement('div');
-  row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); box-shadow:var(--shadow-sm); overflow:hidden;';
-
-  const top = document.createElement('div');
-  top.style.cssText = 'display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:14px;';
-
-  const content = document.createElement('div');
-  content.style.cssText = 'flex:1; min-width:0;';
-  content.innerHTML = `
-    <div style="font-size:14px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(doc.filename)}</div>
-    <div style="font-size:12px; color:var(--ink-muted); margin-top:2px;">${formatFileSize(doc.size || 0)} · uploaded ${formatUploadDate(doc.uploadedAt)}</div>
-  `;
-  top.appendChild(content);
-
-  const actions = document.createElement('div');
-  actions.style.cssText = 'display:flex; gap:6px; flex-shrink:0;';
-
-  const viewBtn = document.createElement('button');
-  viewBtn.type = 'button';
-  viewBtn.style.cssText = 'border:none; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:6px 12px; font-size:12px; font-weight:500; cursor:pointer;';
-  viewBtn.textContent = 'View summary';
-  actions.appendChild(viewBtn);
-
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.style.cssText = 'border:none; background:var(--danger-soft); color:var(--danger); border-radius:999px; padding:6px 12px; font-size:12px; font-weight:500; cursor:pointer;';
-  deleteBtn.textContent = 'Delete';
-  deleteBtn.addEventListener('click', async () => {
-    try {
-      await deleteDocument(doc.id);
-      showToast('Document deleted.');
-      await renderDocuments(deck.id);
-    } catch(err) {
-      showToast('Failed to delete document');
-    }
-  });
-  actions.appendChild(deleteBtn);
-
-  top.appendChild(actions);
-  row.appendChild(top);
-
-  const summaryBox = document.createElement('div');
-  summaryBox.style.cssText = 'display:none; padding:0 14px 14px; font-size:13px; color:var(--ink-secondary); line-height:1.6; white-space:pre-wrap; border-top:1px solid rgba(0,0,0,0.04); margin-top:0; padding-top:12px;';
-  summaryBox.textContent = doc.summary || 'No summary available for this document.';
-  row.appendChild(summaryBox);
-
-  viewBtn.addEventListener('click', () => {
-    const showing = summaryBox.style.display !== 'none';
-    summaryBox.style.display = showing ? 'none' : 'block';
-    viewBtn.textContent = showing ? 'View summary' : 'Hide summary';
-  });
-
-  return row;
-}
-
-async function exportDeck(deckId) {
-  const deck = await getDeck(deckId);
-  if (!deck) {
-    showToast('Deck not found.');
-    return;
-  }
-  openExportSheet(deck);
-}
-
-function openExportSheet(deck) {
-  const backdrop = document.createElement('div');
-  backdrop.className = 'sheet-backdrop';
-  document.body.appendChild(backdrop);
-
-  const sheet = document.createElement('div');
-  sheet.className = 'sheet';
-  sheet.setAttribute('role', 'dialog');
-  sheet.setAttribute('aria-modal', 'true');
-  sheet.setAttribute('aria-label', 'Export deck');
-
-  sheet.innerHTML = `
-    <div class="sheet-handle"></div>
-    <div style="padding:0 var(--space-lg) var(--space-lg);">
-      <h2 style="font-size:18px; font-weight:700; margin-bottom:8px; color:var(--ink);">
-        Export "${escapeHtml(deck.title)}"
-      </h2>
-      <p style="font-size:13px; color:var(--ink-muted); margin-bottom:var(--space-md); line-height:1.5;">
-        Choose what to include in the file.
-      </p>
-
-      <label style="display:flex; align-items:flex-start; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); margin-bottom:8px;">
-        <input type="radio" name="export-mode" value="full" checked style="margin-top:3px;" />
-        <span>
-          <strong style="display:block; font-size:14px; color:var(--ink);">Full backup</strong>
-          <span style="font-size:12px; color:var(--ink-muted);">Includes your study progress</span>
-        </span>
-      </label>
-
-      <label style="display:flex; align-items:flex-start; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); margin-bottom:var(--space-lg);">
-        <input type="radio" name="export-mode" value="share" style="margin-top:3px;" />
-        <span>
-          <strong style="display:block; font-size:14px; color:var(--ink);">Share copy</strong>
-          <span style="font-size:12px; color:var(--ink-muted);">Cards only — no progress (for sending to someone else)</span>
-        </span>
-      </label>
-
-      <div style="display:flex; gap:10px;">
-        <button type="button" id="exportCancelBtn"
-          style="flex:1; padding:14px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:15px; font-weight:500; cursor:pointer; box-shadow:var(--shadow-sm);">
-          Cancel
-        </button>
-        <button type="button" id="exportConfirmBtn"
-          style="flex:1; padding:14px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;">
-          Export
-        </button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(sheet);
-
-  let isClosing = false;
-  function closeSheet() {
-    if (isClosing) return;
-    isClosing = true;
-    sheet.style.animation = 'slideDown 0.25s ease forwards';
-    backdrop.style.animation = 'fadeIn 0.2s ease reverse forwards';
-    setTimeout(() => {
-      sheet.remove();
-      backdrop.remove();
-    }, 250);
-  }
-
-  backdrop.addEventListener('click', closeSheet);
-  sheet.querySelector('.sheet-handle').addEventListener('click', closeSheet);
-  sheet.querySelector('#exportCancelBtn').addEventListener('click', closeSheet);
-
-  let startY = 0;
-  sheet.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; }, { passive: true });
-  sheet.addEventListener('touchend', (e) => {
-    if (e.changedTouches[0].clientY - startY > 80) closeSheet();
-  }, { passive: true });
-
-  sheet.querySelector('#exportConfirmBtn').addEventListener('click', async () => {
-    const mode = sheet.querySelector('input[name="export-mode"]:checked')?.value || 'full';
-    closeSheet();
-    try {
-      await downloadDeckExport(deck, mode === 'full');
-    } catch (err) {
-      showToast(err.message || 'Export failed.');
-    }
-  });
-}
-
-async function downloadDeckExport(deck, includeProgress) {
+async function renderCourseRecapView(deckId) {
+  let deck, docs;
   try {
-    const data = await exportDeckData(deck.id, { includeProgress });
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-
-    const safeName = deck.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'deck';
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `lernin-${safeName}${includeProgress ? '' : '-share'}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-
-    showToast(`Exported ${data.cards.length} card${data.cards.length === 1 ? '' : 's'}.`);
-  } catch(err) {
-    showToast('Failed to export deck');
+    deck = await getDeck(deckId);
+    docs = await getDocumentsByDeck(deckId);
+  } catch (err) {
+    showToast('Failed to load recap.', 5000);
+    return goBack();
   }
+
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="back-btn" id="recapBack" aria-label="Back">←</button>
+    <div class="app-header-title">Course Recap</div>
+    <div style="width:48px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#recapBack').addEventListener('click', () => renderDocuments(deckId));
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:var(--space-md);';
+
+  if (docs.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
+    empty.textContent = 'No documents to recap.';
+    body.appendChild(empty);
+  } else {
+    for (const doc of docs) {
+      const block = document.createElement('div');
+      block.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); margin-bottom:12px;';
+      block.innerHTML = `
+        <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtml(doc.filename)}</div>
+        <div style="font-size:13px; color:var(--ink-secondary); line-height:1.6;">${escapeHtml(doc.summary || 'No summary available.')}</div>
+      `;
+      body.appendChild(block);
+    }
+  }
+
+  wrap.appendChild(body);
+  root.appendChild(wrap);
 }
 
-function triggerDeckImport() {
+/* ---------- Import / Export ---------- */
+export async function triggerDeckImport() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'application/json,.json';
-  
-  // FIX: Hide the input and append it to the DOM so the browser doesn't 
-  // garbage collect it while the OS file picker is open.
+  input.accept = '.json';
   input.style.display = 'none';
   document.body.appendChild(input);
 
   input.addEventListener('change', async () => {
-    const file = input.files?.[0];
-    
-    if (!file) {
-      input.remove(); // Clean up if they cancel
-      return;
-    }
-    
+    const file = input.files[0];
+    if (!file) return;
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
-      const result = await importDeckData(parsed);
-      showToast(`Imported "${parsed.deck.title}" — ${result.cardCount} card${result.cardCount === 1 ? '' : 's'}.`);
-      navigate('/');
+      const data = JSON.parse(text);
+      const result = await importDeckData(data);
+      showToast(`Imported ${result.deckCount} deck(s), ${result.cardCount} card(s).`);
+      await renderDeckList();
     } catch (err) {
-      showToast(
-        err.message?.includes('JSON')
-          ? "That file isn't valid JSON."
-          : (err.message || 'Import failed.')
-      );
+      showToast(err.message || 'Import failed. Check the file format.', 5000);
     } finally {
-      input.remove(); // Always remove the hidden input from the DOM when finished
+      input.remove();
     }
   });
-
-  // Clean up if the user cancels the OS file picker and refocuses the window
-  window.addEventListener('focus', function cleanup() {
-    setTimeout(() => {
-      if (document.body.contains(input)) input.remove();
-    }, 1000);
-    window.removeEventListener('focus', cleanup);
-  }, { once: true });
 
   input.click();
 }
 
+async function exportDeck(deckId) {
+  try {
+    const data = await exportDeckData(deckId);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lernin-deck-${deckId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Deck exported.');
+  } catch (err) {
+    showToast(err.message || 'Export failed.', 5000);
+  }
+}
 
 /* ---------- Generation Event Listeners ---------- */
 function initGenerationListeners() {
@@ -2371,7 +2058,7 @@ function initGenerationListeners() {
     const { cards } = e.detail || {};
     // Online path usually goes through renderEditStep; this covers offline retry auto-save.
     if (cards && cards.length) {
-      showToast(`\( {cards.length} card \){cards.length === 1 ? '' : 's'} ready in the deck.`);
+      showToast(`${cards.length} card${cards.length === 1 ? '' : 's'} ready in the deck.`);
     } else {
       showToast('Cards generated! Review them in the deck.');
     }
@@ -2389,12 +2076,13 @@ function initGenerationListeners() {
   window.addEventListener('recall:generation-retry-done', (e) => {
     const { cardCount } = e.detail || {};
     const n = cardCount || 0;
-    showToast(`\( {n} card \){n === 1 ? '' : 's'} added from queued request.`);
+    showToast(`${n} card${n === 1 ? '' : 's'} added from queued request.`);
   });
 }
 
 /* ---------- Init ---------- */
-initTheme();
-initGenerationListeners();
 window.addEventListener('hashchange', handleRoute);
+initTheme();
+initFont();
+initGenerationListeners();
 handleRoute();
