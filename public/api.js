@@ -9,7 +9,14 @@
 //     this module must NOT call the server without a real key.
 // There is no server-side default API key.
 
-import { queueGeneration, getQueuedGenerations, clearQueuedGeneration, saveNewCards, getCardsByDeck, getApiConfig } from './db.js';
+import {
+  queueGeneration,
+  getQueuedGenerations,
+  clearQueuedGeneration,
+  saveNewCards,
+  getCardsByDeck,
+  getApiConfig
+} from './db.js';
 
 const GENERATE_ENDPOINT = '/api/generate-cards';
 
@@ -18,7 +25,11 @@ const GENERATE_ENDPOINT = '/api/generate-cards';
  */
 async function hasByokConfig() {
   const config = await getApiConfig();
-  return !!(config && config.apiKey && (config.provider === 'claude' || config.provider === 'gemini'));
+  return !!(
+    config &&
+    config.apiKey &&
+    (config.provider === 'claude' || config.provider === 'gemini')
+  );
 }
 
 /**
@@ -29,7 +40,11 @@ async function hasByokConfig() {
 async function llmRequestHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   const config = await getApiConfig();
-  if (config && config.apiKey && (config.provider === 'claude' || config.provider === 'gemini')) {
+  if (
+    config &&
+    config.apiKey &&
+    (config.provider === 'claude' || config.provider === 'gemini')
+  ) {
     headers['X-LLM-Provider'] = config.provider;
     headers['X-LLM-Api-Key'] = config.apiKey;
   }
@@ -65,7 +80,8 @@ export async function generateCards(text, deckId) {
   if (!(await hasByokConfig())) {
     emit('recall:generation-error', {
       deckId,
-      message: 'No API key configured. Use Settings → “Paste into any AI”, or add a Claude/Gemini key.'
+      message:
+        'No API key configured. Use Settings → “Paste into any AI”, or add a Claude/Gemini key.'
     });
     return { cards: [], summary: '' };
   }
@@ -113,7 +129,7 @@ export async function generateCards(text, deckId) {
  * Called by app.js after the edit step, not from generateCards() itself.
  */
 export async function commitGeneratedCards(deckId, approvedCards) {
-  const withIds = approvedCards.map(c => ({
+  const withIds = approvedCards.map((c) => ({
     ...c,
     id: c.id || cryptoRandomId()
   }));
@@ -143,15 +159,21 @@ export async function retryQueuedGenerations() {
       const data = await response.json();
       const deduped = await dedupeAgainstDeck(data.cards, item.deckId);
 
-      const withIds = deduped.map(c => ({
+      const withIds = deduped.map((c) => ({
         ...c,
         id: c.id || cryptoRandomId()
       }));
       await saveNewCards(item.deckId, withIds);
 
       await clearQueuedGeneration(item.id);
-      emit('recall:generation-retry-done', { deckId: item.deckId, cardCount: withIds.length });
-      emit('recall:generation-success', { deckId: item.deckId, cards: withIds });
+      emit('recall:generation-retry-done', {
+        deckId: item.deckId,
+        cardCount: withIds.length
+      });
+      emit('recall:generation-success', {
+        deckId: item.deckId,
+        cards: withIds
+      });
     } catch {
       // Still offline or request failed — leave queued, don't throw.
       break;
@@ -175,7 +197,10 @@ export async function dedupeAgainstDeck(cards, deckId) {
 
   return cards.filter((c) => {
     const candidateTokens = tokenSet(c.front);
-    return !existingTokenSets.some((set) => jaccardSimilarity(candidateTokens, set) >= DUPLICATE_SIMILARITY_THRESHOLD);
+    return !existingTokenSets.some(
+      (set) =>
+        jaccardSimilarity(candidateTokens, set) >= DUPLICATE_SIMILARITY_THRESHOLD
+    );
   });
 }
 
@@ -200,5 +225,8 @@ function jaccardSimilarity(a, b) {
 }
 
 function cryptoRandomId() {
-  return (crypto?.randomUUID?.() ?? `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`);
+  return (
+    crypto?.randomUUID?.() ??
+    `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`
+  );
 }

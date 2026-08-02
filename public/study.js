@@ -101,25 +101,21 @@ function renderStudyUI(container) {
   container.innerHTML = '';
   container.className = 'study-session';
 
-  // Context bar
   const contextBar = document.createElement('div');
   contextBar.className = 'study-context-bar';
   contextBar.id = 'studyContext';
   container.appendChild(contextBar);
 
-  // Card area
   const cardArea = document.createElement('div');
   cardArea.className = 'study-card-area';
   cardArea.id = 'cardArea';
   container.appendChild(cardArea);
 
-  // Controls
   const controls = document.createElement('div');
   controls.className = 'study-controls';
   controls.id = 'studyControls';
   container.appendChild(controls);
 
-  // Live region for screen readers
   const live = document.createElement('div');
   live.className = 'sr-only';
   live.setAttribute('aria-live', 'polite');
@@ -157,7 +153,6 @@ async function showCard() {
   session.currentCard = card;
   session.isRevealed = false;
 
-  // Fetch deck title if not cached
   if (!card._deckTitle && card.deckId) {
     const deck = await getDeck(card.deckId);
     card._deckTitle = deck?.title || 'Deck';
@@ -176,12 +171,10 @@ async function showCard() {
   inner.className = 'study-card-inner';
   inner.id = 'cardInner';
 
-  // Front
   const front = document.createElement('div');
   front.className = 'study-card-front';
   front.innerHTML = `<div class="study-card-content">${renderFront(card)}</div>`;
 
-  // Back (hidden until flip)
   const back = document.createElement('div');
   back.className = 'study-card-back';
   back.innerHTML = `<div class="study-card-content">${renderBack(card)}</div>`;
@@ -193,12 +186,10 @@ async function showCard() {
 
   renderMath(wrap);
 
-  // Touch handlers for swipe
   wrap.addEventListener('touchstart', onTouchStart, { passive: true });
   wrap.addEventListener('touchmove', onTouchMove, { passive: true });
   wrap.addEventListener('touchend', onTouchEnd, { passive: true });
 
-  // Remove enter animation class after it plays
   requestAnimationFrame(() => {
     wrap.classList.remove('is-entering');
   });
@@ -311,7 +302,6 @@ async function handleGrade(grade) {
 
   session.results[grade]++;
 
-  // Teach It for Good/Easy
   if (grade === 'good' || grade === 'easy') {
     showTeachIt(card, fsrsUpdate, reviewLogEntry);
     return;

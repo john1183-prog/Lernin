@@ -36,7 +36,6 @@ def _client_ip(request: Request) -> str:
 def _check_rate_limit(ip: str):
     now = time.time()
     window = _rate_limit[ip]
-    # Drop old entries
     while window and window[0] < now - RATE_LIMIT_WINDOW:
         window.pop(0)
     if len(window) >= RATE_LIMIT_MAX:
@@ -220,7 +219,7 @@ def _extract_ppt_text(content: bytes) -> str:
 
 def _call_claude_vision(base64_data: str, mime_type: str, provider: str, api_key: str):
     client = anthropic.Anthropic(api_key=api_key)
-    
+
     if mime_type == "application/pdf":
         content_blocks = [
             {
@@ -251,7 +250,7 @@ def _call_claude_vision(base64_data: str, mime_type: str, provider: str, api_key
                 "text": "Generate flashcards from this image."
             }
         ]
-    
+
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=4096,
@@ -260,7 +259,7 @@ def _call_claude_vision(base64_data: str, mime_type: str, provider: str, api_key
         tool_choice={"type": "tool", "name": "submit_cards"},
         messages=[{"role": "user", "content": content_blocks}]
     )
-    
+
     for block in response.content:
         if block.type == "tool_use" and block.name == "submit_cards":
             batch = CardBatch.model_validate(block.input)
@@ -320,11 +319,11 @@ async def generate_cards(request: Request):
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
     except Exception:
-    # Log server-side if you have a logger; never send internal details to clients.
-    raise HTTPException(
-        status_code=500,
-        detail="Card generation failed. Please try again."
-    )
+        # Never send internal details to clients.
+        raise HTTPException(
+            status_code=500,
+            detail="Card generation failed. Please try again."
+        )
 
     return GenerateResponse(cards=cards, summary=summary)
 
@@ -336,19 +335,19 @@ async def generate_cards_vision(
 ):
     _check_rate_limit(_client_ip(request))
     provider, api_key = _resolve_credentials(request)
-    
+
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="No file uploaded")
-    
+
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
-    
+
     mime_type = file.content_type or "application/octet-stream"
     filename = file.filename or "upload"
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
-    
-    # For PowerPoint, try text extraction first
+
+    # For PowerPoint: text extraction only (a .pptx is not an image)
     if ext in ('ppt', 'pptx'):
         text = _extract_ppt_text(content)
         if text and len(text.strip()) > 50:
@@ -358,12 +357,39 @@ async def generate_cards_vision(
                 else:
                     cards, summary = _call_gemini(text, provider, api_key)
                 return GenerateResponse(cards=cards, summary=summary)
+            except anthropic.AuthenticationError:
+                raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+            except anthropic.RateLimitError:
+                raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+            except httpx.HTTPStatusError as e:
+                raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
             except Exception:
-                pass  # Fall through to vision if text extraction fails
-    
+                raise HTTPException(
+                    status_code=500,
+                    detail="Card generation failed. Please try again."
+                )
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract text from this PowerPoint. Use the manual paste flow, or export slides as PDF/images."
+        )
+
     # For images and PDFs, use vision API
+    allowed_mimes = {
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'image/jpg',
+        'image/webp',
+    }
+    allowed_exts = {'pdf', 'jpg', 'jpeg', 'png', 'webp'}
+    if mime_type not in allowed_mimes and ext not in allowed_exts:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Use PDF, JPG, or PNG — or the manual paste flow."
+        )
+
     base64_data = base64.b64encode(content).decode('utf-8')
-    
+
     try:
         if provider == "claude":
             cards, summary = _call_claude_vision(base64_data, mime_type, provider, api_key)
@@ -375,7 +401,11 @@ async def generate_cards_vision(
         raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
+    except Exception:
+        # Never send internal details to clients.
+        raise HTTPException(
+            status_code=500,
+            detail="Card generation failed. Please try again."
+        )
+
     return GenerateResponse(cards=cards, summary=summary)

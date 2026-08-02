@@ -2366,7 +2366,6 @@ function triggerDeckImport() {
 
 
 /* ---------- Generation Event Listeners ---------- */
-/* ---------- Generation Event Listeners ---------- */
 function initGenerationListeners() {
   window.addEventListener('recall:generation-success', (e) => {
     const { cards } = e.detail || {};
