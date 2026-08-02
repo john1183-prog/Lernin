@@ -14,6 +14,8 @@ import { startStudySession } from './study.js';
 import { initCanvasView } from './canvas.js';
 import { initConceptGraph } from './concept-graph.js';
 import { renderManualJSONImport } from './manual-json-import.js';
+import { extractTextFromPdf } from './pdf-extract.js';
+import { generateCards, commitGeneratedCards } from './api.js';
 
 const root = document.getElementById('root');
 const LONG_PRESS_MS = 500;
@@ -61,8 +63,7 @@ function cycleTheme() {
   const next = order[current] || 'system';
   applyTheme(next);
   setupThemeListener(next);
-  // Fix #12: Await/catch the save action to prevent unhandled rejections
-  saveTheme(next).catch(err => console.error('Failed to save theme:', err)); 
+  saveTheme(next).catch(err => console.error('Failed to save theme:', err));
 }
 
 /* ---------- KaTeX Helper ---------- */
@@ -138,8 +139,6 @@ async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
   const [_, route, id] = path.split('/');
 
-
-  // Cleanup: prevent stuck modals when user navigates back
   document.querySelectorAll('.sheet-backdrop, .sheet').forEach(el => el.remove());
 
   switch (route) {
@@ -147,7 +146,7 @@ async function handleRoute() {
     case 'settings': await renderSettings(); break;
     case 'help': renderHelp(); break;
     case 'stats': await renderStats(); break;
-    case 'study': enterStudy(id); break; // start with specific deck ID if provided
+    case 'study': enterStudy(id); break;
     case 'cards': await renderCardBrowser(id); break;
     case 'map': enterMap(); break;
     case 'concept': enterConceptGraph(id); break;
@@ -164,7 +163,6 @@ export async function renderDeckList() {
 
   let decks, dueCards, stats;
   try {
-    // Fix #17: Add error boundary for IndexedDB queries
     [decks, dueCards, stats] = await Promise.all([
       getDecks(),
       getCardsDueTodayOrEarlier(),
@@ -176,11 +174,14 @@ export async function renderDeckList() {
     return;
   }
 
+  const viewMode = localStorage.getItem('deckViewMode') || 'list';
+
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
     <div class="app-header-title">Lernin</div>
     <div class="app-header-actions">
+      <button class="icon-btn" id="viewToggle" aria-label="Toggle view">${viewMode === 'grid' ? '⊞' : viewMode === 'horizontal' ? '⬌' : '☰'}</button>
       <button class="icon-btn" id="helpBtn" aria-label="Help">❓</button>
       <button class="icon-btn" id="themeToggle" aria-label="Toggle theme">🌓</button>
       <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
@@ -191,6 +192,14 @@ export async function renderDeckList() {
   header.querySelector('#helpBtn').addEventListener('click', () => navigate('/help'));
   header.querySelector('#themeToggle').addEventListener('click', cycleTheme);
   header.querySelector('#settingsBtn').addEventListener('click', () => navigate('/settings'));
+
+  header.querySelector('#viewToggle').addEventListener('click', () => {
+    const modes = ['list', 'grid', 'horizontal'];
+    const current = localStorage.getItem('deckViewMode') || 'list';
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+    localStorage.setItem('deckViewMode', next);
+    renderDeckList();
+  });
 
   const dueToday = dueCards.length;
   const streak = stats.currentStreak || 0;
@@ -247,6 +256,31 @@ export async function renderDeckList() {
       list.appendChild(tile);
     }
   }
+
+  if (viewMode === 'grid') {
+    list.style.display = 'grid';
+    list.style.gridTemplateColumns = '1fr 1fr';
+    list.style.gap = 'var(--space-sm)';
+    list.style.padding = '0 var(--space-md)';
+  } else if (viewMode === 'horizontal') {
+    list.style.display = 'flex';
+    list.style.overflowX = 'auto';
+    list.style.gap = 'var(--space-sm)';
+    list.style.padding = '0 var(--space-md)';
+    list.style.flexWrap = 'nowrap';
+    for (const tile of list.children) {
+      if (!tile.classList.contains('empty-state')) {
+        tile.style.flexShrink = '0';
+        tile.style.width = '160px';
+      }
+    }
+  } else {
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = 'var(--space-sm)';
+    list.style.padding = '0 var(--space-md)';
+  }
+
   root.appendChild(list);
 
   const newBtn = document.createElement('button');
@@ -269,8 +303,7 @@ export async function renderDeckList() {
 async function buildDeckTile(deck) {
   const cards = await getCardsByDeck(deck.id);
   const now = Date.now();
-  
-  // Fix #13: Safely parse dates in case db returns an ISO string instead of timestamp
+
   const due = cards.filter(c => !c.suspended && new Date(c.due_date).getTime() <= now).length;
   const total = cards.length;
   const mastered = cards.filter(c => c.state === 'review' && (c.stability || 0) >= 30).length;
@@ -284,14 +317,24 @@ async function buildDeckTile(deck) {
   tile.innerHTML = `
     <div class="deck-tile-header">
       <div class="deck-tile-title">${escapeHtml(deck.title)}</div>
-      ${due > 0 ? `<div class="deck-tile-badge">${due} due</div>` : ''}
+      <div style="display:flex; align-items:center; gap:6px;">
+        ${due > 0 ? `<div class="deck-tile-badge">${due} due</div>` : ''}
+        <button class="icon-btn deck-menu-btn" aria-label="Menu" style="opacity:0.6;font-size:18px;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;">⋮</button>
+      </div>
     </div>
     <div class="deck-tile-bar">
       <div class="deck-tile-bar-fill" style="width: ${masteryPct}%"></div>
     </div>
   `;
 
-  // Fix #5: Scope the long-press timers to each tile individually to prevent race conditions
+  const menuBtn = tile.querySelector('.deck-menu-btn');
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openBottomSheet(deck);
+  });
+  menuBtn.addEventListener('mouseenter', () => { menuBtn.style.opacity = '1'; });
+  menuBtn.addEventListener('mouseleave', () => { menuBtn.style.opacity = '0.6'; });
+
   let tileLongPressTimer = null;
   let tileIsLongPress = false;
 
@@ -306,7 +349,7 @@ async function buildDeckTile(deck) {
       openBottomSheet(deck);
     }, LONG_PRESS_MS);
   });
-  
+
   const clearTimer = () => clearTimeout(tileLongPressTimer);
   tile.addEventListener('pointerup', clearTimer);
   tile.addEventListener('pointerleave', clearTimer);
@@ -368,7 +411,6 @@ function openBottomSheet(deck) {
     }, 250);
   }
 
-  // Fix #16: Add Escape and Tab accessibility traps for bottom sheets
   function trapKeys(e) {
     if (e.key === 'Escape') {
       closeSheet();
@@ -406,7 +448,6 @@ function openBottomSheet(deck) {
 /* ---------- Views ---------- */
 function enterStudy(deckId) {
   root.innerHTML = '';
-  // If 'all' is passed, set deckId to null for cross-deck study
   const targetId = deckId === 'all' ? null : deckId;
   startStudySession(root, { deckId: targetId });
 }
@@ -569,7 +610,6 @@ async function renderSettings() {
 
   wrap.appendChild(form);
 
-  // Reminders
   const reminderSection = makeSection('Study reminders');
   const reminderIntro = document.createElement('p');
   reminderIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
@@ -604,7 +644,6 @@ async function renderSettings() {
   });
   wrap.appendChild(reminderSection);
 
-  // Storage
   const storageSection = makeSection('Storage');
   const storageUsageText = document.createElement('p');
   storageUsageText.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px;';
@@ -662,7 +701,6 @@ async function renderSettings() {
   storageSection.appendChild(storageBtnRow);
   wrap.appendChild(storageSection);
 
-  // Danger zone
   const dangerSection = makeSection('Danger zone');
   const dangerIntro = document.createElement('p');
   dangerIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
@@ -769,7 +807,7 @@ function renderHelp() {
   <li><strong>Your own Claude or Gemini API key</strong> — one-tap generation.</li>
   <li><strong>"Paste into any AI"</strong> — copy a ready-made prompt into ChatGPT, Claude.ai, Gemini, etc., then paste the JSON result back in.</li>
 </ul>
-Either way, you review, edit, or discard cards before they’re saved.`
+Either way, you review, edit, or discard cards before they\'re saved.`
     },
     {
       title: 'Formula cards and relationships',
@@ -783,7 +821,7 @@ Either way, you review, edit, or discard cards before they’re saved.`
       title: 'Reviewing cards',
       body: `Each card shows a question first; flip it to reveal the answer, then grade honestly:
 <ul style="margin:8px 0 0; padding-left:18px;">
-  <li><strong>Again</strong> — didn’t know it.</li>
+  <li><strong>Again</strong> — didn\'t know it.</li>
   <li><strong>Hard</strong> — got it, but it took effort.</li>
   <li><strong>Good</strong> — knew it comfortably.</li>
   <li><strong>Easy</strong> — trivial; see it much later.</li>
@@ -792,7 +830,7 @@ The schedule only works well if grades reflect how easily the answer came back.`
     },
     {
       title: 'Leeches, streaks, map & concept graph',
-      body: `Cards you keep missing get suspended as leeches so they don’t clog the queue. Streaks count consecutive study days; freezes (earned every 7-day streak) can protect a miss. Map view shows decks as islands; Concept Map shows cards and relationships inside a deck.`
+      body: `Cards you keep missing get suspended as leeches so they don\'t clog the queue. Streaks count consecutive study days; freezes (earned every 7-day streak) can protect a miss. Map view shows decks as islands; Concept Map shows cards and relationships inside a deck.`
     },
     {
       title: 'Documents, export, and privacy',
@@ -803,19 +841,17 @@ The schedule only works well if grades reflect how easily the answer came back.`
   const list = document.createElement('div');
   list.style.cssText = 'padding:0 var(--space-md);';
 
-  // Fix #7: Refactor unescaped innerHTML templating to construct elements securely via DOM parsing
   for (const section of sections) {
     const details = document.createElement('details');
     details.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); margin-bottom:8px; box-shadow:var(--shadow-sm); overflow:hidden;';
-    
+
     const summary = document.createElement('summary');
     summary.style.cssText = 'padding:12px 14px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer;';
-    summary.textContent = section.title; // Safe extraction
+    summary.textContent = section.title;
 
     const bodyDiv = document.createElement('div');
     bodyDiv.style.cssText = 'padding:0 14px 14px; font-size:13px; color:var(--ink-secondary); line-height:1.6;';
-    // innerHTML is safe here because 'sections' is a trusted, hardcoded array within this scope.
-    bodyDiv.innerHTML = section.body; 
+    bodyDiv.innerHTML = section.body;
 
     details.appendChild(summary);
     details.appendChild(bodyDiv);
@@ -854,7 +890,6 @@ async function renderStats() {
   const metricsGrid = document.createElement('div');
   metricsGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; padding:var(--space-md);';
 
-  // Fix #10: Loose equality check (`!= null`) safely catches undefined
   const metrics = [
     { label: '30-day retention', value: stats.retention30d != null ? `${stats.retention30d}%` : '—' },
     { label: 'Longest streak', value: `${stats.longestStreak365d}d` },
@@ -881,10 +916,10 @@ async function renderStats() {
 
   const chartRow = document.createElement('div');
   chartRow.style.cssText = 'display:flex; align-items:flex-end; gap:3px; height:80px; padding:0 var(--space-md) var(--space-md);';
-  
+
   const dailyCounts = stats.dailyCounts30d || [0];
   const maxDaily = Math.max(1, ...dailyCounts);
-  
+
   dailyCounts.forEach((count, i) => {
     const daysAgo = (dailyCounts.length - 1) - i;
     const bar = document.createElement('div');
@@ -1061,8 +1096,306 @@ async function openDeckSheet(existingDeck = null) {
 }
 
 function renderPDFImport(deckId) {
+  renderImportView(deckId);
+}
+
+async function renderImportView(deckId) {
   root.innerHTML = '';
-  renderManualJSONImport(root, deckId, () => navigate('/'));
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="icon-btn" id="importBack" aria-label="Back">←</button>
+    <div class="app-header-title">Import to deck</div>
+    <div style="width:40px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#importBack').addEventListener('click', () => navigate('/'));
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:var(--space-md);';
+
+  const fileLabel = document.createElement('div');
+  fileLabel.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:8px;';
+  fileLabel.textContent = 'Select a file';
+  body.appendChild(fileLabel);
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.pdf,.txt,.md,.jpg,.jpeg,.png,.ppt,.pptx';
+  fileInput.style.cssText = 'width:100%; padding:12px; border:1.5px solid var(--sand); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px;';
+  body.appendChild(fileInput);
+
+  const hint = document.createElement('p');
+  hint.style.cssText = 'font-size:12px; color:var(--ink-muted); margin-top:6px;';
+  hint.textContent = 'Supports text PDFs, .txt, .md, images, and PowerPoint files.';
+  body.appendChild(hint);
+
+  const progressArea = document.createElement('div');
+  progressArea.style.cssText = 'margin-top:var(--space-md); display:none;';
+  body.appendChild(progressArea);
+
+  const statusText = document.createElement('div');
+  statusText.style.cssText = 'font-size:13px; color:var(--ink-secondary); margin-bottom:8px;';
+  progressArea.appendChild(statusText);
+
+  const progressBar = document.createElement('div');
+  progressBar.style.cssText = 'height:4px; background:var(--sand); border-radius:2px; overflow:hidden;';
+  const progressFill = document.createElement('div');
+  progressFill.style.cssText = 'height:100%; background:var(--accent); width:0%; transition:width 0.3s;';
+  progressBar.appendChild(progressFill);
+  progressArea.appendChild(progressBar);
+
+  wrap.appendChild(body);
+  root.appendChild(wrap);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isPdf = ext === 'pdf';
+    const isText = ext === 'txt' || ext === 'md';
+    const isImage = ['jpg', 'jpeg', 'png'].includes(ext);
+    const isPpt = ['ppt', 'pptx'].includes(ext);
+
+    if (!isPdf && !isText && !isImage && !isPpt) {
+      showToast('Please select a .pdf, .txt, .md, .jpg, .png, or .ppt file');
+      return;
+    }
+
+    const config = await getApiConfig();
+    const isByok = config && (config.provider === 'claude' || config.provider === 'gemini') && config.apiKey;
+
+    if (isText) {
+      progressArea.style.display = 'block';
+      statusText.textContent = 'Reading file...';
+      progressFill.style.width = '50%';
+
+      try {
+        const text = await file.text();
+        progressFill.style.width = '100%';
+        await handleExtractedText(text, deckId, config, file.name);
+      } catch (err) {
+        showToast('Failed to read file.');
+        progressArea.style.display = 'none';
+      }
+      return;
+    }
+
+    if (isPdf) {
+      progressArea.style.display = 'block';
+      statusText.textContent = 'Extracting text from PDF...';
+      progressFill.style.width = '10%';
+
+      try {
+        const text = await extractTextFromPdf(file, ({ page, totalPages }) => {
+          const pct = Math.round((page / totalPages) * 80);
+          progressFill.style.width = pct + '%';
+          statusText.textContent = `Extracting page ${page} of ${totalPages}...`;
+        });
+
+        progressFill.style.width = '100%';
+        statusText.textContent = 'Extraction complete.';
+
+        if (text.trim().length < 50) {
+          showToast('PDF appears to be scanned. Using AI vision...');
+          if (isByok) {
+            await uploadVisionFile(file, deckId, config);
+          } else {
+            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+          }
+          return;
+        }
+
+        await handleExtractedText(text, deckId, config, file.name);
+      } catch (err) {
+        console.error('PDF extraction failed:', err);
+        showToast('Could not extract text. Try the manual copy-paste flow instead.');
+        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+      }
+      return;
+    }
+
+    // Vision path for images and PowerPoint
+    if (isImage || isPpt) {
+      if (isByok) {
+        progressArea.style.display = 'block';
+        statusText.textContent = 'Reading document with AI...';
+        progressFill.style.width = '30%';
+        await uploadVisionFile(file, deckId, config);
+      } else {
+        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+      }
+      return;
+    }
+  });
+}
+
+async function handleExtractedText(text, deckId, config, filename) {
+  const isByok = config && (config.provider === 'claude' || config.provider === 'gemini') && config.apiKey;
+
+  if (isByok) {
+    const result = await generateCards(text, deckId);
+    if (result && result.cards && result.cards.length > 0) {
+      renderEditStep(result.cards, deckId);
+    }
+  } else {
+    renderManualJSONImport(root, deckId, () => navigate('/'), text);
+  }
+}
+
+async function uploadVisionFile(file, deckId, config) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('deck_id', deckId);
+
+  try {
+    const response = await fetch('/api/generate-cards-vision', {
+      method: 'POST',
+      headers: {
+        'X-LLM-Provider': config.provider,
+        'X-LLM-Api-Key': config.apiKey
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || `Vision generation failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.cards && data.cards.length > 0) {
+      renderEditStep(data.cards, deckId);
+    } else {
+      showToast('No cards generated from this file.');
+    }
+  } catch (err) {
+    showToast('Generation failed: ' + err.message);
+  }
+}
+
+function renderEditStep(cards, deckId) {
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const approved = [...cards];
+  let discardedCount = 0;
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="icon-btn" id="editBack" aria-label="Back">←</button>
+    <div class="app-header-title">Review ${cards.length} cards</div>
+    <div style="width:40px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#editBack').addEventListener('click', () => navigate('/'));
+
+  const sub = document.createElement('p');
+  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted);';
+  sub.textContent = "Tap the ✕ to discard cards you don't want. Then import the rest.";
+  wrap.appendChild(sub);
+
+  const list = document.createElement('div');
+  list.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:8px;';
+
+  function renderCards() {
+    list.innerHTML = '';
+    for (let i = 0; i < approved.length; i++) {
+      const card = approved[i];
+      const row = document.createElement('div');
+      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); position:relative;';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.style.cssText = 'position:absolute; top:10px; right:44px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
+      typeBadge.textContent = card.type || 'basic';
+      row.appendChild(typeBadge);
+
+      const front = document.createElement('div');
+      front.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:60px;';
+      front.textContent = card.front;
+      row.appendChild(front);
+
+      const back = document.createElement('div');
+      back.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+      back.textContent = card.back;
+      row.appendChild(back);
+
+      if (card.type === 'formula') {
+        if (card.formula) {
+          const formula = document.createElement('div');
+          formula.style.cssText = 'margin-top:8px; font-family:var(--font-mono); font-size:13px; color:var(--ink-secondary); background:var(--bg); padding:8px; border-radius:var(--radius-sm);';
+          formula.textContent = card.formula;
+          row.appendChild(formula);
+        }
+        if (card.variables && card.variables.length > 0) {
+          const vars = document.createElement('div');
+          vars.style.cssText = 'margin-top:6px; font-size:12px; color:var(--ink-muted);';
+          vars.textContent = card.variables.map(v => `${v.symbol || v.name}: ${v.meaning || v.description}`).join(' | ');
+          row.appendChild(vars);
+        }
+      }
+
+      const discardBtn = document.createElement('button');
+      discardBtn.type = 'button';
+      discardBtn.textContent = '✕';
+      discardBtn.style.cssText = 'position:absolute; top:10px; right:10px; width:28px; height:28px; border:none; background:var(--danger-soft); color:var(--danger); border-radius:50%; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center;';
+      discardBtn.addEventListener('click', () => {
+        approved.splice(i, 1);
+        discardedCount++;
+        renderCards();
+        updateSummary();
+      });
+      row.appendChild(discardBtn);
+
+      list.appendChild(row);
+    }
+  }
+
+  wrap.appendChild(list);
+
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; font-size:13px; color:var(--ink-muted); text-align:center;';
+  function updateSummary() {
+    summary.textContent = `${approved.length} of ${cards.length} cards selected${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
+  }
+  updateSummary();
+  wrap.appendChild(summary);
+
+  const importBtn = document.createElement('button');
+  importBtn.className = 'btn-primary';
+  importBtn.style.cssText = 'width:calc(100% - 32px); margin:0 var(--space-md) var(--space-md); padding:14px;';
+  importBtn.textContent = 'Import all selected';
+  importBtn.addEventListener('click', async () => {
+    if (approved.length === 0) {
+      showToast('No cards selected to import.');
+      return;
+    }
+    importBtn.disabled = true;
+    importBtn.textContent = 'Importing...';
+    try {
+      await commitGeneratedCards(deckId, approved);
+      showToast(`Imported ${approved.length} card${approved.length !== 1 ? 's' : ''}.`);
+      navigate('/');
+    } catch (err) {
+      showToast(err.message || 'Import failed.');
+      importBtn.disabled = false;
+      importBtn.textContent = 'Import all selected';
+    }
+  });
+  wrap.appendChild(importBtn);
+
+  root.appendChild(wrap);
+  renderCards();
 }
 
 async function renderNewCardForm(deckId) {
@@ -1073,7 +1406,7 @@ async function renderNewCardForm(deckId) {
     showToast('Failed to load deck data.');
     return goBack();
   }
-  
+
   if (!deck) {
     showToast('Deck not found.');
     return goBack();
@@ -1097,7 +1430,7 @@ async function renderNewCardForm(deckId) {
 
   const sub = document.createElement('p');
   sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted);';
-  sub.textContent = `Adding to “${deck.title}”`;
+  sub.textContent = `Adding to "${deck.title}"`;
   wrap.appendChild(sub);
 
   const form = document.createElement('form');
@@ -1235,7 +1568,7 @@ async function renderNewCardForm(deckId) {
   relAttachedList.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin-bottom:var(--space-md);';
   form.appendChild(relAttachedList);
 
-  let attachedRelationships = []; 
+  let attachedRelationships = [];
 
   function renderAttached() {
     relAttachedList.innerHTML = '';
@@ -1271,7 +1604,7 @@ async function renderNewCardForm(deckId) {
         row.innerHTML = `<span>${escapeHtml(card.front)} <span style="color:var(--ink-muted);">(${escapeHtml(card.deckTitle)})</span></span>`;
         const btns = document.createElement('div');
         btns.style.cssText = 'display:flex; gap:4px; flex-shrink:0;';
-        
+
         const dependsBtn = document.createElement('button');
         dependsBtn.type = 'button';
         dependsBtn.textContent = '+ Depends';
@@ -1280,7 +1613,7 @@ async function renderNewCardForm(deckId) {
           attachedRelationships.push({ cardId: card.id, front: card.front, deckTitle: card.deckTitle, type: 'dependsOn' });
           renderAttached();
         });
-        
+
         const relatedBtn = document.createElement('button');
         relatedBtn.type = 'button';
         relatedBtn.textContent = '+ Related';
@@ -1503,7 +1836,7 @@ async function renderCardDetailView(deck, card) {
     showToast('Failed to load card details.');
     return;
   }
-  
+
   const deckTitleById = new Map(allDecks.map(d => [d.id, d.title]));
 
   root.innerHTML = '';
@@ -1790,7 +2123,7 @@ function renderCourseRecapView(deck, documents) {
 
   const intro = document.createElement('p');
   intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; font-size:13px; color:var(--ink-muted); line-height:1.5;';
-  intro.textContent = `A quick recap of everything uploaded to “${deck.title}”, built from ${documents.length} document summar${documents.length === 1 ? 'y' : 'ies'} — meant to be skimmed in a few minutes before an exam.`;
+  intro.textContent = `A quick recap of everything uploaded to "${deck.title}", built from ${documents.length} document summar${documents.length === 1 ? 'y' : 'ies'} — meant to be skimmed in a few minutes before an exam.`;
   wrap.appendChild(intro);
 
   for (const doc of documents) {
@@ -1886,7 +2219,7 @@ function openExportSheet(deck) {
     <div class="sheet-handle"></div>
     <div style="padding:0 var(--space-lg) var(--space-lg);">
       <h2 style="font-size:18px; font-weight:700; margin-bottom:8px; color:var(--ink);">
-        Export “${escapeHtml(deck.title)}”
+        Export "${escapeHtml(deck.title)}"
       </h2>
       <p style="font-size:13px; color:var(--ink-muted); margin-bottom:var(--space-md); line-height:1.5;">
         Choose what to include in the file.
@@ -1981,27 +2314,71 @@ function triggerDeckImport() {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'application/json,.json';
+  
+  // FIX: Hide the input and append it to the DOM so the browser doesn't 
+  // garbage collect it while the OS file picker is open.
+  input.style.display = 'none';
+  document.body.appendChild(input);
+
   input.addEventListener('change', async () => {
     const file = input.files?.[0];
-    if (!file) return;
+    
+    if (!file) {
+      input.remove(); // Clean up if they cancel
+      return;
+    }
+    
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
       const result = await importDeckData(parsed);
-      showToast(`Imported “${parsed.deck.title}” — ${result.cardCount} card${result.cardCount === 1 ? '' : 's'}.`);
+      showToast(`Imported "${parsed.deck.title}" — ${result.cardCount} card${result.cardCount === 1 ? '' : 's'}.`);
       navigate('/');
     } catch (err) {
       showToast(
         err.message?.includes('JSON')
-          ? 'That file isn’t valid JSON.'
+          ? "That file isn't valid JSON."
           : (err.message || 'Import failed.')
       );
+    } finally {
+      input.remove(); // Always remove the hidden input from the DOM when finished
     }
   });
+
+  // Clean up if the user cancels the OS file picker and refocuses the window
+  window.addEventListener('focus', function cleanup() {
+    setTimeout(() => {
+      if (document.body.contains(input)) input.remove();
+    }, 1000);
+    window.removeEventListener('focus', cleanup);
+  }, { once: true });
+
   input.click();
+}
+
+
+/* ---------- Generation Event Listeners ---------- */
+function initGenerationListeners() {
+  window.addEventListener('recall:generation-success', (e) => {
+    const { deckId, cards, summary } = e.detail;
+    showToast('Cards generated! Review them in the deck.');
+  });
+  window.addEventListener('recall:generation-error', (e) => {
+    const { deckId, message } = e.detail;
+    showToast('Generation failed: ' + message);
+  });
+  window.addEventListener('recall:generation-queued', (e) => {
+    const { deckId } = e.detail;
+    showToast("No connection. Cards will generate when you're back online.");
+  });
+  window.addEventListener('recall:generation-retry-done', (e) => {
+    const { deckId, cardCount } = e.detail;
+    showToast(`${cardCount} cards generated from queued request.`);
+  });
 }
 
 /* ---------- Init ---------- */
 initTheme();
+initGenerationListeners();
 window.addEventListener('hashchange', handleRoute);
-handleRoute(); // Trigger correct view on first load
+handleRoute();

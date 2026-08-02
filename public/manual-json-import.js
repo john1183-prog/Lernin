@@ -1,8 +1,8 @@
 /* Lernin — Manual JSON Import
-   For documents that can't be parsed (scanned PDFs, PowerPoints, images).
+   For documents that can't be parsed (scanned PDFs, PowerPoint, images).
    User gives a prompt to an external AI, pastes the JSON response here. */
 
-import { saveCards, saveDocument, getCardsByDeck } from './db.js';
+import { saveNewCards, saveDocument, getCardsByDeck } from './db.js';
 import { renderMath, showToast } from './app.js';
 
 const EXAMPLE_JSON = `{
@@ -26,8 +26,10 @@ const EXAMPLE_JSON = `{
  * @param {HTMLElement} container — root element to render into
  * @param {string} deckId — target deck ID
  * @param {Function} onDone — callback when import completes
+ * @param {string} [extractedText] — optional extracted text to inject into prompt
+ * @param {string} [filename] — optional filename for vision-file manual mode
  */
-export function renderManualJSONImport(container, deckId, onDone) {
+export function renderManualJSONImport(container, deckId, onDone, extractedText, filename) {
   container.innerHTML = '';
 
   const wrap = document.createElement('div');
@@ -41,7 +43,7 @@ export function renderManualJSONImport(container, deckId, onDone) {
 
     <div class="manual-import-body">
       <div class="manual-import-alert">
-        <div class="manual-import-alert-icon">💡</div>
+        <div class="manual-import-alert-icon">📢</div>
         <div>
           <strong>Have a scanned PDF, PowerPoint, or image?</strong>
           <p style="margin:4px 0 0;color:var(--ink-secondary);">
@@ -59,7 +61,7 @@ export function renderManualJSONImport(container, deckId, onDone) {
 
       <div class="manual-import-section">
         <div class="manual-import-label">
-          <span>📋 AI Prompt</span>
+          <span>📝 AI Prompt</span>
           <button class="manual-import-copy" id="copyPrompt">Copy</button>
         </div>
         <textarea class="manual-import-prompt" id="aiPrompt" readonly aria-label="AI prompt to copy"></textarea>
@@ -67,7 +69,7 @@ export function renderManualJSONImport(container, deckId, onDone) {
 
       <div class="manual-import-section">
         <div class="manual-import-label">
-          <span>📥 Paste JSON Response</span>
+          <span>📋 Paste JSON Response</span>
           <button class="manual-import-copy" id="pasteExample">Load example</button>
         </div>
         <textarea class="manual-import-json" id="jsonInput" placeholder="Paste the JSON from the AI here..."></textarea>
@@ -83,12 +85,24 @@ export function renderManualJSONImport(container, deckId, onDone) {
 
   // Populate prompt
   const promptEl = wrap.querySelector('#aiPrompt');
-  promptEl.value = AI_PROMPT_TEXT;
+  let promptValue = AI_PROMPT_TEXT;
+  if (extractedText) {
+    promptValue = AI_PROMPT_TEXT.replace(
+      '[Paste your document content or describe what you are uploading]',
+      extractedText
+    );
+  } else if (filename) {
+    promptValue = AI_PROMPT_TEXT.replace(
+      '[Paste your document content or describe what you are uploading]',
+      `Upload the file "${filename}" directly to this chat.`
+    );
+  }
+  promptEl.value = promptValue;
 
   // Copy button
   wrap.querySelector('#copyPrompt').addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(AI_PROMPT_TEXT);
+      await navigator.clipboard.writeText(promptValue);
       showToast('Prompt copied! Paste it into ChatGPT or Claude.');
     } catch {
       promptEl.select();
@@ -176,7 +190,7 @@ export function renderManualJSONImport(container, deckId, onDone) {
       return;
     }
 
-    await saveCards(deckId, newCards);
+    await saveNewCards(deckId, newCards);
     if (summary) {
       await saveDocument({ id: crypto.randomUUID(), deckId, filename: 'Manual import', summary });
     }
@@ -186,7 +200,7 @@ export function renderManualJSONImport(container, deckId, onDone) {
   });
 }
 
-/* ---------- JSON Parser with Repair Heuristics ---------- */
+/* ---------------- JSON Parser with Repair Heuristics ---------------- */
 function parseAndRepairJSON(raw) {
   // Strip markdown fences
   let cleaned = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
@@ -196,23 +210,17 @@ function parseAndRepairJSON(raw) {
     return { ok: true, data: JSON.parse(cleaned) };
   } catch {}
 
-  // Repair: unescaped quotes inside strings (common AI mistake)
-  // This is a best-effort heuristic — we look for patterns like "key": "value"with"quotes"
-  // and escape inner quotes. It's not perfect but catches the common case.
-  let repaired = cleaned;
-
   // Repair: trailing commas
-  repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+  let repaired = cleaned.replace(/,(\s*[}\]])/g, '$1');
 
-  // Repair: single quotes to double (some AIs use single quotes)
-  // Only replace outside of strings — simplistic approach
+  // Repair: single quotes to double (simplistic approach)
   let inString = false;
   let quoteChar = null;
   let result = '';
   for (let i = 0; i < repaired.length; i++) {
     const ch = repaired[i];
     const prev = repaired[i - 1];
-    if (!inString && (ch === '"' || ch === "'")) {
+    if (!inString && (ch === "'" || ch === '"')) {
       inString = true;
       quoteChar = ch;
       result += '"';
@@ -238,7 +246,7 @@ function normalizeText(str) {
   return (str || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/* ---------- The Prompt Text ---------- */
+/* ---------------- The Prompt Text ---------------- */
 const AI_PROMPT_TEXT = `You are a flashcard generator. I will upload a document (PDF, PowerPoint, scanned images, or any file type). Your job is to extract the key concepts and create flashcards in the exact JSON format below.
 
 ## Output Format
@@ -279,9 +287,9 @@ Return ONLY a valid JSON object. No markdown code fences, no explanations before
 
 ## Rules
 
-1. **Card types:** Use \`"basic"\` for standard Q&A, \`"cloze"\` for fill-in-the-blank (wrap the hidden word in \`{{c1::word}}\`), \`"formula"\` for math/equations.
-2. **Formula cards:** If the card involves an equation, use \`"formula"\` type and include the \`formula\` field with LaTeX notation (use \`\\\` for backslashes in JSON).
-3. **Only include fields you are CERTAIN about.** Leave \`variables\`, \`assumptions\`, \`commonMistakes\`, and \`applications\` empty or omitted if you are not sure.
+1. **Card types:** Use "basic" for standard Q&A, "cloze" for fill-in-the-blank (wrap the hidden word in {{c1::word}}), "formula" for math/equations.
+2. **Formula cards:** If the card involves an equation, use "formula" type and include the formula field with LaTeX notation (use \\\\ for backslashes in JSON).
+3. **Only include fields you are CERTAIN about.** Leave variables, assumptions, commonMistakes, and applications empty or omitted if you are not sure.
 4. **Do not hallucinate.** If a concept is unclear from the document, skip it rather than invent details.
 5. **Aim for 10-30 cards** depending on document length. Prioritize high-yield concepts.
 6. **Front should force active recall.** Ask questions, don't just state facts.

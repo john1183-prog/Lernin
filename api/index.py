@@ -1,180 +1,90 @@
-# api/index.py
-# Single FastAPI app = single Vercel Function (Python runtime). Stateless:
-# no DB connection, no persisted state server-side — cards live in the
-# client's IndexedDB. This endpoint's only job is text -> validated JSON.
-#
-# NOTE ON THE LLM CALL: Anthropic has a native "structured outputs" feature
-# (the `output_format` parameter) that constrains generation to a JSON
-# schema at the token level. I didn't find an unambiguous, stable example
-# of its exact request shape to copy verbatim, so rather than guess at a
-# parameter format, I've used the older, extensively documented
-# "forced tool use" pattern instead (tools=[...], tool_choice={"type":
-# "tool", "name": ...}) — this has been stable in the Anthropic API for a
-# long time and is guaranteed to work. If you want to switch to native
-# structured outputs later, that's a change scoped to `_call_llm()` only —
-# nothing else in this file needs to know which method produced the JSON.
-
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Optional
+import os
 import json
-import re
-import time
-from collections import defaultdict, deque
-from typing import Literal, Optional
-
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, ValidationError
-import anthropic
+import base64
 import httpx
+import anthropic
 
 app = FastAPI()
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
-GEMINI_MODEL = "gemini-flash-latest"  # Google's auto-updated GA alias
-MAX_RETRIES = 3
-CHUNK_CHAR_LIMIT = 12000  # rough char budget per chunk, not a token-exact split
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# ---------------------------------------------------------------------------
-# Rate limiting
-#
-# Chosen approach: in-memory, per-Function-instance sliding-window counter,
-# NOT Vercel KV. Reasoning: Vercel Functions on the Python runtime are
-# effectively single-instance-per-active-request-burst in practice for a
-# low-to-moderate traffic app like this one, and adding a KV dependency
-# (extra env vars, an external network call on every single request, a new
-# failure mode if KV is briefly unavailable) is not worth it for a v1 whose
-# whole design principle elsewhere in this file is "stateless, no external
-# dependencies beyond the LLM call itself." The tradeoff being accepted: this
-# limiter resets if the underlying Function instance is recycled, and does
-# NOT share state across concurrent cold-started instances. If this endpoint
-# ever needs to be strict/abuse-proof rather than just a sane default guard,
-# swap this dict for Vercel KV (`in .set/.incr` per IP with a TTL) — nothing
-# else in this file needs to change, since callers only see the 429.
-# ---------------------------------------------------------------------------
+# ---------- Rate limiting ----------
+from collections import defaultdict
+import time
 
-RATE_LIMIT_PER_MINUTE = 5
-RATE_LIMIT_PER_HOUR = 30
-
-# ip -> deque of request timestamps (epoch seconds), pruned on each check.
-_request_log: dict[str, deque] = defaultdict(deque)
-
-
-def _check_rate_limit(client_ip: str) -> None:
-    now = time.time()
-    log = _request_log[client_ip]
-
-    # Drop anything older than an hour; everything still in the deque after
-    # this is within the last hour, so counting entries newer than 60s covers
-    # the per-minute check too.
-    while log and now - log[0] > 3600:
-        log.popleft()
-
-    requests_last_hour = len(log)
-    requests_last_minute = sum(1 for t in log if now - t <= 60)
-
-    if requests_last_minute >= RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded: max {RATE_LIMIT_PER_MINUTE} requests per minute. Please wait and try again."
-        )
-    if requests_last_hour >= RATE_LIMIT_PER_HOUR:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded: max {RATE_LIMIT_PER_HOUR} requests per hour. Please wait and try again."
-        )
-
-    log.append(now)
-
+_rate_limit = defaultdict(list)
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 10
 
 def _client_ip(request: Request) -> str:
-    # Vercel (and most proxies in front of it) set X-Forwarded-For; fall back
-    # to the direct connection if it's ever absent (e.g. local dev).
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if request.client:
+        return request.client.host
+    return "unknown"
 
+def _check_rate_limit(ip: str):
+    now = time.time()
+    window = _rate_limit[ip]
+    # Drop old entries
+    while window and window[0] < now - RATE_LIMIT_WINDOW:
+        window.pop(0)
+    if len(window) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again in a minute.")
+    window.append(now)
 
-# ---------------------------------------------------------------------------
-# Provider/key resolution
-#
-# The client (api.js) sends X-LLM-Provider + X-LLM-Api-Key when the user has
-# configured their own key in Settings (see db.js's getApiConfig()). There
-# is no server-side default key for either provider — every request must
-# supply its own. (Users without a key at all should be using the app's
-# manual "paste into any AI" mode instead, which never calls this endpoint.)
-#
-# The key is read from a header, used for exactly one outbound call to the
-# provider, and never written to logs, disk, or any persistent store here —
-# this function is the only place it's handled.
-# ---------------------------------------------------------------------------
-
-def _resolve_credentials(request: Request) -> tuple[str, str]:
-    provider = request.headers.get("x-llm-provider", "claude").strip().lower()
-    user_key = request.headers.get("x-llm-api-key", "").strip()
-
-    if provider not in ("claude", "gemini"):
-        raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'. Use 'claude' or 'gemini'.")
-
-    if not user_key:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"No {provider.capitalize()} API key was provided. Add your own key in Settings, "
-                "or use \"Paste into any AI\" mode if you don't have one."
-            )
-        )
-
-    return provider, user_key
-
-
-# ---------------------------------------------------------------------------
-# Request size limit
-# ---------------------------------------------------------------------------
-
-MAX_TEXT_CHARS = 200_000  # generous bound; chunk_text() has no upper bound on
-                          # total chunk count per request otherwise
-
-# ---------------------------------------------------------------------------
-# Schema — this is the contract the client's saveNewCards()/commitGeneratedCards()
-# expect. Keep in sync with db.js's card shape (front, back, type).
-# ---------------------------------------------------------------------------
-
-class Variable(BaseModel):
-    symbol: str
-    meaning: str
+# ---------- Models ----------
+class CardVariable(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    symbol: Optional[str] = None
+    meaning: Optional[str] = None
 
 class Card(BaseModel):
-    front: str
-    back: str
-    type: Literal["basic", "cloze", "formula"]
-    # Only meaningful when type == "formula"; left at their defaults
-    # (empty string / empty list) for basic/cloze cards. Kept optional
-    # rather than a separate FormulaCard model so CardBatch/GenerateResponse
-    # don't need a discriminated union — the frontend already treats these
-    # as optional fields on any card record (see db.js's saveManualCard).
-    formula: str = ""
-    variables: list[Variable] = []
-    assumptions: str = ""
-    commonMistakes: str = ""
-    applications: str = ""
+    front: str = Field(..., min_length=1)
+    back: str = Field(..., min_length=1)
+    type: str = Field(default="basic", pattern="^(basic|cloze|formula)$")
+    formula: Optional[str] = None
+    variables: Optional[List[CardVariable]] = None
+    assumptions: Optional[str] = None
+    commonMistakes: Optional[str] = None
+    applications: Optional[str] = None
 
 class CardBatch(BaseModel):
-    cards: list[Card]
-    summary: str = ""  # 2-4 sentence summary of THIS chunk's content
-
-class GenerateRequest(BaseModel):
-    text: str
-    deck_id: str
+    summary: str = Field(..., min_length=1)
+    cards: List[Card] = Field(..., min_length=1)
 
 class GenerateResponse(BaseModel):
-    cards: list[Card]
-    summary: str = ""  # joined per-chunk summaries — see generate_cards() below
+    cards: List[Card]
+    summary: str
+
+# ---------- Prompts & Tools ----------
+SYSTEM_PROMPT = (
+    "You are a flashcard generator. Extract key concepts from the user's document "
+    "and return ONLY a valid JSON object matching the submit_cards tool schema. "
+    "Do not wrap the JSON in markdown fences. Do not add commentary."
+)
+
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-latest")
 
 GENERATE_CARDS_TOOL = {
     "name": "submit_cards",
-    "description": "Submit the generated flashcards and a brief summary of the source text.",
+    "description": "Submit generated flashcards",
     "input_schema": {
         "type": "object",
         "properties": {
+            "summary": {"type": "string", "description": "1-2 sentence summary of the document"},
             "cards": {
                 "type": "array",
                 "items": {
@@ -183,55 +93,35 @@ GENERATE_CARDS_TOOL = {
                         "front": {"type": "string"},
                         "back": {"type": "string"},
                         "type": {"type": "string", "enum": ["basic", "cloze", "formula"]},
-                        "formula": {
-                            "type": "string",
-                            "description": "The actual expression, e.g. 'KE = \u00bdmv\u00b2'. Only for type=formula."
-                        },
+                        "formula": {"type": ["string", "null"]},
                         "variables": {
                             "type": "array",
-                            "description": "Each symbol in the formula and what it means. Only for type=formula.",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "symbol": {"type": "string"},
-                                    "meaning": {"type": "string"}
+                                    "name": {"type": ["string", "null"]},
+                                    "description": {"type": ["string", "null"]},
+                                    "symbol": {"type": ["string", "null"]},
+                                    "meaning": {"type": ["string", "null"]},
                                 },
-                                "required": ["symbol", "meaning"]
-                            }
+                            },
                         },
-                        "assumptions": {
-                            "type": "string",
-                            "description": "What conditions the formula assumes (e.g. 'non-relativistic speeds'). Only for type=formula, and only if the source text actually states an assumption — do not invent one."
-                        },
-                        "commonMistakes": {
-                            "type": "string",
-                            "description": "A common error applying this formula, ONLY if the source text itself mentions one. Only for type=formula."
-                        },
-                        "applications": {
-                            "type": "string",
-                            "description": "Where this formula is used, ONLY if the source text itself states this. Only for type=formula."
-                        }
+                        "assumptions": {"type": ["string", "null"]},
+                        "commonMistakes": {"type": ["string", "null"]},
+                        "applications": {"type": ["string", "null"]},
                     },
-                    "required": ["front", "back", "type"]
-                }
+                    "required": ["front", "back", "type"],
+                },
             },
-            "summary": {
-                "type": "string",
-                "description": "2-4 sentence summary of the key points in this text, written for someone reviewing before an exam."
-            }
         },
-        "required": ["cards", "summary"]
-    }
+        "required": ["summary", "cards"],
+    },
 }
 
-# Gemini's `generateContent` supports native schema-constrained JSON output
-# (responseSchema + responseMimeType: "application/json") — unlike the
-# Anthropic path above, this is stable/documented, so it's used directly
-# rather than a tool-call workaround. Same shape as GENERATE_CARDS_TOOL's
-# input_schema, just without the outer tool-call wrapper.
 GEMINI_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
+        "summary": {"type": "string"},
         "cards": {
             "type": "array",
             "items": {
@@ -240,111 +130,41 @@ GEMINI_RESPONSE_SCHEMA = {
                     "front": {"type": "string"},
                     "back": {"type": "string"},
                     "type": {"type": "string", "enum": ["basic", "cloze", "formula"]},
-                    "formula": {"type": "string"},
+                    "formula": {"type": ["string", "null"]},
                     "variables": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "symbol": {"type": "string"},
-                                "meaning": {"type": "string"}
+                                "name": {"type": ["string", "null"]},
+                                "description": {"type": ["string", "null"]},
+                                "symbol": {"type": ["string", "null"]},
+                                "meaning": {"type": ["string", "null"]},
                             },
-                            "required": ["symbol", "meaning"]
-                        }
+                        },
                     },
-                    "assumptions": {"type": "string"},
-                    "commonMistakes": {"type": "string"},
-                    "applications": {"type": "string"}
+                    "assumptions": {"type": ["string", "null"]},
+                    "commonMistakes": {"type": ["string", "null"]},
+                    "applications": {"type": ["string", "null"]},
                 },
-                "required": ["front", "back", "type"]
-            }
+                "required": ["front", "back", "type"],
+            },
         },
-        "summary": {"type": "string"}
     },
-    "required": ["cards", "summary"]
+    "required": ["summary", "cards"],
 }
 
-SYSTEM_PROMPT = """You write flashcards from source text for spaced repetition study.
+# ---------- Helpers ----------
+def _resolve_credentials(request: Request):
+    provider = request.headers.get("x-llm-provider", "claude").lower()
+    api_key = request.headers.get("x-llm-api-key", "")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing X-LLM-Api-Key header")
+    if provider not in ("claude", "gemini"):
+        raise HTTPException(status_code=400, detail="Unsupported provider. Use 'claude' or 'gemini'.")
+    return provider, api_key
 
-Rules:
-- Minimum information principle: each card tests one atomic fact. No compound
-  questions ("What is X and why does Y happen" is two cards, not one).
-- Answers must be unambiguous — a grader could mark it right/wrong with no
-  judgment call.
-- Prefer cloze deletion ("type": "cloze") for definitions and lists, where the
-  front contains {{c1::the answer}} inline. Use "basic" Q&A for most other
-  factual content.
-- Use "type": "formula" ONLY when the source text presents an actual named
-  mathematical, physical, or chemical formula/equation with an explicit
-  expression (e.g. "KE = \u00bdmv\u00b2", not just a described relationship in
-  prose with no expression given). For formula cards:
-  - "formula": the expression exactly as it appears (or as close as plain
-    text allows — e.g. "v^2" for a superscript).
-  - "variables": every symbol in the formula and what it stands for, ONLY if
-    the source text actually defines them. If the text doesn't say what a
-    symbol means, omit that variable rather than guessing.
-  - "assumptions" / "commonMistakes" / "applications": include ONLY if the
-    source text explicitly states one — these are easy to hallucinate
-    plausible-sounding content for, and a wrong "common mistake" or
-    "assumption" is worse than an absent one. Leave empty ("") rather than
-    inventing something reasonable-sounding. Most formulas from source text
-    will legitimately have some of these fields empty — that's expected, not
-    a failure.
-  - Do not use "formula" type for a fact that merely mentions a quantity or
-    unit without an actual equation (e.g. "the speed of light is
-    3\u00d710^8 m/s" is a basic card, not a formula card, unless the source
-    text presents it as part of a named equation).
-- Do not invent facts not present in the source text — this applies with
-  extra weight to formula fields, per above.
-- Skip trivial or non-testable content (headers, page numbers, filler).
-- Also write a "summary": 2-4 sentences capturing the key points of this
-  text, written for a student reviewing right before an exam — dense and
-  factual, not a restatement of the assignment/chapter structure.
-- Call submit_cards exactly once with the full set of cards and the summary
-  for this text."""
-
-
-# ---------------------------------------------------------------------------
-# Chunking
-# ---------------------------------------------------------------------------
-
-def chunk_text(text: str, limit: int = CHUNK_CHAR_LIMIT) -> list[str]:
-    """Splits on paragraph boundaries, packing chunks up to `limit` chars.
-    Never splits mid-sentence where avoidable."""
-    paragraphs = re.split(r"\n\s*\n", text.strip())
-    chunks: list[str] = []
-    current = ""
-
-    for para in paragraphs:
-        if len(current) + len(para) + 2 <= limit:
-            current = f"{current}\n\n{para}" if current else para
-        else:
-            if current:
-                chunks.append(current)
-            # A single paragraph longer than the limit gets hard-split as a
-            # last resort — rare, but must not crash on a wall-of-text PDF.
-            if len(para) > limit:
-                for i in range(0, len(para), limit):
-                    chunks.append(para[i:i + limit])
-                current = ""
-            else:
-                current = para
-
-    if current:
-        chunks.append(current)
-
-    return chunks
-
-
-# ---------------------------------------------------------------------------
-# LLM call + validation/retry
-# ---------------------------------------------------------------------------
-
-def _call_claude(chunk: str, api_key: str) -> dict:
-    # A fresh client per call, not a module-level singleton, since the key
-    # now varies per-request (the user's own key, or DEFAULT_ANTHROPIC_KEY).
-    # anthropic.Anthropic() is cheap to construct — no connection is opened
-    # until .messages.create() is actually called.
+def _call_claude(text: str, provider: str, api_key: str):
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=CLAUDE_MODEL,
@@ -352,125 +172,206 @@ def _call_claude(chunk: str, api_key: str) -> dict:
         system=SYSTEM_PROMPT,
         tools=[GENERATE_CARDS_TOOL],
         tool_choice={"type": "tool", "name": "submit_cards"},
-        messages=[{"role": "user", "content": chunk}]
+        messages=[{"role": "user", "content": text}],
     )
-
     for block in response.content:
         if block.type == "tool_use" and block.name == "submit_cards":
-            return block.input
-
+            batch = CardBatch.model_validate(block.input)
+            return batch.cards, batch.summary
     raise ValueError("Model did not return a submit_cards tool call")
 
-
-def _call_gemini(chunk: str, api_key: str) -> dict:
+def _call_gemini(text: str, provider: str, api_key: str):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload = {
         "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": chunk}]}],
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": text}],
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": GEMINI_RESPONSE_SCHEMA,
+        },
+    }
+    with httpx.Client(timeout=120.0) as http:
+        response = http.post(url, params={"key": api_key}, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(text)
+        batch = CardBatch.model_validate(parsed)
+        return batch.cards, batch.summary
+
+def _extract_ppt_text(content: bytes) -> str:
+    try:
+        from pptx import Presentation
+        from io import BytesIO
+        prs = Presentation(BytesIO(content))
+        texts = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    texts.append(shape.text)
+        return "\n\n".join(texts)
+    except Exception:
+        return ""
+
+def _call_claude_vision(base64_data: str, mime_type: str, provider: str, api_key: str):
+    client = anthropic.Anthropic(api_key=api_key)
+    
+    if mime_type == "application/pdf":
+        content_blocks = [
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": base64_data
+                }
+            },
+            {
+                "type": "text",
+                "text": "Generate flashcards from this document."
+            }
+        ]
+    else:
+        content_blocks = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64_data
+                }
+            },
+            {
+                "type": "text",
+                "text": "Generate flashcards from this image."
+            }
+        ]
+    
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        tools=[GENERATE_CARDS_TOOL],
+        tool_choice={"type": "tool", "name": "submit_cards"},
+        messages=[{"role": "user", "content": content_blocks}]
+    )
+    
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "submit_cards":
+            batch = CardBatch.model_validate(block.input)
+            return batch.cards, batch.summary
+    raise ValueError("Model did not return a submit_cards tool call")
+
+def _call_gemini_vision(base64_data: str, mime_type: str, provider: str, api_key: str):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64_data
+                    }
+                },
+                {"text": "Generate flashcards from this document."}
+            ]
+        }],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": GEMINI_RESPONSE_SCHEMA
         }
     }
-
-    with httpx.Client(timeout=60.0) as http:
+    with httpx.Client(timeout=120.0) as http:
         response = http.post(url, params={"key": api_key}, json=payload)
-
-    if response.status_code in (400, 401, 403):
-        # Almost always a bad/missing key or a permissions issue on the
-        # caller's Google account — surface this immediately rather than
-        # burning retries on something that won't change on a second try.
-        raise _AuthError(f"Gemini rejected the request (HTTP {response.status_code}): {response.text[:300]}")
-
-    response.raise_for_status()
-    data = response.json()
-
-    try:
+        response.raise_for_status()
+        data = response.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as e:
-        raise ValueError(f"Unexpected Gemini response shape: {data}") from e
+        parsed = json.loads(text)
+        batch = CardBatch.model_validate(parsed)
+        return batch.cards, batch.summary
 
-    return json.loads(text)
-
-
-class _AuthError(Exception):
-    """Raised for provider-reported auth/permission failures — these should
-    fail the request immediately instead of being retried, since a bad key
-    doesn't become valid on attempt 2 or 3."""
-    pass
-
-
-def generate_cards_for_chunk(chunk: str, provider: str, api_key: str) -> tuple[list[Card], str]:
-    """Calls the LLM and validates the result, retrying on malformed output.
-    Malformed responses are NEVER passed through to the client — this
-    function either returns a validated (cards, summary) pair or raises
-    after exhausting retries. Auth errors (bad/missing key) raise
-    immediately without retrying, since a bad key doesn't fix itself on
-    attempt 2."""
-    last_error: Optional[Exception] = None
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            if provider == "gemini":
-                raw = _call_gemini(chunk, api_key)
-            else:
-                raw = _call_claude(chunk, api_key)
-            batch = CardBatch.model_validate(raw)
-            return batch.cards, batch.summary
-        except _AuthError as e:
-            raise HTTPException(status_code=401, detail=str(e))
-        except anthropic.AuthenticationError as e:
-            raise HTTPException(status_code=401, detail=f"Anthropic rejected the API key: {e}")
-        except (ValidationError, ValueError, json.JSONDecodeError) as e:
-            last_error = e
-            continue
-
-    raise HTTPException(
-        status_code=502,
-        detail=f"Card generation failed validation after {MAX_RETRIES} attempts: {last_error}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Route
-# ---------------------------------------------------------------------------
-
+# ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
-async def generate_cards(req: GenerateRequest, request: Request):
+async def generate_cards(request: Request):
     _check_rate_limit(_client_ip(request))
     provider, api_key = _resolve_credentials(request)
 
-    if not req.text or not req.text.strip():
-        raise HTTPException(status_code=400, detail="text must not be empty")
+    body = await request.json()
+    text = body.get("text", "")
+    if not text or len(text.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Text too short or missing.")
 
-    if len(req.text) > MAX_TEXT_CHARS:
-        raise HTTPException(
-            status_code=413,
-            detail=f"text exceeds the {MAX_TEXT_CHARS}-character limit ({len(req.text)} chars submitted)."
-        )
+    try:
+        if provider == "claude":
+            cards, summary = _call_claude(text, provider, api_key)
+        else:
+            cards, summary = _call_gemini(text, provider, api_key)
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    chunks = chunk_text(req.text)
-    all_cards: list[Card] = []
-    chunk_summaries: list[str] = []
+    return GenerateResponse(cards=cards, summary=summary)
 
-    for chunk in chunks:
-        cards, summary = generate_cards_for_chunk(chunk, provider, api_key)
-        all_cards.extend(cards)
-        if summary.strip():
-            chunk_summaries.append(summary.strip())
-
-    # No separate summarization call/endpoint on purpose — this reuses the
-    # LLM calls already being made for card generation instead of doubling
-    # API cost per upload. For a single-chunk document (the common case)
-    # this is just that chunk's summary; for a longer, multi-chunk document
-    # it's each chunk's summary joined in order, which reads as a slightly
-    # disjointed but still useful multi-part digest rather than one
-    # perfectly cohesive paragraph. Good enough for "skim before an exam."
-    document_summary = "\n\n".join(chunk_summaries)
-
-    return GenerateResponse(cards=all_cards, summary=document_summary)
-
-
-@app.get("/api/health")
-async def health():
-    return {"status": "ok"}
+@app.post("/api/generate-cards-vision", response_model=GenerateResponse)
+async def generate_cards_vision(
+    request: Request,
+    file: UploadFile = File(...),
+    deck_id: str = Form(...)
+):
+    _check_rate_limit(_client_ip(request))
+    provider, api_key = _resolve_credentials(request)
+    
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
+    
+    mime_type = file.content_type or "application/octet-stream"
+    filename = file.filename or "upload"
+    ext = filename.split('.')[-1].lower() if '.' in filename else ''
+    
+    # For PowerPoint, try text extraction first
+    if ext in ('ppt', 'pptx'):
+        text = _extract_ppt_text(content)
+        if text and len(text.strip()) > 50:
+            try:
+                if provider == "claude":
+                    cards, summary = _call_claude(text, provider, api_key)
+                else:
+                    cards, summary = _call_gemini(text, provider, api_key)
+                return GenerateResponse(cards=cards, summary=summary)
+            except Exception:
+                pass  # Fall through to vision if text extraction fails
+    
+    # For images and PDFs, use vision API
+    base64_data = base64.b64encode(content).decode('utf-8')
+    
+    try:
+        if provider == "claude":
+            cards, summary = _call_claude_vision(base64_data, mime_type, provider, api_key)
+        else:
+            cards, summary = _call_gemini_vision(base64_data, mime_type, provider, api_key)
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    return GenerateResponse(cards=cards, summary=summary)
