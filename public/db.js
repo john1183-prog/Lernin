@@ -1514,18 +1514,19 @@ export async function removeLastReviewLogForCard(cardId) {
   const db = await getDB();
   const tx = db.transaction('reviewLog', 'readwrite');
   const index = tx.store.index('by_cardId');
-  
-  // Open cursor going backward ('prev') to get the most recent entry
-  let cursor = await index.openCursor(cardId, 'prev');
-  
+
+  // Equality range + reverse direction → most recent entry for this card
+  const range = IDBKeyRange.only(cardId);
+  let cursor = await index.openCursor(range, 'prev');
+
   if (cursor) {
-    await cursor.delete();
+    cursor.delete(); // request is tied to the open transaction
     await tx.done;
-    return true; // Successfully removed
+    return true;
   }
-  
+
   await tx.done;
-  return false; // Nothing to remove
+  return false;
 }
 
 

@@ -6,7 +6,7 @@
 import {
   getCardsDueForDeck, getCardsDueTodayOrEarlier, updateCardAfterReview, getCard
 } from './db.js';
-import { gradeCard, previewIntervals } from './scheduler.js';
+import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import { showToast } from './app.js';
 
 /**
@@ -131,13 +131,29 @@ export async function startSpatialReview(container, deckId, opts = {}) {
   async function handleGrade(grade) {
     const card = state.queue[state.index];
     if (!card._notDue) {
-      const fsrsUpdate = gradeCard(card, grade);
+      const GRADE_TO_RATING = {
+        again: Grade.AGAIN,
+        hard: Grade.HARD,
+        good: Grade.GOOD,
+        easy: Grade.EASY
+      };
+      const rating = GRADE_TO_RATING[grade];
+      if (rating == null) {
+        console.error('Unknown grade', grade);
+        state.index++;
+        showCurrent();
+        return;
+      }
+      // gradeCard returns { fsrsUpdate, reviewLogEntry, leech }
+      const result = gradeCard(card, rating);
+      const fsrsUpdate = result.fsrsUpdate;
       await updateCardAfterReview(card.id, fsrsUpdate, {
         grade,
-        reviewedAt: Date.now(),
-        elapsedDays: fsrsUpdate.elapsed_days ?? null,
+        reviewedAt: result.reviewLogEntry?.reviewedAt ?? Date.now(),
+        elapsedDays: result.reviewLogEntry?.elapsedDays ?? null,
         teachingNote: null
       });
+      Object.assign(card, fsrsUpdate);
       state.results[grade]++;
       opts.onGrade?.(card.id, grade);
     }

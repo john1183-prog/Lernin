@@ -314,9 +314,14 @@ async function enterDeckView(deckId, { animate = true } = {}) {
       if (cardIdSet.has(r.cardId)) {
         relationships.push({ fromId: node.id, toId: r.cardId, type: r.type });
       } else if (r.deckId) {
+        let label = '→ other deck';
+        try {
+          const d = await getDeck(r.deckId);
+          if (d?.title) label = `→ ${d.title}`;
+        } catch (_) { /* ignore */ }
         relationships.push({
           fromId: node.id, toId: r.cardId, type: r.type,
-          crossDeck: true, label: `→ ${r.deckId.slice(0, 8)}`
+          crossDeck: true, label
         });
       }
     }
@@ -1179,10 +1184,14 @@ function updateToolbar() {
   toolbarEl.querySelector('#toolSpatial')?.addEventListener('click', startSpatialFromMap);
   toolbarEl.querySelector('#toolStudy')?.addEventListener('click', () => {
     if (!activeDeckId) return;
+    // Capture refs BEFORE destroyCanvasView nulls module-level container
+    const el = container;
+    const exitCb = onExitCallback;
+    const deckId = activeDeckId;
     destroyCanvasView();
-    startStudySession(container, {
-      deckId: activeDeckId,
-      onExit: () => initCanvasView(container, { onExit: onExitCallback, deckId: activeDeckId })
+    startStudySession(el, {
+      deckId,
+      onExit: () => initCanvasView(el, { onExit: exitCb, deckId })
     });
   });
   toolbarEl.querySelector('#toolSavePath')?.addEventListener('click', onSavePath);
@@ -1287,12 +1296,14 @@ async function showDetailPanel(cardId) {
 
   detailPanelEl.querySelector('#detailBack').addEventListener('click', exitToL2);
   detailPanelEl.querySelector('#detailStudy').addEventListener('click', () => {
+    const el = container;
+    const exitCb = onExitCallback;
     const deckId = activeDeckId;
     destroyCanvasView();
-    startStudySession(container, {
+    startStudySession(el, {
       deckId,
       startCardId: cardId,
-      onExit: () => initCanvasView(container, { onExit: onExitCallback, deckId })
+      onExit: () => initCanvasView(el, { onExit: exitCb, deckId })
     });
   });
 }

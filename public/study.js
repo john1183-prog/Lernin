@@ -5,7 +5,7 @@ import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
   getReviewLogForCard, getDeck, removeLastReviewLogForCard
 } from './db.js';
-import { gradeCard, previewIntervals } from './scheduler.js';
+import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import { renderMath, showToast } from './app.js';
 
 let session = {
@@ -25,6 +25,20 @@ let session = {
 };
 
 const GRADE_MAP = { '1': 'again', '2': 'hard', '3': 'good', '4': 'easy' };
+
+/** Map UI grade strings to ts-fsrs Rating numbers. */
+const GRADE_TO_RATING = {
+  again: Grade.AGAIN,
+  hard: Grade.HARD,
+  good: Grade.GOOD,
+  easy: Grade.EASY
+};
+
+function toRating(grade) {
+  const r = GRADE_TO_RATING[grade];
+  if (r == null) throw new Error(`Unknown grade: ${grade}`);
+  return r;
+}
 
 /* ---------- Session Start ---------- */
 export async function startStudySession(container, opts = {}) {
@@ -410,21 +424,27 @@ async function handleGrade(grade) {
 
   const card = session.currentCard;
 
-  // Save for undo
+  // Save for undo (pre-grade snapshot)
   session.undoStack.push({
     card: JSON.parse(JSON.stringify(card)), // deep copy
     grade,
     index: session.index
   });
 
-  const fsrsUpdate = gradeCard(card, grade);
-
+  // gradeCard returns { fsrsUpdate, reviewLogEntry, leech } — never spread the
+  // whole object onto the card record.
+  const result = gradeCard(card, toRating(grade));
+  const fsrsUpdate = result.fsrsUpdate;
   const reviewLogEntry = {
     grade,
-    reviewedAt: Date.now(),
-    elapsedDays: fsrsUpdate.elapsed_days ?? null,
+    reviewedAt: result.reviewLogEntry?.reviewedAt ?? Date.now(),
+    elapsedDays: result.reviewLogEntry?.elapsedDays ?? null,
     teachingNote: null
   };
+
+  // Keep the in-memory queue in sync so later undos / previews see new FSRS fields
+  Object.assign(card, fsrsUpdate);
+  if (session.queue[session.index]) Object.assign(session.queue[session.index], fsrsUpdate);
 
   session.results[grade]++;
 
@@ -502,8 +522,11 @@ async function undoLastGrade() {
     // Decrement result count
     session.results[lastAction.grade]--;
 
-    // Go back to that card
+    // Restore in-memory queue entry to pre-grade snapshot
     session.index = lastAction.index;
+    if (session.queue[session.index]) {
+      session.queue[session.index] = JSON.parse(JSON.stringify(lastAction.card));
+    }
     session.isRevealed = false;
     session.hintVisible = false;
 
