@@ -212,7 +212,7 @@ function renderFront(card) {
     html = html.replace(/\{\{c\d+::([^}]+)\}\}/g, '<span style="color:var(--ink-muted);">[...]</span>');
   }
   if (card.formula) {
-    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}$$</div>`;
+    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}\[ </div>`;
   }
   return html;
 }
@@ -225,7 +225,7 @@ function renderBack(card) {
   }
 
   if (card.type === 'formula' || card.formula) {
-    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}$$</div>`;
+    html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)} \]</div>`;
     if (card.variables && card.variables.length) {
       html += `<div class="formula-extras">`;
       html += renderFormulaExtra('Variables', card.variables.map(v => `${v.name}: ${v.description}`).join(' • '));
@@ -301,12 +301,11 @@ async function handleGrade(grade) {
   if (!session.currentCard) return;
 
   const card = session.currentCard;
-  const fsrsUpdate = gradeCard(card, grade);
-
+  // gradeCard returns { fsrsUpdate, reviewLogEntry, leech }
+  const result = gradeCard(card, grade);
+  const fsrsUpdate = result.fsrsUpdate;
   const reviewLogEntry = {
-    grade,
-    reviewedAt: Date.now(),
-    elapsedDays: fsrsUpdate.elapsed_days ?? null,
+    ...result.reviewLogEntry,
     teachingNote: null
   };
 
@@ -396,7 +395,7 @@ function onTouchMove(e) {
     const inner = document.getElementById('cardInner');
     if (inner) {
       inner.style.transition = 'none';
-      inner.style.transform = `rotateY(180deg) translateX(${dx * 0.3}px) translateY(${dy * 0.3}px)`;
+      inner.style.transform = `rotateY(180deg) translateX(\( {dx * 0.3}px) translateY( \){dy * 0.3}px)`;
     }
   }
 }
@@ -471,7 +470,7 @@ function renderSessionSummary() {
         <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="session-summary-ring-bg" cx="60" cy="60" r="52"/>
           <circle class="session-summary-ring-fg" cx="60" cy="60" r="52"
-            stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
+            stroke-dasharray="\( {circumference}" stroke-dashoffset=" \){offset}"/>
         </svg>
         <div class="session-summary-score">${accuracy}%</div>
       </div>

@@ -2,21 +2,34 @@
 // All backend calls live here. No DOM access, no rendering — app.js listens
 // for the CustomEvents this file dispatches and decides how to show them.
 // study.js never imports this file, and this file never imports study.js.
+//
+// Generation modes:
+//   - BYOK (Claude/Gemini + user key) → call /api/generate-cards
+//   - Manual ("Paste into any AI") or no key → UI uses renderManualJSONImport;
+//     this module must NOT call the server without a real key.
+// There is no server-side default API key.
 
 import { queueGeneration, getQueuedGenerations, clearQueuedGeneration, saveNewCards, getCardsByDeck, getApiConfig } from './db.js';
 
 const GENERATE_ENDPOINT = '/api/generate-cards';
 
 /**
- * Builds the extra headers that tell the backend which LLM provider + key
- * to use for this request. If the user hasn't configured their own key in
- * Settings, this returns just Content-Type and the backend falls back to
- * its own server-side default key (if the deployer configured one).
+ * True only when the user has configured Claude or Gemini with an API key.
+ */
+async function hasByokConfig() {
+  const config = await getApiConfig();
+  return !!(config && config.apiKey && (config.provider === 'claude' || config.provider === 'gemini'));
+}
+
+/**
+ * Builds headers for the LLM request.
+ * Requires the user to have configured their own provider + key in Settings.
+ * There is no server-side fallback key.
  */
 async function llmRequestHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   const config = await getApiConfig();
-  if (config && config.apiKey) {
+  if (config && config.apiKey && (config.provider === 'claude' || config.provider === 'gemini')) {
     headers['X-LLM-Provider'] = config.provider;
     headers['X-LLM-Api-Key'] = config.apiKey;
   }
@@ -24,18 +37,16 @@ async function llmRequestHeaders() {
 }
 
 // ---------------------------------------------------------------------------
-// Events — app.js listens on window for these to drive toasts/UI. Kept as
-// plain CustomEvents rather than a callback registry so api.js stays a pure
-// network module with no UI-layer coupling.
+// Events — app.js listens on window for these to drive toasts/UI.
 // ---------------------------------------------------------------------------
 
 function emit(name, detail) {
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
-// 'recall:generation-success'   { deckId, cards }
-// 'recall:generation-error'     { deckId, message }
-// 'recall:generation-queued'    { deckId }
+// 'recall:generation-success'    { deckId, cards, summary? }
+// 'recall:generation-error'      { deckId, message }
+// 'recall:generation-queued'     { deckId }
 // 'recall:generation-retry-done' { deckId, cardCount }
 
 // ---------------------------------------------------------------------------
@@ -43,19 +54,22 @@ function emit(name, detail) {
 // ---------------------------------------------------------------------------
 
 /**
- * Sends extracted PDF text to the backend for card generation. On success,
- * dedupes against the target deck and returns the *editable* card list —
- * app.js is responsible for rendering the edit step and calling
- * commitGeneratedCards() once the user approves them. This function does
- * NOT write to db.js itself, per the spec's "client-side edit step before
- * cards are committed" requirement.
+ * Sends extracted text to the backend for card generation (BYOK only).
+ * On success, dedupes and returns the editable card list — app.js shows the
+ * edit step and calls commitGeneratedCards() after the user approves.
  *
- * @param {string} text - raw text already extracted client-side by pdf.js
- * @param {string} deckId
- * @returns {Promise<{cards: Array<{front: string, back: string, type: string}>, summary: string}>}
- *          summary is '' if generation was queued (offline) or failed.
+ * Without a BYOK key, this does not call the server. The UI should use the
+ * manual "Paste into any AI" flow instead.
  */
 export async function generateCards(text, deckId) {
+  if (!(await hasByokConfig())) {
+    emit('recall:generation-error', {
+      deckId,
+      message: 'No API key configured. Use Settings → “Paste into any AI”, or add a Claude/Gemini key.'
+    });
+    return { cards: [], summary: '' };
+  }
+
   if (!navigator.onLine) {
     await queueGeneration(deckId, text);
     emit('recall:generation-queued', { deckId });
@@ -70,9 +84,6 @@ export async function generateCards(text, deckId) {
     });
 
     if (!response.ok) {
-      // 401/400 from a bad or missing key is common enough (typo'd key,
-      // no key configured and no server default) that it deserves its own
-      // message rather than a generic "Generation failed: 401".
       if (response.status === 401 || response.status === 400) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || `Generation failed: ${response.status}`);
@@ -86,8 +97,7 @@ export async function generateCards(text, deckId) {
     emit('recall:generation-success', { deckId, cards: deduped, summary });
     return { cards: deduped, summary };
   } catch (err) {
-    // Network failure (not a server error) — queue for retry rather than
-    // surfacing a dead end.
+    // Network failure — queue for retry rather than a dead end.
     if (err instanceof TypeError) {
       await queueGeneration(deckId, text);
       emit('recall:generation-queued', { deckId });
@@ -99,16 +109,8 @@ export async function generateCards(text, deckId) {
 }
 
 /**
- * Writes user-approved generated cards to IndexedDB. Called by app.js after
- * the edit step, never called directly from generateCards().
- *
- * Re-runs dedupeAgainstDeck() here, immediately before saveNewCards() — the
- * edit step (renderEditStep() in app.js) lets a user rewrite front/back text
- * after the initial dedupe already ran in generateCards(), so an edited card
- * could now collide with something already in the deck (or with itself
- * turning into a near-duplicate of another card). This is the single point
- * where cards actually get persisted, so it's the right place for the
- * "is this a duplicate" check that matters.
+ * Writes user-approved generated cards to IndexedDB.
+ * Called by app.js after the edit step, not from generateCards() itself.
  */
 export async function commitGeneratedCards(deckId, approvedCards) {
   const withIds = approvedCards.map(c => ({
@@ -120,11 +122,12 @@ export async function commitGeneratedCards(deckId, approvedCards) {
 }
 
 /**
- * Retries every queued generation request. Call this on the window 'online'
- * event (wire it up once in app.js's init) and optionally on app launch.
+ * Retries queued generation requests (BYOK only).
+ * On success, cards are saved immediately so they are not lost.
  */
 export async function retryQueuedGenerations() {
   if (!navigator.onLine) return;
+  if (!(await hasByokConfig())) return; // nothing useful without a key
 
   const queued = await getQueuedGenerations();
   for (const item of queued) {
@@ -135,33 +138,33 @@ export async function retryQueuedGenerations() {
         body: JSON.stringify({ text: item.rawText, deck_id: item.deckId })
       });
 
-      if (!response.ok) continue; // leave it queued, try again next time
+      if (!response.ok) continue; // leave queued, try again later
 
       const data = await response.json();
       const deduped = await dedupeAgainstDeck(data.cards, item.deckId);
+
+      const withIds = deduped.map(c => ({
+        ...c,
+        id: c.id || cryptoRandomId()
+      }));
+      await saveNewCards(item.deckId, withIds);
+
       await clearQueuedGeneration(item.id);
-      emit('recall:generation-retry-done', { deckId: item.deckId, cardCount: deduped.length });
-      emit('recall:generation-success', { deckId: item.deckId, cards: deduped });
+      emit('recall:generation-retry-done', { deckId: item.deckId, cardCount: withIds.length });
+      emit('recall:generation-success', { deckId: item.deckId, cards: withIds });
     } catch {
-      // Still offline or the request failed again — leave queued, don't throw.
+      // Still offline or request failed — leave queued, don't throw.
       break;
     }
   }
 }
 
-// Wire the retry automatically when connectivity returns.
 window.addEventListener('online', () => {
   retryQueuedGenerations();
 });
 
 // ---------------------------------------------------------------------------
-// Dedup
-// Upgraded from exact-match to token-overlap (Jaccard) similarity — catches
-// near-duplicates like reworded or punctuation-shifted regenerations of the
-// same fact. Still not true semantic dedup (that would need embeddings or
-// another LLM call per card, which is a real cost/latency tradeoff not
-// worth making for v1) — this is a deliberate middle ground, not the
-// spec's full ambition.
+// Dedup (Jaccard token overlap)
 // ---------------------------------------------------------------------------
 
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.8;
@@ -197,5 +200,5 @@ function jaccardSimilarity(a, b) {
 }
 
 function cryptoRandomId() {
-  return (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  return (crypto?.randomUUID?.() ?? `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`);
 }

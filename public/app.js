@@ -495,9 +495,9 @@ async function renderSettings() {
   wrap.appendChild(header);
   header.querySelector('#settingsBack').addEventListener('click', goBack);
 
-  const intro = document.createElement('p');
+const intro = document.createElement('p');
   intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; color:var(--ink-secondary); font-size:14px; line-height:1.6;';
-  intro.textContent = 'Choose how you\'d like to generate cards. Bring your own Claude or Gemini API key for one-tap generation, or use "Paste into any AI" if you don\'t have a key — no key is stored or sent anywhere except directly to the provider you choose at the moment you generate cards.';
+  intro.textContent = 'Choose how you generate cards. Use your own Claude or Gemini API key for one-tap generation, or choose “Paste into any AI” (the default) — copy a prompt into ChatGPT/Claude/Gemini and paste the JSON back. There is no server-side API key; without your own key, manual paste is the only generation path.';
   wrap.appendChild(intro);
 
   const form = document.createElement('form');
@@ -1243,9 +1243,17 @@ async function handleExtractedText(text, deckId, config, filename) {
     const result = await generateCards(text, deckId);
     if (result && result.cards && result.cards.length > 0) {
       renderEditStep(result.cards, deckId);
+      return;
+    }
+    // Offline queue returns empty cards intentionally — toast already shown.
+    // Any other empty result: offer manual paste so the user isn't stuck.
+    if (navigator.onLine) {
+      showToast('Generation returned no cards. You can paste JSON from any AI instead.');
+      renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
     }
   } else {
-    renderManualJSONImport(root, deckId, () => navigate('/'), text);
+    // Default fallback: copy prompt → paste JSON
+    renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
   }
 }
 
@@ -2358,22 +2366,31 @@ function triggerDeckImport() {
 
 
 /* ---------- Generation Event Listeners ---------- */
+/* ---------- Generation Event Listeners ---------- */
 function initGenerationListeners() {
   window.addEventListener('recall:generation-success', (e) => {
-    const { deckId, cards, summary } = e.detail;
-    showToast('Cards generated! Review them in the deck.');
+    const { cards } = e.detail || {};
+    // Online path usually goes through renderEditStep; this covers offline retry auto-save.
+    if (cards && cards.length) {
+      showToast(`\( {cards.length} card \){cards.length === 1 ? '' : 's'} ready in the deck.`);
+    } else {
+      showToast('Cards generated! Review them in the deck.');
+    }
   });
+
   window.addEventListener('recall:generation-error', (e) => {
-    const { deckId, message } = e.detail;
-    showToast('Generation failed: ' + message);
+    const { message } = e.detail || {};
+    showToast('Generation failed: ' + (message || 'Unknown error'));
   });
-  window.addEventListener('recall:generation-queued', (e) => {
-    const { deckId } = e.detail;
+
+  window.addEventListener('recall:generation-queued', () => {
     showToast("No connection. Cards will generate when you're back online.");
   });
+
   window.addEventListener('recall:generation-retry-done', (e) => {
-    const { deckId, cardCount } = e.detail;
-    showToast(`${cardCount} cards generated from queued request.`);
+    const { cardCount } = e.detail || {};
+    const n = cardCount || 0;
+    showToast(`\( {n} card \){n === 1 ? '' : 's'} added from queued request.`);
   });
 }
 

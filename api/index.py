@@ -319,8 +319,12 @@ async def generate_cards(request: Request):
         raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+    # Log server-side if you have a logger; never send internal details to clients.
+    raise HTTPException(
+        status_code=500,
+        detail="Card generation failed. Please try again."
+    )
 
     return GenerateResponse(cards=cards, summary=summary)
 
