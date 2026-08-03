@@ -9,7 +9,7 @@ import {
   getReminderSettings, setReminderEnabled, wipeAllData, saveDeck,
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
   exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument,
-  getSetting, saveSetting
+  getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
@@ -196,6 +196,7 @@ async function handleRoute() {
     case 'stats': await renderStats(); break;
     case 'study': activeViewCleanup = await enterStudy(id); break;
     case 'cards': await renderCardBrowser(id); break;
+    case 'leeches': await renderLeechView(id); break;
     case 'map':
       activeViewCleanup = id ? await enterConceptGraph(id) : await enterMap();
       break;
@@ -418,6 +419,7 @@ function openBottomSheet(deck) {
     { label: 'Import PDF', icon: '📄', action: () => renderPDFImport(deck.id) },
     { label: '+ Card', icon: '➕', action: () => navigate(`/new-card/${deck.id}`) },
     { label: 'Cards', icon: '🃏', action: () => navigate(`/cards/${deck.id}`) },
+    { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
     { label: 'Concept Map', icon: '🕸️', action: () => navigate(`/map/${deck.id}`) },
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
     { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
@@ -1028,7 +1030,7 @@ function renderHelp() {
     {
       title: 'Leeches, streaks, stats',
       body: `
-        <p><strong>Leeches</strong> — cards with too many lapses get suspended so they stop clogging every session. Review them deliberately from stats/leech surfaces; reset when you have a better formulation or mnemonic.</p>
+        <p><strong>Leeches</strong> — cards with too many lapses get suspended so they stop clogging every session. Open a deck's sheet and tap <strong>Leeches</strong> to review them deliberately, with recent grade history per card; reset when you have a better formulation or mnemonic.</p>
         <p><strong>Streaks</strong> — consecutive days you actually reviewed. Freezes (earned on longer streaks) can protect a missed day. Do not let the streak become the goal; the goal is recall under pressure.</p>
         <p><strong>Stats</strong> — retention, activity, per-deck breakdown. Use it to decide which palace wing to renovate this week.</p>
       `
@@ -1079,7 +1081,7 @@ function renderHelp() {
     },
     {
       q: 'Why did a card disappear from my queue?',
-      a: 'It may be suspended as a leech after repeated failures, or simply not due yet. Check Stats / leech surfaces, or open the deck’s Cards list. Suspended cards are hidden from normal study on purpose.'
+      a: 'It may be suspended as a leech after repeated failures, or simply not due yet. Open the deck\'s sheet and tap Leeches, or check the deck\'s Cards list. Suspended cards are hidden from normal study on purpose.'
     },
     {
       q: 'What if I grade everything Easy to “finish faster”?',
@@ -2003,6 +2005,116 @@ async function renderCardBrowser(deckId) {
   addBtn.addEventListener('click', () => navigate(`/new-card/${deckId}`));
   wrap.appendChild(addBtn);
 
+  root.appendChild(wrap);
+}
+
+const LEECH_GRADE_COLOR = {
+  again: '#C4472B',
+  hard: '#D19A3D',
+  good: '#4A7A4E',
+  easy: '#3B6FA0'
+};
+
+/**
+ * Leech review — cards suspended after too many lapses. Shows recent
+ * grade-history dots per card (oldest to newest, capped to the last 10)
+ * so it's clear whether a card was one bad day among mostly-good reviews
+ * or a genuine repeated miss, then lets you reset it back into the queue.
+ */
+async function renderLeechView(deckId) {
+  let deck, leeches;
+  try {
+    deck = await getDeck(deckId);
+    leeches = await getSuspendedCards(deckId);
+  } catch (err) {
+    showToast('Failed to load leeches.', 5000);
+    return goBack();
+  }
+
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="back-btn" id="leechBack" aria-label="Back">←</button>
+    <div class="app-header-title">Leeches</div>
+    <div style="width:48px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#leechBack').addEventListener('click', goBack);
+
+  const intro = document.createElement('p');
+  intro.style.cssText = 'padding:0 var(--space-md); font-size:13px; color:var(--ink-muted); line-height:1.5;';
+  intro.textContent = `Cards get suspended here after repeated lapses so they stop clogging every session in ${deck.title}. Fix the formulation or mnemonic, then reset to put a card back in rotation.`;
+  wrap.appendChild(intro);
+
+  const list = document.createElement('div');
+  list.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:10px;';
+
+  if (leeches.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
+    empty.textContent = 'No leeches in this deck. 🎉';
+    list.appendChild(empty);
+  } else {
+    for (const card of leeches) {
+      const row = document.createElement('div');
+      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+
+      const front = document.createElement('div');
+      front.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:8px;';
+      front.textContent = card.front.length > 120 ? card.front.slice(0, 120) + '…' : card.front;
+      row.appendChild(front);
+
+      const dotsWrap = document.createElement('div');
+      dotsWrap.style.cssText = 'display:flex; gap:4px; margin-bottom:10px;';
+      try {
+        const history = await getReviewHistoryForCard(card.id);
+        const recent = history.slice(-10);
+        for (const entry of recent) {
+          const dot = document.createElement('span');
+          dot.title = entry.grade;
+          dot.style.cssText = `width:8px; height:8px; border-radius:50%; background:${LEECH_GRADE_COLOR[entry.grade] || 'var(--ink-muted)'}; display:inline-block;`;
+          dotsWrap.appendChild(dot);
+        }
+        if (recent.length === 0) {
+          const noHistory = document.createElement('span');
+          noHistory.style.cssText = 'font-size:12px; color:var(--ink-muted);';
+          noHistory.textContent = 'No review history.';
+          dotsWrap.appendChild(noHistory);
+        }
+      } catch (err) {
+        // Non-fatal — the reset action still works without history dots.
+      }
+      row.appendChild(dotsWrap);
+
+      const resetBtn = document.createElement('button');
+      resetBtn.className = 'btn-secondary';
+      resetBtn.style.cssText = 'padding:8px 14px; font-size:13px;';
+      resetBtn.textContent = 'Reset';
+      resetBtn.addEventListener('click', async () => {
+        try {
+          await resetLeech(card.id);
+          showToast('Card reset — back in rotation.');
+          row.remove();
+          if (!list.querySelector('div')) {
+            renderLeechView(deckId);
+          }
+        } catch (err) {
+          showToast('Failed to reset card.', 5000);
+        }
+      });
+      row.appendChild(resetBtn);
+
+      list.appendChild(row);
+    }
+  }
+
+  wrap.appendChild(list);
   root.appendChild(wrap);
 }
 
