@@ -1435,7 +1435,13 @@ async function renderImportView(deckId) {
       return;
     }
 
-    const config = await getApiConfig();
+    let config;
+    try {
+      config = await getApiConfig();
+    } catch (err) {
+      showToast('Could not read API settings. Try again or check Settings.', 5000);
+      return;
+    }
     const isByok = config && (config.provider === 'claude' || config.provider === 'gemini') && config.apiKey;
 
     if (isText) {

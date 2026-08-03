@@ -227,6 +227,6 @@ function jaccardSimilarity(a, b) {
 function cryptoRandomId() {
   return (
     crypto?.randomUUID?.() ??
-    `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
 }
