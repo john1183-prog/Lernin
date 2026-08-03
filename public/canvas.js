@@ -130,6 +130,7 @@ export async function initCanvasView(targetContainer, opts = {}) {
   attachGestureHandlers();
   updateBreadcrumb();
   rafId = requestAnimationFrame(renderLoop);
+  return destroyCanvasView;
 }
 
 export function destroyCanvasView() {

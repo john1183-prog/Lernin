@@ -11,8 +11,8 @@ import {
   exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument,
   getSetting, saveSetting
 } from './db.js';
-import { startStudySession } from './study.js';
-import { initCanvasView, openDeckOnMap } from './canvas.js';
+import { startStudySession, teardownStudySession } from './study.js';
+import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -75,11 +75,21 @@ const FONT_OPTIONS = [
 ];
 
 async function initFont() {
+  // Prefer localStorage (already applied in <head>); fall back to IndexedDB and seed LS.
   try {
+    const fromLs = localStorage.getItem('lernin_font');
+    if (fromLs) {
+      applyFont(fromLs);
+    }
     const saved = await getSetting('fontFamily');
-    applyFont(saved || 'default');
+    const key = saved || fromLs || 'default';
+    applyFont(key);
+    if (key && localStorage.getItem('lernin_font') !== key) {
+      localStorage.setItem('lernin_font', key);
+    }
   } catch (err) {
     console.error('Failed to init font:', err);
+    applyFont(localStorage.getItem('lernin_font') || 'default');
   }
 }
 
@@ -157,9 +167,25 @@ function goBack() {
   }
 }
 
+/* Active view teardown — study/map attach document/window listeners. */
+let activeViewCleanup = null;
+
+function runViewCleanup() {
+  if (!activeViewCleanup) return;
+  try {
+    activeViewCleanup();
+  } catch (err) {
+    console.error('View cleanup failed:', err);
+  }
+  activeViewCleanup = null;
+}
+
 async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
   const [_, route, id] = path.split('/');
+
+  // Tear down previous view (keyboard, map rAF, gestures) before swapping DOM
+  runViewCleanup();
 
   document.querySelectorAll('.sheet-backdrop, .sheet').forEach(el => el.remove());
 
@@ -168,9 +194,11 @@ async function handleRoute() {
     case 'settings': await renderSettings(); break;
     case 'help': renderHelp(); break;
     case 'stats': await renderStats(); break;
-    case 'study': enterStudy(id); break;
+    case 'study': activeViewCleanup = await enterStudy(id); break;
     case 'cards': await renderCardBrowser(id); break;
-    case 'map': if (id) enterConceptGraph(id); else enterMap(); break;
+    case 'map':
+      activeViewCleanup = id ? await enterConceptGraph(id) : await enterMap();
+      break;
     case 'documents': await renderDocuments(id); break;
     case 'new-card': await renderNewCardForm(id); break;
     default: await renderDeckList();
@@ -461,21 +489,24 @@ function openBottomSheet(deck) {
 }
 
 /* ---------- Views ---------- */
-function enterStudy(deckId) {
+async function enterStudy(deckId) {
   root.innerHTML = '';
   const targetId = deckId === 'all' ? null : deckId;
-  startStudySession(root, { deckId: targetId });
+  const cleanup = await startStudySession(root, { deckId: targetId });
+  return cleanup || teardownStudySession;
 }
 
-function enterConceptGraph(deckId) {
+async function enterConceptGraph(deckId) {
   // Absorbed into the spatial map — open at L2 for this deck
   root.innerHTML = '';
-  openDeckOnMap(root, deckId, { onExit: () => navigate('/') });
+  const cleanup = await openDeckOnMap(root, deckId, { onExit: () => navigate('/') });
+  return cleanup || destroyCanvasView;
 }
 
-function enterMap() {
+async function enterMap() {
   root.innerHTML = '';
-  initCanvasView(root, { onExit: () => navigate('/') });
+  const cleanup = await initCanvasView(root, { onExit: () => navigate('/') });
+  return cleanup || destroyCanvasView;
 }
 
 async function renderSettings() {
@@ -652,6 +683,7 @@ async function renderSettings() {
     radio.addEventListener('change', async () => {
       const value = fontRow.querySelector('input[name="fontFamily"]:checked')?.value || 'default';
       await saveSetting('fontFamily', value);
+      try { localStorage.setItem('lernin_font', value); } catch (_) {}
       applyFont(value);
       showToast('Font updated.');
     });
@@ -2091,9 +2123,11 @@ async function renderCardDetailView(card, deck) {
   studyBtn.className = 'btn-primary';
   studyBtn.style.cssText = 'width:100%; padding:14px; margin-top:4px;';
   studyBtn.textContent = 'Study this card';
-  studyBtn.addEventListener('click', () => {
+  studyBtn.addEventListener('click', async () => {
+    runViewCleanup();
     root.innerHTML = '';
-    startStudySession(root, { deckId: deck.id, startCardId: card.id });
+    const cleanup = await startStudySession(root, { deckId: deck.id, startCardId: card.id });
+    activeViewCleanup = cleanup || teardownStudySession;
   });
   body.appendChild(studyBtn);
 

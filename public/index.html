@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
   <script>
-    // Inline script to set theme before paint — prevents flash of wrong theme
+    // Sync theme + font before first paint (avoids FOUC)
     (function() {
       try {
         const saved = localStorage.getItem('lernin-theme');
@@ -21,7 +21,17 @@
         } else {
           document.documentElement.setAttribute('data-theme', 'light');
         }
-      } catch(e) {}
+      } catch (e) {}
+      try {
+        var font = localStorage.getItem('lernin_font') || 'default';
+        var FONT_STACKS = {
+          'default': "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          'serif': "Georgia, 'Times New Roman', serif",
+          'mono': "'SF Mono', 'Courier New', monospace",
+          'clean': "'Helvetica Neue', Arial, sans-serif"
+        };
+        document.documentElement.style.setProperty('--font-body', FONT_STACKS[font] || FONT_STACKS['default']);
+      } catch (e) {}
     })();
   </script>
 </head>

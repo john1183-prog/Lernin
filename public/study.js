@@ -84,7 +84,7 @@ export async function startStudySession(container, opts = {}) {
       if (typeof session.onExit === 'function') session.onExit();
       else import('./app.js').then(m => m.renderDeckList());
     });
-    return;
+    return teardownStudySession;
   }
 
   // Interleave new and review
@@ -102,6 +102,7 @@ export async function startStudySession(container, opts = {}) {
   renderStudyUI(container);
   showCard();
   attachKeyboard();
+  return teardownStudySession;
 }
 
 function interleaveQueue(cards) {
@@ -766,6 +767,15 @@ function leaveSession() {
   } else {
     import('./app.js').then(m => m.renderDeckList());
   }
+}
+
+/**
+ * Silent teardown for the router — detaches global listeners without navigating.
+ * Safe to call multiple times.
+ */
+export function teardownStudySession() {
+  session.isActive = false;
+  detachKeyboard();
 }
 
 export function endStudySession() {
