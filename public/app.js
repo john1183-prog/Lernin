@@ -817,7 +817,7 @@ function renderHelp() {
   root.style.padding = '0';
 
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+  wrap.className = 'help-view';
 
   const header = document.createElement('div');
   header.className = 'app-header';
@@ -829,72 +829,293 @@ function renderHelp() {
   wrap.appendChild(header);
   header.querySelector('#helpBack').addEventListener('click', goBack);
 
-  const intro = document.createElement('p');
-  intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; font-size:14px; color:var(--ink-secondary); line-height:1.6;';
-  intro.textContent = 'Lernin is a spaced repetition study app: instead of re-reading notes and hoping it sticks, you review small question-and-answer cards on a schedule that adapts to how well you actually know each one. Cards you find easy come back less often; cards you struggle with come back sooner. It runs entirely on your device — your decks, cards, and study history never leave your phone or computer unless you explicitly export or generate cards.';
-  wrap.appendChild(intro);
+  // ---- Hero ----
+  const hero = document.createElement('div');
+  hero.className = 'help-hero';
+  hero.innerHTML = `
+    <div class="help-hero-kicker">You already know the pain</div>
+    <h1 class="help-hero-title">Stop rereading. Start remembering.</h1>
+    <p class="help-hero-lead">
+      Lernin is a study app built for the version of you that is drowning in PDFs,
+      highlighting entire chapters, and still blanking in the exam hall.
+      It combines two things that actually work:
+      <strong>spaced repetition</strong> (so you review the right card at the right time)
+      and a <strong>Memory Palace</strong> map based on the <strong>Method of Loci</strong>
+      (so your brain can hang knowledge on places, not just lists).
+    </p>
+    <p class="help-hero-lead help-hero-lead-soft">
+      Everything runs on your device. Your decks, grades, and streaks stay yours.
+      This page is the field manual — use it once, then go study.
+    </p>
+  `;
+  wrap.appendChild(hero);
 
-  const sections = [
+  // ---- TOC ----
+  const toc = document.createElement('nav');
+  toc.className = 'help-toc';
+  toc.setAttribute('aria-label', 'Help sections');
+  toc.innerHTML = `
+    <a href="#help-engines">The two engines</a>
+    <a href="#help-philosophy">Philosophy</a>
+    <a href="#help-guide">How to use every part</a>
+    <a href="#help-faq">FAQ</a>
+  `;
+  wrap.appendChild(toc);
+
+  // ---- Engines ----
+  const engines = document.createElement('section');
+  engines.className = 'help-section';
+  engines.id = 'help-engines';
+  engines.innerHTML = `
+    <h2 class="help-section-title">The two engines</h2>
+    <div class="help-cards">
+      <article class="help-card">
+        <div class="help-card-icon">⏱</div>
+        <h3>Spaced repetition (FSRS)</h3>
+        <p>
+          You grade each card <em>Again / Hard / Good / Easy</em>. Lernin uses an
+          FSRS scheduler so hard cards come back sooner and easy ones wait longer.
+          You are not “re-reading notes.” You are training retrieval — the skill exams actually test.
+        </p>
+        <p>
+          Honest grades matter more than perfect streaks. If you peeked, hit <strong>Again</strong>.
+          The algorithm only works if you tell it the truth.
+        </p>
+      </article>
+      <article class="help-card">
+        <div class="help-card-icon">🏛️</div>
+        <h3>Memory Palace (Method of Loci)</h3>
+        <p>
+          The map is not decoration. <strong>Method of Loci</strong> is the ancient trick of
+          placing ideas in imaginary places so you can walk the path later and pull them back.
+          In Lernin, decks are islands, cards are nodes you can drag, and landmarks are rooms
+          in your palace (“Fundamentals”, “Edge cases”, “Formula wall”).
+        </p>
+        <p>
+          Zoom in, arrange cards on purpose, draw study paths, then review <em>on the map</em>
+          so position and meaning reinforce each other.
+        </p>
+      </article>
+    </div>
+  `;
+  wrap.appendChild(engines);
+
+  // ---- Philosophy ----
+  const phil = document.createElement('section');
+  phil.className = 'help-section';
+  phil.id = 'help-philosophy';
+  phil.innerHTML = `
+    <h2 class="help-section-title">Philosophy</h2>
+    <ul class="help-philosophy-list">
+      <li><strong>Retrieval over recognition.</strong> Highlighting feels productive. It is not. Flipping a card and failing is progress.</li>
+      <li><strong>Your map, your memory.</strong> When you place a card on purpose, you encode a second handle on that idea. Use it.</li>
+      <li><strong>Offline first.</strong> Study on a plane. No account required for the core loop.</li>
+      <li><strong>You own the bill for AI.</strong> Bring your own Claude/Gemini key, or paste into any AI. Lernin is not farming your notes on a mystery server.</li>
+      <li><strong>Explain it back.</strong> After Good/Easy, the Teach-it prompt is optional — but saying it in your own words is how knowledge sticks.</li>
+      <li><strong>Leeches are signals, not shame.</strong> A card you keep missing gets suspended so it stops poisoning the queue. Fix it later on purpose.</li>
+    </ul>
+  `;
+  wrap.appendChild(phil);
+
+  // ---- How to use ----
+  const guideSections = [
     {
-      title: 'Getting cards into a deck',
-      body: `Two ways to add cards: generate from a PDF/notes (long-press a deck → Import / AI), or add a single card by hand (+ Card). How generation works depends on Settings:
-
-- **Your own Claude or Gemini API key** — one-tap generation.
-- **"Paste into any AI"** — copy a ready-made prompt into ChatGPT, Claude.ai, Gemini, etc., then paste the JSON result back in.
-
-Either way, you review, edit, or discard cards before they\'re saved.`
+      title: 'Home & decks',
+      body: `
+        <p>Home lists your decks with due counts and mastery. Long-press (or use the sheet) a deck for actions.</p>
+        <ul>
+          <li><strong>Study</strong> — classic queue of due cards for that deck (or study everything due from the global flow).</li>
+          <li><strong>Map (🗺️)</strong> in the header — territory view of all decks as islands.</li>
+          <li><strong>Import (📥)</strong> — load a previously exported deck backup.</li>
+          <li><strong>Stats / Settings / Help</strong> — top icons. Settings is where you pick AI mode and theme.</li>
+        </ul>
+        <p><em>Max tip:</em> Keep decks small and thematic (one course unit per deck). Giant mixed decks make the Memory Palace messy.</p>
+      `
     },
     {
-      title: 'Formula cards and relationships',
-      body: `Formula cards have extra fields: the expression, variables, assumptions, common mistakes, and applications. Any card can be linked as **Depends on** or **Related**. Open Cards on a deck to browse, search by answer (reverse lookup), and manage relationships — including cards in other decks.`
+      title: 'Getting cards in (PDF, AI, manual)',
+      body: `
+        <p>Two honest paths:</p>
+        <ol>
+          <li><strong>Import PDF / AI generate</strong> from the deck sheet → extract text → generate cards → <em>review every card</em> before commit. Delete junk. Fix wording. You are the editor; the model is the intern.</li>
+          <li><strong>+ Card</strong> — write front/back yourself. Use for formulas, definitions you keep missing, and exam traps.</li>
+        </ol>
+        <p>In Settings choose:</p>
+        <ul>
+          <li><strong>Your Claude or Gemini API key</strong> — one-tap generation. Key stays on device; sent only to that provider when you generate.</li>
+          <li><strong>Paste into any AI</strong> — copy the prompt, paste JSON back. Free, slightly more friction.</li>
+        </ul>
+        <p><em>Max tip:</em> Prefer fewer sharp cards over hundreds of vague ones. One idea per card.</p>
+      `
     },
     {
-      title: 'Why you bring your own AI key',
-      body: `Card generation costs money per use. You connect your own Claude or Gemini key, or use free paste-into-any-AI mode. Your key stays on your device and is only sent to the provider you chose when generating cards — never stored on a Lernin server.`
+      title: 'Study session (classic queue)',
+      body: `
+        <p>Question first. Struggle. Then flip. Then grade.</p>
+        <ul>
+          <li><strong>Again</strong> — blank or wrong.</li>
+          <li><strong>Hard</strong> — correct, but slow or shaky.</li>
+          <li><strong>Good</strong> — solid recall.</li>
+          <li><strong>Easy</strong> — trivial; schedule far out.</li>
+        </ul>
+        <p><strong>Explain (💡)</strong> shows a hint before you flip. <strong>Teach-it</strong> after Good/Easy asks you to explain in your own words — do it when the concept is core to the course.</p>
+        <p><strong>Undo (↩ or U)</strong> if you fat-fingered a grade. Press <strong>?</strong> in session for the full shortcut list.</p>
+        <p>Keyboard: Space/Enter/→ flip · ← hint (before flip) or Again (after) · 1–4 grades · Esc ends session.</p>
+        <p>Swipe: before flip ← hint, → flip · after flip ← Again, → Easy, ↑ Hard, ↓ Good.</p>
+      `
     },
     {
-      title: 'Reviewing cards',
-      body: `Each card shows a question first; flip it to reveal the answer, then grade honestly:
-
-- **Again** — didn\'t know it.
-- **Hard** — got it, but it took effort.
-- **Good** — knew it comfortably.
-- **Easy** — trivial; see it much later.
-
-The schedule only works well if grades reflect how easily the answer came back.`
+      title: 'The map — your Memory Palace',
+      body: `
+        <p>Open <strong>🗺️ Map</strong>. Three zoom levels (Method of Loci, digital):</p>
+        <ol>
+          <li><strong>L1 Territories</strong> — courses/groups as regions; decks as islands. Drag islands; positions save.</li>
+          <li><strong>L2 Deck view</strong> — tap an island. Cards become nodes. Drag them. Add <strong>landmarks</strong> (named zones). Draw <strong>relationship lines</strong> (depends-on / related). Build a <strong>study path</strong> by tapping nodes in order.</li>
+          <li><strong>L3 Card detail</strong> — tap a node for full front/back/formula and a button to study that card.</li>
+        </ol>
+        <p>Toolbar on L2:</p>
+        <ul>
+          <li>🏷️ Landmark — name a region of the palace</li>
+          <li>🛤️ Path — tap cards in sequence, save a named route (e.g. “Pre-exam sweep”)</li>
+          <li>📝 Annotate — drop text labels on the canvas</li>
+          <li>🎯 Review on map — spatial review: camera pans to each due card at its position</li>
+          <li>▶️ Classic study — same FSRS queue, flat UI</li>
+        </ul>
+        <p>From a deck sheet, <strong>Concept Map</strong> jumps straight into L2 for that deck.</p>
+        <p><em>Max tip:</em> Spend ten minutes arranging a hard deck after import. Place prerequisites left/top, applications right/bottom. Your future self will walk that layout under stress.</p>
+      `
     },
     {
-      title: 'Leeches, streaks, map & concept graph',
-      body: `Cards you keep missing get suspended as leeches so they don\'t clog the queue. Streaks count consecutive study days; freezes (earned every 7-day streak) can protect a miss. Map view shows decks as islands; Concept Map shows cards and relationships inside a deck.`
+      title: 'Formula cards & relationships',
+      body: `
+        <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
+        <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions.</p>
+        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name.</p>
+      `
     },
     {
-      title: 'Documents, export, and privacy',
-      body: `When you generate from a source, Lernin keeps the filename and an AI summary — not the original file. Course Recap stitches those summaries for a quick pre-exam read. Export a full backup (with progress) or a share copy (cards only). Import always creates a new deck. By default nothing leaves your device except text you deliberately send to an AI provider when generating cards.`
+      title: 'Leeches, streaks, stats',
+      body: `
+        <p><strong>Leeches</strong> — cards with too many lapses get suspended so they stop clogging every session. Review them deliberately from stats/leech surfaces; reset when you have a better formulation or mnemonic.</p>
+        <p><strong>Streaks</strong> — consecutive days you actually reviewed. Freezes (earned on longer streaks) can protect a missed day. Do not let the streak become the goal; the goal is recall under pressure.</p>
+        <p><strong>Stats</strong> — retention, activity, per-deck breakdown. Use it to decide which palace wing to renovate this week.</p>
+      `
+    },
+    {
+      title: 'Documents, export, privacy',
+      body: `
+        <p>When you generate from a source, Lernin keeps the <em>filename + AI summary</em>, not the original PDF. Documents and Course Recap help you remember what you ingested.</p>
+        <p><strong>Export</strong> a full backup (cards + progress) before switching devices. Import creates a new deck — it will not silently overwrite.</p>
+        <p>By default nothing leaves your device except text you intentionally send to an AI provider during generation. No Lernin account is required for the core study loop.</p>
+      `
     }
   ];
 
-  const list = document.createElement('div');
-  list.style.cssText = 'padding:0 var(--space-md);';
-
-  for (const section of sections) {
+  const guide = document.createElement('section');
+  guide.className = 'help-section';
+  guide.id = 'help-guide';
+  guide.innerHTML = `<h2 class="help-section-title">How to use every part</h2>`;
+  const guideList = document.createElement('div');
+  guideList.className = 'help-accordion';
+  guideSections.forEach((s, i) => {
     const details = document.createElement('details');
-    details.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); margin-bottom:8px; box-shadow:var(--shadow-sm); overflow:hidden;';
+    details.className = 'help-details';
+    if (i === 0) details.open = true;
+    details.style.setProperty('--help-i', String(i));
+    details.innerHTML = `
+      <summary class="help-summary">${s.title}</summary>
+      <div class="help-details-body">${s.body}</div>
+    `;
+    guideList.appendChild(details);
+  });
+  guide.appendChild(guideList);
+  wrap.appendChild(guide);
 
-    const summary = document.createElement('summary');
-    summary.style.cssText = 'padding:12px 14px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer;';
-    summary.textContent = section.title;
+  // ---- FAQ ----
+  const faqs = [
+    {
+      q: 'Is my data private?',
+      a: 'Decks, cards, review history, map positions, and streaks live in IndexedDB on your device. Lernin does not require an account for studying. The only time text leaves the device is when you deliberately generate cards with an AI provider you chose.'
+    },
+    {
+      q: 'Is my API key safe?',
+      a: 'Your Claude or Gemini key is stored locally in settings. It is sent only to that provider when you hit generate — not to a Lernin backend for storage. Prefer a key you can rotate; clear it in Settings anytime.'
+    },
+    {
+      q: 'Does this replace Anki?',
+      a: 'If you already live in Anki and love it, keep it. Lernin is for students who want FSRS-style scheduling plus a real Memory Palace map, formula-aware cards, and offline-first UX without a plugin maze. You can export backups; there is no magic one-click Anki sync.'
+    },
+    {
+      q: 'Why did a card disappear from my queue?',
+      a: 'It may be suspended as a leech after repeated failures, or simply not due yet. Check Stats / leech surfaces, or open the deck’s Cards list. Suspended cards are hidden from normal study on purpose.'
+    },
+    {
+      q: 'What if I grade everything Easy to “finish faster”?',
+      a: 'You will feel productive and learn almost nothing. The scheduler trusts you. Lie to it and you get an optimistic calendar and a rude exam. Grade the struggle you actually had.'
+    },
+    {
+      q: 'Map vs classic study — which should I use?',
+      a: 'Classic Study is fastest for daily due cards. Spatial review (🎯 on the map) is for encoding and for decks you have arranged deliberately. Many people: arrange once on the map, then grind due cards in classic mode, and run a path on the palace the night before the exam.'
+    },
+    {
+      q: 'Will I lose everything if I clear browser data?',
+      a: 'Yes — IndexedDB can be wiped with site data. Export a backup from the deck sheet regularly, especially before exams or browser resets. On aggressive mobile browsers, export more often.'
+    },
+    {
+      q: 'Can I study offline?',
+      a: 'Yes. The app shell is cached by a service worker; your data is local. AI generation needs network. Spatial and classic review do not.'
+    },
+    {
+      q: 'What is Teach-it for?',
+      a: 'After Good or Easy, you can type a quick explanation in your own words. That second retrieval is often the difference between “I recognized it” and “I can teach it.” Skip when you are tired; use it on high-value cards.'
+    },
+    {
+      q: 'How do I get maximum value in one week?',
+      a: 'Day 1: one deck, import or write 30–50 sharp cards. Day 2: open the map, place them, add 2–3 landmarks. Days 3–6: clear due cards daily with honest grades. Day 7: run a saved path with 🎯 spatial review. Export a backup.'
+    }
+  ];
 
-    const bodyDiv = document.createElement('div');
-    bodyDiv.style.cssText = 'padding:0 14px 14px; font-size:13px; color:var(--ink-secondary); line-height:1.6;';
-    bodyDiv.innerHTML = section.body;
+  const faqSec = document.createElement('section');
+  faqSec.className = 'help-section';
+  faqSec.id = 'help-faq';
+  faqSec.innerHTML = `<h2 class="help-section-title">FAQ</h2>`;
+  const faqList = document.createElement('div');
+  faqList.className = 'help-accordion';
+  faqs.forEach((f, i) => {
+    const details = document.createElement('details');
+    details.className = 'help-details help-faq-item';
+    details.style.setProperty('--help-i', String(i));
+    details.innerHTML = `
+      <summary class="help-summary">${f.q}</summary>
+      <div class="help-details-body"><p>${f.a}</p></div>
+    `;
+    faqList.appendChild(details);
+  });
+  faqSec.appendChild(faqList);
+  wrap.appendChild(faqSec);
 
-    details.appendChild(summary);
-    details.appendChild(bodyDiv);
-    list.appendChild(details);
-  }
+  // ---- Closer ----
+  const closer = document.createElement('div');
+  closer.className = 'help-closer';
+  closer.innerHTML = `
+    <p>You do not need another aesthetic notes app. You need a system that forces retrieval and gives your spatial brain somewhere to put the knowledge.</p>
+    <p class="help-closer-em">Open a deck. Grade honestly. Build a corner of your palace. Then go pass the thing you are studying for.</p>
+    <button type="button" class="btn-primary help-closer-btn" id="helpGoHome">Back to decks</button>
+  `;
+  wrap.appendChild(closer);
+  closer.querySelector('#helpGoHome').addEventListener('click', () => navigate('/'));
 
-  wrap.appendChild(list);
   root.appendChild(wrap);
+
+  // Smooth in-page TOC (no layout thrash)
+  toc.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = a.getAttribute('href').slice(1);
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
 }
 
 async function renderStats() {
