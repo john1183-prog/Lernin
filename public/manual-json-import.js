@@ -174,6 +174,9 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
         continue;
       }
       newCards.push({
+        id: (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`,
         front: c.front,
         back: c.back,
         type: c.type || 'basic',

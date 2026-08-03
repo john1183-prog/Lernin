@@ -266,7 +266,9 @@ export async function saveNewCards(deckId, newCards) {
   try {
     for (const card of newCards) {
       const record = {
-        id: card.id,
+        id: card.id || ((typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `\( {Date.now()}- \){Math.random().toString(36).slice(2)}`),
         deckId,
         front: card.front,
         back: card.back,
