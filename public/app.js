@@ -425,7 +425,7 @@ function openBottomSheet(deck) {
     { label: 'Concept Map', icon: '🕸️', action: () => navigate(`/map/${deck.id}`) },
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
     { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
-    { label: 'Export', icon: '⬆️', action: () => exportDeck(deck.id) },
+    { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
   ];
 
   let html = '<div class="sheet-handle"></div>';
@@ -1055,7 +1055,7 @@ function renderHelp() {
       title: 'Documents, export, privacy',
       body: `
         <p>When you generate from a source, Lernin keeps the <em>filename + AI summary</em>, not the original PDF. Documents and Course Recap help you remember what you ingested.</p>
-        <p><strong>Export</strong> a full backup (cards + progress) before switching devices. Import creates a new deck — it will not silently overwrite.</p>
+        <p><strong>Export</strong> offers a full backup (cards + progress) before switching devices, or a progress-free share copy for handing a deck to someone else. Import creates a new deck — it will not silently overwrite.</p>
         <p>By default nothing leaves your device except text you intentionally send to an AI provider during generation. No Lernin account is required for the core study loop.</p>
       `
     },
@@ -1182,11 +1182,51 @@ const READING_PROMPT_GROUPS = [
     prompts: [
       {
         label: 'Build a pre-reading map',
+        when: 'Starting a new chapter or article cold, with little context yet.',
+        how: 'Paste the chapter/article title or its intro paragraph after this prompt.',
         text: "I'm about to read [insert chapter/article title or paste the intro]. Before I dive in, give me: (1) 3-5 questions this text likely answers, (2) any background concepts I should already know, (3) one prediction about the author's main argument based on the title/intro alone."
       },
       {
         label: 'Surface my existing knowledge',
+        when: 'You already have some background on the topic and want to activate it before diving in.',
+        how: "Name the topic, then answer the AI's questions honestly — don't look anything up first.",
         text: "The topic is [insert topic]. Ask me what I already know about it, one question at a time, and after each answer tell me what's roughly right, what's off, and one gap I probably don't know I have."
+      }
+    ]
+  },
+  {
+    title: 'Comprehensive notes',
+    blurb: 'One thorough reference document, built once, reused for everything after.',
+    prompts: [
+      {
+        label: 'Comprehensive structured notes',
+        when: 'You want a single organized reference from a chapter, article, or slide deck — usually the first pass before anything else.',
+        how: "Paste the full source material right after this prompt. Works best on text you've already extracted (PDF text, lecture notes), not a scanned image.",
+        text: "Create a comprehensive, clearly organized set of notes from the following material. Cover every key term, concept, principle, and practical example — with full definitions and explanations, not just a list. Structure it logically with headings and subheadings for readability. Aim for clarity, precision, and depth: someone who only reads these notes should understand the material as thoroughly as if they'd read the source.\n\n[paste source material]"
+      }
+    ]
+  },
+  {
+    title: 'Exam cram workflow (time-boxed)',
+    blurb: "A 3-step sequence for when an exam is close and there's a lot of ground to cover. Run Step 1 first, then pick 2A or 2B as a follow-up in the same conversation — 2A drills graded example problems per concept, 2B leans into memory hooks and analogies. Pick whichever matches how you actually learn.",
+    prompts: [
+      {
+        label: 'Step 1 — Build the time-boxed plan',
+        when: "You have a fixed number of hours before an exam covering a lot of material.",
+        how: 'Fill in your hour count and topic/course, then paste your material\'s outline, table of contents, or full text.',
+        text: "I have [X hours] before a rigorous upcoming exam on [topic/course]. First, create comprehensive, organized notes from this material — cover every key term, concept, principle, and worked example, with clear headings and subheadings for readability. Then turn those notes into a realistic hour-by-hour study plan for the time I have, prioritizing what's most likely to be tested. Before we start, give me a brief overview of the full plan.\n\n[paste source material / outline]"
+      },
+      {
+        label: 'Step 2A — Concept-by-concept with graded examples',
+        when: "Follow-up to Step 1. Pick this if you learn best by solving problems of increasing difficulty.",
+        how: 'Send as a follow-up in the same conversation as Step 1, so the AI can reference the plan it just made.',
+        text: "Let's work through this material one concept at a time, in the order from the plan. For each concept: explain it clearly, cover the formulas and terms involved, then pick three example questions from the source material — one easy, one hard, one very hard — and solve them together. Add any other context that helps real intuitive understanding, not just memorization. Before we start, give me a brief overview of everything we're about to cover."
+      },
+      {
+        label: 'Step 2B — Deep dive with memory hooks',
+        when: 'Follow-up to Step 1, alternative to 2A. Pick this if you learn best through analogies and mnemonics rather than graded problem sets.',
+        how: 'Also sent as a follow-up in the same conversation as Step 1.',
+        text: "Let's deep-dive into each concept, starting with the ones from hour 1 of the plan. Make each concept easy to understand and each formula easy to remember — tell me explicitly what makes it memorable (a pattern, an analogy, a mnemonic). Then solve the examples that will actually cement my understanding, not just the easiest ones."
       }
     ]
   },
@@ -1195,16 +1235,40 @@ const READING_PROMPT_GROUPS = [
     blurb: 'Use these mid-chapter when something is dense or you feel your attention sliding.',
     prompts: [
       {
-        label: 'Explain like I\'m new to this',
+        label: "Explain like I'm new to this",
+        when: 'A passage feels dense or uses unfamiliar phrasing.',
+        how: 'Paste the specific passage, not the whole chapter.',
         text: "Explain this passage in plain language, as if to someone encountering the topic for the first time: [paste passage]. Then give me one concrete example that isn't in the text."
       },
       {
         label: 'Unpack a dense paragraph',
+        when: "One paragraph in particular is hard to follow — too many ideas packed together.",
+        how: 'Paste just that paragraph.',
         text: "Break this paragraph into its individual claims, one per line, and tell me how each claim depends on (or follows from) the one before it: [paste paragraph]."
       },
       {
         label: 'Define without the jargon',
+        when: "A term is used in a technical sense you're not sure you've got right.",
+        how: 'Paste the sentence or passage where the term appears, not just the word alone.',
         text: "Define [term] the way the author is using it here, not the generic dictionary definition: [paste the sentence or passage it appears in]. Then contrast it with the everyday meaning of the word, if different."
+      }
+    ]
+  },
+  {
+    title: 'Worked examples & calculations (STEM)',
+    blurb: 'For math, physics, engineering — anything where solving the examples correctly is the whole point.',
+    prompts: [
+      {
+        label: 'Solve every example (batch)',
+        when: 'You want a complete worked-solutions reference for every example in a chapter, to skim or search later.',
+        how: 'Paste the chapter/notes containing the examples. Best for a first full pass over the material.',
+        text: "Solve every worked example in this material — no exceptions. For each one: state the full question first, then list the formulas that could apply, explain which one you picked and why, note anything essential about when each formula applies, then solve it step by step in a way that's simplified but rigorous enough to actually build understanding.\n\n[paste source material]"
+      },
+      {
+        label: 'Walk through examples one at a time (interactive)',
+        when: "You want active-recall style learning — reasoning through why a formula was chosen before seeing the next problem, not a big dump of answers.",
+        how: "Paste the source material once, then work through the conversation one question at a time — don't ask for all of them upfront.",
+        text: "Let's go through every example in this material one at a time. For each: give me the full question, then the solution — explain why you chose that approach, what the other possible options were, which formulas were available, which one you used, what each symbol/variable represents, its unit, and anything else that helps real understanding.\n\n[paste source material]"
       }
     ]
   },
@@ -1214,14 +1278,20 @@ const READING_PROMPT_GROUPS = [
     prompts: [
       {
         label: 'Summarize, then check my summary',
+        when: "You've just finished a section and want to test whether you actually absorbed it.",
+        how: 'Write your own summary first, in your own words, before pasting it in — the value is in attempting it cold.',
         text: "Here's my own summary of what I just read, in my own words: [paste your summary]. Compare it against the actual text and tell me what I got right, what I missed, and what I overstated. Don't rewrite my summary for me — just grade it."
       },
       {
         label: 'Quiz me on it',
+        when: 'You want a quick recall check without writing anything yourself.',
+        how: 'Paste the material (or just reference it if already in the conversation), then answer one question at a time.',
         text: "Quiz me on this material with 5 questions, ranging from basic recall to \"explain the reasoning behind X.\" Ask one at a time, wait for my answer, then tell me if I'm right before moving to the next."
       },
       {
-        label: 'Find the argument\'s weak point',
+        label: "Find the argument's weak point",
+        when: 'The text makes an argument (not just states facts) and you want to evaluate it critically, not just absorb it.',
+        how: 'Paste the text or your summary of its argument.',
         text: "Based on this text, what's the single weakest link in the author's argument — an assumption they lean on, evidence that's thin, or a step that doesn't fully follow? [paste text or summary]"
       }
     ]
@@ -1232,14 +1302,20 @@ const READING_PROMPT_GROUPS = [
     prompts: [
       {
         label: 'Feynman check',
+        when: 'You think you understand a concept but want to verify it, not just assume it.',
+        how: 'Actually write out your explanation in the message — the AI is grading your explanation, not producing one for you.',
         text: "I'm going to explain [concept] to you as if you know nothing about it. Stop me the moment something is unclear, vague, or if I'm hiding behind jargon instead of actually explaining. Here goes: [your explanation]"
       },
       {
         label: 'Connect it to what I already know',
+        when: 'A new concept feels disconnected and abstract — you want it to click by relating it to something familiar.',
+        how: 'Name both the new concept and something you already understand well, ideally from a different domain.',
         text: "How does [new concept] relate to [something I already understand]? Where are the two similar, and where does the analogy break down?"
       },
       {
         label: 'Socratic push-back',
+        when: "You've formed an opinion or interpretation and want to pressure-test it before an exam or essay.",
+        how: 'State your actual position clearly — vague positions get vague push-back.',
         text: "I believe [your claim/interpretation from the reading]. Push back on this with the strongest counter-argument you can, then let me respond before telling me which of us has the stronger case."
       }
     ]
@@ -1266,26 +1342,32 @@ async function renderReadingToolkit() {
 
   const intro = document.createElement('p');
   intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; color:var(--ink-secondary); font-size:14px; line-height:1.6;';
-  intro.textContent = 'Copy-ready prompts for pairing your reading with any AI chat tool. Fill in the brackets, paste, go. This is a standalone side feature — it doesn\'t touch your decks or generate cards.';
+  intro.textContent = 'Copy-ready prompts for pairing your reading with any AI chat tool. Each one says when to reach for it and how to use it. Fill in the brackets, paste, go. This is a standalone side feature — it doesn\'t touch your decks or generate cards.';
   wrap.appendChild(intro);
 
   const body = document.createElement('div');
   body.style.cssText = 'padding:0 var(--space-md);';
+  const accordion = document.createElement('div');
+  accordion.className = 'help-accordion';
 
-  for (const group of READING_PROMPT_GROUPS) {
-    const section = document.createElement('div');
-    section.style.cssText = 'margin-bottom:var(--space-xl);';
+  READING_PROMPT_GROUPS.forEach((group, gi) => {
+    const details = document.createElement('details');
+    details.className = 'help-details';
+    if (gi === 0) details.open = true;
+    details.style.setProperty('--help-i', String(gi));
 
-    const h = document.createElement('h3');
-    h.className = 'help-section-title';
-    h.style.marginBottom = '4px';
-    h.textContent = group.title;
-    section.appendChild(h);
+    const summary = document.createElement('summary');
+    summary.className = 'help-summary';
+    summary.textContent = group.title;
+    details.appendChild(summary);
+
+    const detailsBody = document.createElement('div');
+    detailsBody.className = 'help-details-body';
 
     const blurb = document.createElement('p');
-    blurb.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:10px; line-height:1.5;';
+    blurb.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
     blurb.textContent = group.blurb;
-    section.appendChild(blurb);
+    detailsBody.appendChild(blurb);
 
     for (const prompt of group.prompts) {
       const card = document.createElement('div');
@@ -1316,17 +1398,32 @@ async function renderReadingToolkit() {
       rowTop.appendChild(copyBtn);
       card.appendChild(rowTop);
 
+      if (prompt.when) {
+        const when = document.createElement('p');
+        when.style.cssText = 'font-size:12px; color:var(--ink-muted); margin-bottom:4px; line-height:1.4;';
+        when.innerHTML = `<strong style="color:var(--ink-secondary);">Use when:</strong> ${escapeHtml(prompt.when)}`;
+        card.appendChild(when);
+      }
+      if (prompt.how) {
+        const how = document.createElement('p');
+        how.style.cssText = 'font-size:12px; color:var(--ink-muted); margin-bottom:10px; line-height:1.4;';
+        how.innerHTML = `<strong style="color:var(--ink-secondary);">How:</strong> ${escapeHtml(prompt.how)}`;
+        card.appendChild(how);
+      }
+
       const text = document.createElement('p');
-      text.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5; white-space:pre-wrap;';
+      text.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5; white-space:pre-wrap; background:var(--bg); border-radius:var(--radius-sm); padding:10px; margin:0;';
       text.textContent = prompt.text;
       card.appendChild(text);
 
-      section.appendChild(card);
+      detailsBody.appendChild(card);
     }
 
-    body.appendChild(section);
-  }
+    details.appendChild(detailsBody);
+    accordion.appendChild(details);
+  });
 
+  body.appendChild(accordion);
   wrap.appendChild(body);
   root.appendChild(wrap);
 }
@@ -2581,20 +2678,76 @@ export async function triggerDeckImport() {
   input.click();
 }
 
-async function exportDeck(deckId) {
+async function exportDeck(deckId, { includeProgress = true } = {}) {
   try {
-    const data = await exportDeckData(deckId);
+    const data = await exportDeckData(deckId, { includeProgress });
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `lernin-deck-${deckId}.json`;
+    a.download = includeProgress ? `lernin-deck-${deckId}.json` : `lernin-deck-${deckId}-share.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('Deck exported.');
+    showToast(includeProgress ? 'Deck exported.' : 'Share copy exported.');
   } catch (err) {
     showToast(err.message || 'Export failed.', 5000);
   }
+}
+
+/**
+ * Small options sheet offering the two export modes db.js already
+ * supports: a full backup (cards + review progress, for switching
+ * devices) vs a progress-free "share copy" (cards only, for handing a
+ * deck to someone else without leaking your personal review history).
+ */
+function openExportOptionsSheet(deckId) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  document.body.appendChild(backdrop);
+
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', 'Export options');
+
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <button class="sheet-action is-primary">
+      <span class="sheet-action-icon">💾</span>
+      Full backup (cards + progress)
+    </button>
+    <button class="sheet-action">
+      <span class="sheet-action-icon">🤝</span>
+      Share copy (cards only, no progress)
+    </button>
+  `;
+  document.body.appendChild(sheet);
+
+  const focusable = sheet.querySelectorAll('button');
+  if (focusable.length) focusable[0].focus();
+
+  let isClosing = false;
+  function closeSheet() {
+    if (isClosing) return;
+    isClosing = true;
+    sheet.style.animation = 'slideDown 0.25s ease forwards';
+    backdrop.style.animation = 'fadeIn 0.2s ease reverse forwards';
+    setTimeout(() => { sheet.remove(); backdrop.remove(); }, 250);
+  }
+  backdrop.addEventListener('click', closeSheet);
+  sheet.querySelector('.sheet-handle').addEventListener('click', closeSheet);
+
+  const actions = [
+    () => exportDeck(deckId, { includeProgress: true }),
+    () => exportDeck(deckId, { includeProgress: false })
+  ];
+  sheet.querySelectorAll('.sheet-action').forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      closeSheet();
+      actions[i]();
+    });
+  });
 }
 
 /* ---------- Generation Event Listeners ---------- */

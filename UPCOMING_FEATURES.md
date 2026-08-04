@@ -234,27 +234,41 @@ browsers, but worth having correct.
 corrupted-IndexedDB read would fail silently with no user feedback.
 Now wrapped with a toast on failure.
 
-### Found this session, deliberately not touched
-Two more regressions from the same `e426d5d` rewrite, left alone on
-request (no reported issues, priority was not risking breakage):
+### Found this session, now fixed
+Two more regressions from the same `e426d5d` rewrite, initially left
+alone (no reported issues yet, priority was not risking breakage), then
+restored once explicitly requested:
 
-- **Export choice narrowed to full-backup only.** `exportDeckData(deckId,
-  { includeProgress })` in db.js still supports a progress-free
-  "share copy" export, but the UI's `exportDeck()` never passes that
-  option anymore — no modal, always full backup. The old
-  `openExportOptionsModal` is gone.
-- **Manual JSON-paste parsing got more brittle.** The old
-  `extractJsonCandidate`/`repairUnescapedQuotes` handled zero-width
-  Unicode (common from mobile clipboards), context-aware smart-quote
-  normalization, and preamble text before/after the JSON. Current
-  `parseAndRepairJSON` in manual-json-import.js only strips a markdown
-  fence and does a naive quote swap — more likely to fail on
-  real-world AI-pasted output.
+- **Export choice narrowed to full-backup only — restored.**
+  `exportDeckData(deckId, { includeProgress })` in db.js always
+  supported a progress-free "share copy" export, but `exportDeck()`
+  in app.js never passed that option. Restored as
+  `openExportOptionsSheet()` — reuses the same `.sheet`/`.sheet-backdrop`
+  pattern as the deck action sheet, offers "Full backup" vs "Share copy",
+  wired to the existing `includeProgress` param. `exportDeck()` now takes
+  `{ includeProgress = true }` and downloads `-share.json` for the
+  progress-free variant.
+- **Manual JSON-paste parsing hardened.** Ported the old
+  `extractJsonCandidate`/`repairUnescapedQuotes` (from commit `221e443`,
+  before the rewrite dropped them) into `manual-json-import.js`,
+  replacing the simpler fence-strip + naive quote-swap that had
+  regressed. Handles zero-width Unicode from mobile clipboards,
+  context-aware smart-quote normalization (structural delimiter vs.
+  prose), and preamble/trailing text around the JSON block — plus kept
+  the regressed version's one genuine improvement (trailing-comma
+  repair) as an additional fallback, since the old ported version
+  didn't have that. Verified against 6 representative inputs (clean
+  JSON, fenced with preamble, smart quotes, zero-width + trailing comma,
+  unescaped internal quote, invalid input) — all parse correctly or
+  fail cleanly with the expected error.
+
+### Still open — found this session, not yet addressed
 - **Relationship picker no longer available at card-creation time.**
   You used to be able to link "depends on"/"related" cards live while
   creating a new card. `renderNewCardForm` now has no relationship
   code at all — linking only works after the fact, via card detail
   view (`addRelationship` call there) or by drawing lines on the map.
+  Not fixed yet — flagging for a future pass.
 
 ---
 
