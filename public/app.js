@@ -6,10 +6,11 @@ import {
   getTheme, saveTheme, addDeck, getCardsByDeck,
   getRelationshipsFrom, getRelationshipsTo, addRelationship,
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
-  getReminderSettings, setReminderEnabled, wipeAllData, saveDeck,
+  getReminderSettings, setReminderEnabled, markReminderShownToday, wipeAllData, saveDeck,
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
   exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument,
-  getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard
+  getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
+  localDayKey
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
@@ -2446,9 +2447,44 @@ function initGenerationListeners() {
   });
 }
 
+/**
+ * Fires at most one local "you haven't studied today" notification per
+ * calendar day, only if reminders are enabled, permission was already
+ * granted (requested when the Settings toggle was turned on), it's evening
+ * local time, and today hasn't been studied yet. Runs once per app open —
+ * this cannot wake a fully closed app/browser the way real push can; see
+ * UPCOMING_FEATURES.md for why that's a deliberate scope boundary.
+ */
+async function checkAndShowStudyReminder() {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    const settings = await getReminderSettings();
+    if (!settings.enabled) return;
+
+    const todayKey = localDayKey(Date.now());
+    if (settings.lastShownDayKey === todayKey) return;
+
+    const hour = new Date().getHours();
+    if (hour < 18) return; // "evening" — matches the Settings copy
+
+    const stats = await getReviewStats();
+    if (stats.studiedToday) return;
+
+    new Notification('Lernin', {
+      body: "You haven't studied today yet — a quick session keeps your streak alive.",
+      icon: '/icons/icon-192.png'
+    });
+    await markReminderShownToday();
+  } catch (err) {
+    // Non-fatal — a missed reminder shouldn't break app load.
+  }
+}
+
 /* ---------- Init ---------- */
 window.addEventListener('hashchange', handleRoute);
 initTheme();
 initFont();
 initGenerationListeners();
 handleRoute();
+checkAndShowStudyReminder();
