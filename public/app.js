@@ -198,6 +198,7 @@ async function handleRoute() {
     case 'study': activeViewCleanup = await enterStudy(id); break;
     case 'cards': await renderCardBrowser(id); break;
     case 'leeches': await renderLeechView(id); break;
+    case 'reading-toolkit': await renderReadingToolkit(); break;
     case 'map':
       activeViewCleanup = id ? await enterConceptGraph(id) : await enterMap();
       break;
@@ -728,6 +729,20 @@ async function renderSettings() {
   });
   wrap.appendChild(reminderSection);
 
+  const toolkitSection = makeSection('Reading toolkit');
+  const toolkitIntro = document.createElement('p');
+  toolkitIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  toolkitIntro.textContent = 'A side library of copy-ready prompts for pairing your reading with an AI — separate from card generation.';
+  toolkitSection.appendChild(toolkitIntro);
+
+  const toolkitBtn = document.createElement('button');
+  toolkitBtn.type = 'button';
+  toolkitBtn.style.cssText = 'width:100%; text-align:left; display:flex; align-items:center; gap:10px; padding:12px 14px; border:none; background:var(--surface); color:var(--ink); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); font-size:14px;';
+  toolkitBtn.innerHTML = `<span style="font-size:18px;">📖</span><span>Open Reading Toolkit</span>`;
+  toolkitBtn.addEventListener('click', () => navigate('/reading-toolkit'));
+  toolkitSection.appendChild(toolkitBtn);
+  wrap.appendChild(toolkitSection);
+
   const storageSection = makeSection('Storage');
   const storageUsageText = document.createElement('p');
   storageUsageText.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px;';
@@ -1151,6 +1166,162 @@ function renderHelp() {
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
+}
+
+const READING_PROMPT_GROUPS = [
+  {
+    title: 'Before you read',
+    blurb: 'Prime yourself so new material has something to attach to.',
+    prompts: [
+      {
+        label: 'Build a pre-reading map',
+        text: "I'm about to read [insert chapter/article title or paste the intro]. Before I dive in, give me: (1) 3-5 questions this text likely answers, (2) any background concepts I should already know, (3) one prediction about the author's main argument based on the title/intro alone."
+      },
+      {
+        label: 'Surface my existing knowledge',
+        text: "The topic is [insert topic]. Ask me what I already know about it, one question at a time, and after each answer tell me what's roughly right, what's off, and one gap I probably don't know I have."
+      }
+    ]
+  },
+  {
+    title: 'While you read',
+    blurb: 'Use these mid-chapter when something is dense or you feel your attention sliding.',
+    prompts: [
+      {
+        label: 'Explain like I\'m new to this',
+        text: "Explain this passage in plain language, as if to someone encountering the topic for the first time: [paste passage]. Then give me one concrete example that isn't in the text."
+      },
+      {
+        label: 'Unpack a dense paragraph',
+        text: "Break this paragraph into its individual claims, one per line, and tell me how each claim depends on (or follows from) the one before it: [paste paragraph]."
+      },
+      {
+        label: 'Define without the jargon',
+        text: "Define [term] the way the author is using it here, not the generic dictionary definition: [paste the sentence or passage it appears in]. Then contrast it with the everyday meaning of the word, if different."
+      }
+    ]
+  },
+  {
+    title: 'After you read',
+    blurb: 'Consolidation — the step most students skip and most benefit from.',
+    prompts: [
+      {
+        label: 'Summarize, then check my summary',
+        text: "Here's my own summary of what I just read, in my own words: [paste your summary]. Compare it against the actual text and tell me what I got right, what I missed, and what I overstated. Don't rewrite my summary for me — just grade it."
+      },
+      {
+        label: 'Quiz me on it',
+        text: "Quiz me on this material with 5 questions, ranging from basic recall to \"explain the reasoning behind X.\" Ask one at a time, wait for my answer, then tell me if I'm right before moving to the next."
+      },
+      {
+        label: 'Find the argument\'s weak point',
+        text: "Based on this text, what's the single weakest link in the author's argument — an assumption they lean on, evidence that's thin, or a step that doesn't fully follow? [paste text or summary]"
+      }
+    ]
+  },
+  {
+    title: 'Deeper comprehension',
+    blurb: 'For when you want to genuinely own the material, not just recall it.',
+    prompts: [
+      {
+        label: 'Feynman check',
+        text: "I'm going to explain [concept] to you as if you know nothing about it. Stop me the moment something is unclear, vague, or if I'm hiding behind jargon instead of actually explaining. Here goes: [your explanation]"
+      },
+      {
+        label: 'Connect it to what I already know',
+        text: "How does [new concept] relate to [something I already understand]? Where are the two similar, and where does the analogy break down?"
+      },
+      {
+        label: 'Socratic push-back',
+        text: "I believe [your claim/interpretation from the reading]. Push back on this with the strongest counter-argument you can, then let me respond before telling me which of us has the stronger case."
+      }
+    ]
+  }
+];
+
+async function renderReadingToolkit() {
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'help-view';
+  wrap.style.cssText = 'max-width:640px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="back-btn" id="toolkitBack" aria-label="Back">←</button>
+    <div class="app-header-title">Reading Toolkit</div>
+    <div style="width:48px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#toolkitBack').addEventListener('click', goBack);
+
+  const intro = document.createElement('p');
+  intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; color:var(--ink-secondary); font-size:14px; line-height:1.6;';
+  intro.textContent = 'Copy-ready prompts for pairing your reading with any AI chat tool. Fill in the brackets, paste, go. This is a standalone side feature — it doesn\'t touch your decks or generate cards.';
+  wrap.appendChild(intro);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:0 var(--space-md);';
+
+  for (const group of READING_PROMPT_GROUPS) {
+    const section = document.createElement('div');
+    section.style.cssText = 'margin-bottom:var(--space-xl);';
+
+    const h = document.createElement('h3');
+    h.className = 'help-section-title';
+    h.style.marginBottom = '4px';
+    h.textContent = group.title;
+    section.appendChild(h);
+
+    const blurb = document.createElement('p');
+    blurb.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:10px; line-height:1.5;';
+    blurb.textContent = group.blurb;
+    section.appendChild(blurb);
+
+    for (const prompt of group.prompts) {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); margin-bottom:10px;';
+
+      const rowTop = document.createElement('div');
+      rowTop.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
+
+      const label = document.createElement('div');
+      label.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink);';
+      label.textContent = prompt.label;
+      rowTop.appendChild(label);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.style.cssText = 'flex-shrink:0; padding:6px 12px; border:none; border-radius:var(--radius-sm); background:var(--surface-raised, var(--surface)); color:var(--ink); font-size:12px; font-weight:500; cursor:pointer;';
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(prompt.text);
+          copyBtn.textContent = 'Copied!';
+          showToast('Prompt copied.');
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        } catch (err) {
+          showToast('Could not copy — select the text manually.', 4000);
+        }
+      });
+      rowTop.appendChild(copyBtn);
+      card.appendChild(rowTop);
+
+      const text = document.createElement('p');
+      text.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5; white-space:pre-wrap;';
+      text.textContent = prompt.text;
+      card.appendChild(text);
+
+      section.appendChild(card);
+    }
+
+    body.appendChild(section);
+  }
+
+  wrap.appendChild(body);
+  root.appendChild(wrap);
 }
 
 async function renderStats() {
