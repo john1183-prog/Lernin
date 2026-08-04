@@ -133,6 +133,14 @@ formula fields from source text with anti-hallucination guardrails),
 local study reminders, and a map territory activity halo — only the
 smart session planner and map connections remain, see Tier 2 above.
 
+A **Reading Toolkit** (Settings → "Open Reading Toolkit",
+`/reading-toolkit`) — an explicitly side/non-core feature, a static
+library of copy-ready prompts for pairing reading with any AI chat
+tool, grouped by before/during/after reading plus deeper-comprehension
+techniques (Feynman check, Socratic push-back). Doesn't touch decks,
+cards, or generation. Content lives in `READING_PROMPT_GROUPS` in
+app.js — plain data, edit directly to add/remove prompts.
+
 ---
 
 ## Active — real user feedback, not yet fully addressed
@@ -176,13 +184,88 @@ returning from a study session started via the map — canvas.js now
 builds the button itself on every init, so it can't be dropped by a
 path app.js doesn't control.
 
+### Audit findings from a fresh-eyes repo review (fixed)
+A commit-history dig turned up several places where this file (and the
+in-app Help view) had drifted from what actually shipped — worth
+recording since it means this file's claims aren't self-verifying,
+future sessions should spot-check against the code, not just read the
+backlog.
+
+**Fraunces display font, silently dropped.** The "Organic UI redesign"
+(`7f3eb0a`) established Fraunces as the heading/title typeface via
+`--font-display`, used across ~25 selectors for most of the project's
+life. The later "UI/UX rewrite" commit (`e426d5d`) — which introduced
+the font-selector settings feature — replaced it with system-ui as the
+default and never brought `--font-display` back. `sw.js` still had the
+Fraunces caching logic the whole time, just orphaned since nothing
+linked the stylesheet. Restored: `--font-display` back in styles.css,
+applied to the current title/header classes (skipped
+`.map-path-panel-title` — an 11px all-caps micro-label, Fraunces reads
+poorly that small), Google Fonts `<link>` restored in index.html.
+
+**Leech review UI had no entry point.** `db.js`'s `resetLeech`/
+`getSuspendedCards`/`getReviewHistoryForCard` were fully intact and
+untouched by the rewrite, but nothing in `app.js` ever called them —
+no button, no route. The Help view was actively telling users to
+"review leeches from stats/leech surfaces" that didn't exist. Restored
+as `renderLeechView()`, reachable via a "Leeches" action on the deck
+sheet (`/leeches/:deckId`) — lists suspended cards with recent
+grade-history dots and a reset action. Help/FAQ text corrected to
+point at the real entry point.
+
+**Study reminder notifications never actually fired.** The Settings
+toggle and `Notification.requestPermission()` call existed, and
+`db.js` had `getReminderSettings`/`markReminderShownToday`, but nothing
+ever called `markReminderShownToday()` or `new Notification(...)` —
+this file's Tier 3 entry above describes the feature as shipped, but
+the actual firing logic didn't exist until this pass.
+`checkAndShowStudyReminder()` now runs once per app open and does what
+the Tier 3 description says.
+
+**Three corrupted fallback-ID template literals.** `db.js`,
+`manual-json-import.js`, and `api.js` each had a mangled fallback ID
+generator — literal `\(`/`\)` characters instead of `${`/`}` — for the
+rare case `crypto.randomUUID()` is unavailable. Fixed in all three;
+low real-world impact since randomUUID covers virtually all modern
+browsers, but worth having correct.
+
+**`getApiConfig()` unguarded in the import flow.** The file-picker's
+`change` handler called `getApiConfig()` with no try/catch — a
+corrupted-IndexedDB read would fail silently with no user feedback.
+Now wrapped with a toast on failure.
+
+### Found this session, deliberately not touched
+Two more regressions from the same `e426d5d` rewrite, left alone on
+request (no reported issues, priority was not risking breakage):
+
+- **Export choice narrowed to full-backup only.** `exportDeckData(deckId,
+  { includeProgress })` in db.js still supports a progress-free
+  "share copy" export, but the UI's `exportDeck()` never passes that
+  option anymore — no modal, always full backup. The old
+  `openExportOptionsModal` is gone.
+- **Manual JSON-paste parsing got more brittle.** The old
+  `extractJsonCandidate`/`repairUnescapedQuotes` handled zero-width
+  Unicode (common from mobile clipboards), context-aware smart-quote
+  normalization, and preamble text before/after the JSON. Current
+  `parseAndRepairJSON` in manual-json-import.js only strips a markdown
+  fence and does a naive quote swap — more likely to fail on
+  real-world AI-pasted output.
+- **Relationship picker no longer available at card-creation time.**
+  You used to be able to link "depends on"/"related" cards live while
+  creating a new card. `renderNewCardForm` now has no relationship
+  code at all — linking only works after the fact, via card detail
+  view (`addRelationship` call there) or by drawing lines on the map.
+
 ---
 
 ## Maintenance conventions
 
-**Keep the in-app Help view in sync.** `app.js`'s `renderHelpView()` is a
+**Keep the in-app Help view in sync.** `app.js`'s `renderHelp()` is a
 persistent, sectioned reference (not a one-time tour) covering what
 Lernin is and how each feature works — reachable via the "?" button in
 the header and from the first-run empty state. When a feature ships, add
 or update its section there in the same pass. An out-of-date Help view
-actively misleads, which is worse than not having one.
+actively misleads, which is worse than not having one — it did exactly
+this with leech review this session (see Active section above);
+check the Help view's claims against the actual code, not just against
+this file, since this file can drift too.

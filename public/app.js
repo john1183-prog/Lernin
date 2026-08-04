@@ -1058,6 +1058,13 @@ function renderHelp() {
         <p><strong>Export</strong> a full backup (cards + progress) before switching devices. Import creates a new deck — it will not silently overwrite.</p>
         <p>By default nothing leaves your device except text you intentionally send to an AI provider during generation. No Lernin account is required for the core study loop.</p>
       `
+    },
+    {
+      title: 'Reading Toolkit (side feature)',
+      body: `
+        <p>Settings → <strong>Open Reading Toolkit</strong>. A separate, static library of copy-ready prompts for pairing your reading with any AI chat tool — before/during/after reading, plus deeper-comprehension prompts like a Feynman check or Socratic push-back.</p>
+        <p>Tap Copy, paste into whatever AI you use, fill in the brackets. It doesn't touch your decks, cards, or generation — purely a study aid that lives alongside the app.</p>
+      `
     }
   ];
 
