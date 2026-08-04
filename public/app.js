@@ -2464,9 +2464,8 @@ async function renderCardDetailView(card, deck) {
   const relTypeSelect = document.createElement('select');
   relTypeSelect.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
   relTypeSelect.innerHTML = `
-    <option value="depends_on">Depends on</option>
-    <option value="related_to">Related to</option>
-    <option value="prerequisite">Prerequisite</option>
+    <option value="dependsOn">Depends on</option>
+    <option value="related">Related</option>
   `;
   addRelBlock.appendChild(relTypeSelect);
 
