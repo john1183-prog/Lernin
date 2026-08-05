@@ -1069,7 +1069,7 @@ function renderHelp() {
         <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
         <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions.</p>
         <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
-        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name.</p>
+        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a solitaire-style spread — suit (♠ basic, ♣ cloze, ♦ formula) and a colored dot for review stage, ♥ badge if suspended.</p>
       `
     },
     {
@@ -2278,6 +2278,22 @@ async function renderNewCardForm(deckId) {
   root.appendChild(wrap);
 }
 
+const CARD_TYPE_SUIT = {
+  basic: '♠',
+  cloze: '♣',
+  formula: '♦'
+};
+
+// Reuses the same semantic palette as LEECH_GRADE_COLOR (rust/amber/green)
+// so color meaning stays consistent across the app — 'new' gets a neutral
+// since it hasn't been graded yet, not a real performance signal.
+const CARD_STATE_COLOR = {
+  new: '#8A9A8C',
+  learning: '#D19A3D',
+  review: '#4A7A4E',
+  relearning: '#C4472B'
+};
+
 async function renderCardBrowser(deckId) {
   let deck, cards;
   try {
@@ -2305,7 +2321,7 @@ async function renderCardBrowser(deckId) {
   header.querySelector('#browserBack').addEventListener('click', goBack);
 
   const searchWrap = document.createElement('div');
-  searchWrap.style.cssText = 'padding:var(--space-sm) var(--space-md);';
+  searchWrap.style.cssText = 'padding:var(--space-sm) var(--space-md) 0;';
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
   searchInput.placeholder = 'Search cards…';
@@ -2313,28 +2329,61 @@ async function renderCardBrowser(deckId) {
   searchWrap.appendChild(searchInput);
   wrap.appendChild(searchWrap);
 
+  const legend = document.createElement('p');
+  legend.style.cssText = 'padding:8px var(--space-md) 0; margin:0; font-size:11px; color:var(--ink-muted);';
+  legend.innerHTML = '♠ Basic &nbsp; ♣ Cloze &nbsp; ♦ Formula &nbsp;·&nbsp; dot = review stage &nbsp;·&nbsp; ♥ suspended';
+  wrap.appendChild(legend);
+
   const list = document.createElement('div');
-  list.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:8px;';
+  list.className = 'card-tile-grid';
+  list.style.cssText = 'padding:var(--space-sm) var(--space-md) 0;';
 
   function renderCardList(filteredCards) {
     list.innerHTML = '';
     if (filteredCards.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
+      empty.style.cssText = 'grid-column:1/-1; text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
       empty.textContent = 'No cards found.';
       list.appendChild(empty);
       return;
     }
 
     for (const card of filteredCards) {
-      const row = document.createElement('div');
-      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); cursor:pointer;';
-      row.innerHTML = `
-        <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:4px;">${escapeHtml(card.front.substring(0, 100))}${card.front.length > 100 ? '…' : ''}</div>
-        <div style="font-size:12px; color:var(--ink-muted);">${card.type || 'basic'} · ${card.state || 'new'}</div>
-      `;
-      row.addEventListener('click', () => renderCardDetailView(card, deck));
-      list.appendChild(row);
+      const isSuspended = !!(card.suspended || card.state === 'suspended');
+      const tile = document.createElement('div');
+      tile.className = 'card-tile' + (isSuspended ? ' is-suspended' : '');
+
+      const corner = document.createElement('div');
+      corner.className = 'card-tile-corner';
+      const suit = document.createElement('span');
+      suit.className = 'card-tile-suit';
+      suit.textContent = CARD_TYPE_SUIT[card.type] || CARD_TYPE_SUIT.basic;
+      corner.appendChild(suit);
+      const dot = document.createElement('span');
+      dot.className = 'card-tile-state-dot';
+      dot.style.background = CARD_STATE_COLOR[card.state] || CARD_STATE_COLOR.new;
+      dot.title = card.state || 'new';
+      corner.appendChild(dot);
+      tile.appendChild(corner);
+
+      const text = document.createElement('div');
+      text.className = 'card-tile-text';
+      const textInner = document.createElement('div');
+      textInner.className = 'card-tile-text-inner';
+      textInner.textContent = card.front;
+      text.appendChild(textInner);
+      tile.appendChild(text);
+
+      if (isSuspended) {
+        const heart = document.createElement('span');
+        heart.className = 'card-tile-heart';
+        heart.textContent = '♥';
+        heart.title = 'Suspended — needs attention';
+        tile.appendChild(heart);
+      }
+
+      tile.addEventListener('click', () => renderCardDetailView(card, deck));
+      list.appendChild(tile);
     }
   }
 

@@ -152,6 +152,20 @@ techniques (Feynman check, Socratic push-back). Doesn't touch decks,
 cards, or generation. Content lives in `READING_PROMPT_GROUPS` in
 app.js — plain data, edit directly to add/remove prompts.
 
+**Card browser redesign** — the per-deck Cards view replaced its flat
+stacked-row list with a solitaire-style grid (`.card-tile-grid` in
+styles.css). Each card is a fixed-aspect-ratio (5:7) tile with a
+dog-ear corner fold, a suit as the type indicator (♠ basic, ♣ cloze,
+♦ formula — `CARD_TYPE_SUIT` in app.js) and a colored dot for review
+stage (`CARD_STATE_COLOR`, reusing the same rust/amber/green palette
+as the leech-review grade dots for cross-view color consistency),
+plus a ♥ badge + reduced opacity on suspended cards. Text is
+centered and line-clamped rather than truncated by character count.
+Actually rendered via headless Chrome screenshots (light mode, dark
+mode, a denser 12-card grid) before shipping, not just code-reviewed
+— all three held up. A one-line legend under search explains the
+notation.
+
 ---
 
 ## Active — real user feedback, not yet fully addressed

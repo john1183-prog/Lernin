@@ -394,6 +394,100 @@ body {
   color: var(--accent);
 }
 
+/* ---------- Card browser: solitaire-style tiles ---------- */
+.card-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  gap: 10px;
+}
+
+.card-tile {
+  position: relative;
+  aspect-ratio: 5 / 7;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0,0,0,0.05);
+  padding: 9px 8px 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-tile:hover,
+.card-tile:active {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Dog-ear fold, top-right — the classic playing-card tell */
+.card-tile::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 13px;
+  height: 13px;
+  background: linear-gradient(135deg, transparent 50%, var(--bg) 50%);
+  border-bottom-left-radius: 3px;
+}
+
+.card-tile-corner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  flex-shrink: 0;
+}
+
+.card-tile-suit {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-secondary);
+}
+
+.card-tile-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.card-tile-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.card-tile-text-inner {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.card-tile.is-suspended {
+  opacity: 0.5;
+}
+
+.card-tile-heart {
+  position: absolute;
+  bottom: 6px;
+  right: 7px;
+  font-size: 12px;
+  color: #C4472B;
+}
+
 .deck-menu-btn {
   width: 32px;
   height: 32px;
