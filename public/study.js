@@ -7,6 +7,9 @@ import {
   getRelationshipsFrom, getSetting
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
+import {
+  initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete
+} from './sound.js';
 import { renderMath, showToast } from './app.js';
 
 let session = {
@@ -43,6 +46,8 @@ function toRating(grade) {
 
 /* ---------- Session Start ---------- */
 export async function startStudySession(container, opts = {}) {
+  await initSoundSetting();
+
   session = {
     queue: [],
     index: 0,
@@ -487,6 +492,7 @@ function revealCard() {
   session.isRevealed = true;
   const inner = document.getElementById('cardInner');
   if (inner) inner.classList.add('is-flipped');
+  playFlip();
 
   const live = document.getElementById('studyLive');
   if (live) live.textContent = 'Answer revealed';
@@ -497,6 +503,11 @@ function revealCard() {
 /* ---------- Grading ---------- */
 async function handleGrade(grade) {
   if (!session.currentCard) return;
+
+  if (grade === 'again') playAgain();
+  else if (grade === 'hard') playHard();
+  else if (grade === 'good') playGood();
+  else if (grade === 'easy') playEasy();
 
   const card = session.currentCard;
 
@@ -789,6 +800,7 @@ function showShortcutsOverlay() {
 function renderSessionSummary() {
   session.isActive = false;
   detachKeyboard();
+  playSessionComplete();
 
   const container = document.querySelector('.study-session');
   if (!container) return;

@@ -14,6 +14,7 @@ import {
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
+import { setSoundEnabledCache } from './sound.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -514,11 +515,12 @@ async function enterMap() {
 }
 
 async function renderSettings() {
-  let existing, reminderSettings, smartOrderingEnabled;
+  let existing, reminderSettings, smartOrderingEnabled, soundEffectsEnabled;
   try {
     existing = await getApiConfig();
     reminderSettings = await getReminderSettings();
     smartOrderingEnabled = (await getSetting('smartOrderingEnabled')) !== false;
+    soundEffectsEnabled = (await getSetting('soundEffectsEnabled')) === true;
   } catch (err) {
     showToast('Failed to load settings.', 5000);
     return navigate('/');
@@ -755,6 +757,33 @@ async function renderSettings() {
     }
   });
   wrap.appendChild(plannerSection);
+
+  const soundSection = makeSection('Sound effects');
+  const soundIntro = document.createElement('p');
+  soundIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  soundIntro.textContent = 'Small sounds for flipping a card, grading, and finishing a session. Off by default — safe to leave off if you study somewhere quiet.';
+  soundSection.appendChild(soundIntro);
+
+  const soundLabel = document.createElement('label');
+  soundLabel.style.cssText = 'display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm);';
+  const soundToggle = document.createElement('input');
+  soundToggle.type = 'checkbox';
+  soundToggle.checked = soundEffectsEnabled;
+  soundLabel.appendChild(soundToggle);
+  soundLabel.appendChild(document.createTextNode(' Play sound effects while studying'));
+  soundSection.appendChild(soundLabel);
+
+  soundToggle.addEventListener('change', async () => {
+    try {
+      await saveSetting('soundEffectsEnabled', soundToggle.checked);
+      setSoundEnabledCache(soundToggle.checked);
+      showToast(soundToggle.checked ? 'Sound effects on.' : 'Sound effects off.');
+    } catch (err) {
+      showToast('Failed to save setting.', 4000);
+      soundToggle.checked = !soundToggle.checked;
+    }
+  });
+  wrap.appendChild(soundSection);
 
   const toolkitSection = makeSection('Reading toolkit');
   const toolkitIntro = document.createElement('p');
@@ -1040,6 +1069,7 @@ function renderHelp() {
         <p><strong>Undo (↩ or U)</strong> if you fat-fingered a grade. Press <strong>?</strong> in session for the full shortcut list.</p>
         <p>Keyboard: Space/Enter/→ flip · ← hint (before flip) or Again (after) · 1–4 grades · Esc ends session.</p>
         <p>Swipe: before flip ← hint, → flip · after flip ← Again, → Easy, ↑ Hard, ↓ Good.</p>
+        <p>Settings → <strong>Play sound effects while studying</strong> (off by default) adds small sounds for flip, grading, and finishing a session.</p>
       `
     },
     {

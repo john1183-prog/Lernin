@@ -110,13 +110,49 @@ to the mastery color progression, to avoid reintroducing the exact
 background/foreground hue-collision bug that `--map-bg` was just fixed
 for (see the Active section below).
 
-### Deeper map view redesign
-User flagged wanting to bring a fuller discussion/reference material
-before further map design work, beyond the concrete bugs already fixed
-(LOD vanishing, per-island glow, drag-vs-pan dead zone, territory
-bounds, camera auto-fit, persistent list-view button, background/
-foreground hue collision). Holding here pending that conversation —
-likely the next major phase of work.
+### Map — redesigned outside this chat, audited here
+The "fuller discussion" mentioned below happened outside Claude
+entirely — commits `4559b85` ("recreated the map") and `7b7bb2c`
+("bug fixes") were a from-scratch canvas.js/db.js rewrite, prototyped
+in a separate `lernin-spatial/` folder and then merged into `public/`.
+Asked to verify it (not just take it on faith): the integration itself
+is genuinely clean — all 19 functions canvas.js imports from db.js
+exist, all 3 exports app.js needs from canvas.js are present, every
+IndexedDB store it touches (territoryLayout, conceptLayouts,
+landmarks, studyPaths, annotations) is in the schema, zero
+TODO/FIXME/console.error markers. That's a real accomplishment for a
+merge this size — this is exactly the kind of seam where this file's
+other audit entries found real breakage.
+
+That said, four things are worth a cleanup pass, found by actually
+reading the code rather than assuming a rewrite this large "just
+works":
+- **Unconditional 60fps render loop is back.** Already fixed once in
+  an earlier performance audit (see "Already shipped" list), but the
+  rewrite didn't carry it forward — `renderLoop()` in canvas.js
+  redraws every frame regardless of whether anything's animating.
+  Does get `cancelAnimationFrame`'d on `destroyCanvasView()`, so it's
+  not a permanent background drain, but real cost while the map sits
+  open and idle.
+- **No delete UI for landmarks, study paths, or annotations.**
+  `deleteLandmark`/`deleteStudyPath`/`deleteAnnotation` are imported
+  from db.js but never called anywhere in canvas.js — same
+  backend-exists-UI-was-never-wired pattern as the leech review gap
+  above. Once created, these are permanent.
+- **Fire-and-forget writes, no failure feedback.**
+  `saveIslandPosition`/`saveConceptPosition`/`saveAnnotation` are
+  called with no `await` and no `.catch()`. Reasonable for position
+  drags (shouldn't block on a write), less so for `saveAnnotation` —
+  a typed annotation could silently fail to persist with zero
+  indication to the user.
+- **Annotation text uses the browser's native `prompt()`** — jarring,
+  unstylable, inconsistent with the sheet/modal pattern used
+  everywhere else (deck actions, export options).
+
+Suggested: bundle a fix for these with the island-to-island lines
+work (Tier 2, "Visual connections between related concepts on the
+map," above), since both touch canvas.js directly — most efficient
+done together rather than as separate passes.
 
 ---
 
@@ -165,6 +201,19 @@ Actually rendered via headless Chrome screenshots (light mode, dark
 mode, a denser 12-card grid) before shipping, not just code-reviewed
 — all three held up. A one-line legend under search explains the
 notation.
+
+**Sound effects** — synthesized via Web Audio API in a new `sound.js`
+module, no audio files (kept dependency-free, matching how everything
+else is vendored locally rather than pulled from a CDN). Distinct
+tones for flip, each grade, and session complete — Again is
+deliberately mild rather than punishing, since honest self-grading
+matters more than a "reward" sound discouraging it. Settings →
+"Play sound effects while studying," **off by default** — a study app
+gets used in libraries and other quiet shared spaces, so this is one
+of the few opt-in toggles here that defaults off rather than on.
+Toggling takes effect immediately mid-session via a cached-setting
+pattern (`setSoundEnabledCache`), no restart needed. `sound.js` added
+to the service worker precache list, cache bumped to v24.
 
 ---
 
@@ -341,7 +390,13 @@ real gaps, now closed.
   creating a new card. `renderNewCardForm` now has no relationship
   code at all — linking only works after the fact, via card detail
   view (`addRelationship` call there) or by drawing lines on the map.
-  Not fixed yet — flagging for a future pass.
+  Not fixed yet. Suggested approach: silently auto-save the card as
+  soon as front+back have real content (same mechanism
+  `saveManualCard` already uses), then reveal the same live-search
+  picker card detail view already has, in that same screen — treats
+  "new card form" as becoming the card's own detail view the moment
+  it has a real ID, rather than duplicating picker UI or building a
+  separate pre-save staging mechanism.
 
 ---
 
