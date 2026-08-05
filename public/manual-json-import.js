@@ -45,10 +45,10 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
       <div class="manual-import-alert">
         <div class="manual-import-alert-icon">📢</div>
         <div>
-          <strong>Have a scanned PDF, PowerPoint, or image?</strong>
+          <strong>Have a scanned PDF or image-heavy slide deck?</strong>
           <p style="margin:4px 0 0;color:var(--ink-secondary);">
-            Our built-in extractor only works with text-based PDFs.
-            For scanned documents, PowerPoints, images, or any other file type:
+            Our built-in extractor handles text-based PDFs and PowerPoint files automatically.
+            For scanned documents, image-heavy slides, photos, or any other file type:
           </p>
           <ol class="manual-import-steps">
             <li>Copy the prompt below</li>

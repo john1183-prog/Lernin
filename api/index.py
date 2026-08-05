@@ -203,6 +203,31 @@ def _call_gemini(text: str, provider: str, api_key: str):
         batch = CardBatch.model_validate(parsed)
         return batch.cards, batch.summary
 
+def _extract_shape_text(shape, texts):
+    """Recursively pull text out of a shape: plain text frames, tables
+    (cell by cell), and grouped shapes (which don't expose .text
+    directly — python-pptx nests their children under .shapes)."""
+    try:
+        if shape.shape_type == 6:  # MSO_SHAPE_TYPE.GROUP
+            for child in shape.shapes:
+                _extract_shape_text(child, texts)
+            return
+    except Exception:
+        pass
+
+    if getattr(shape, "has_table", False):
+        try:
+            for row in shape.table.rows:
+                cells = [c.text for c in row.cells if c.text]
+                if cells:
+                    texts.append(" | ".join(cells))
+        except Exception:
+            pass
+        return
+
+    if hasattr(shape, "text") and shape.text:
+        texts.append(shape.text)
+
 def _extract_ppt_text(content: bytes) -> str:
     try:
         from pptx import Presentation
@@ -211,8 +236,11 @@ def _extract_ppt_text(content: bytes) -> str:
         texts = []
         for slide in prs.slides:
             for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text:
-                    texts.append(shape.text)
+                _extract_shape_text(shape, texts)
+            if slide.has_notes_slide:
+                notes = slide.notes_slide.notes_text_frame.text
+                if notes and notes.strip():
+                    texts.append(f"[Speaker notes: {notes.strip()}]")
         return "\n\n".join(texts)
     except Exception:
         return ""
@@ -409,3 +437,31 @@ async def generate_cards_vision(
         )
 
     return GenerateResponse(cards=cards, summary=summary)
+
+class ExtractTextResponse(BaseModel):
+    text: str
+
+@app.post("/api/extract-ppt-text", response_model=ExtractTextResponse)
+async def extract_ppt_text(request: Request, file: UploadFile = File(...)):
+    """
+    Text-only extraction for PowerPoint files — no LLM call, no API key
+    required. Exists so manual (non-BYOK) users get the same pre-filled
+    prompt experience BYOK users get, matching how PDF text extraction
+    already runs client-side for everyone regardless of BYOK status.
+    Rate-limited like the generation endpoints since it's still unauthenticated.
+    """
+    _check_rate_limit(_client_ip(request))
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
+
+    filename = file.filename or "upload"
+    ext = filename.split('.')[-1].lower() if '.' in filename else ''
+    if ext not in ('ppt', 'pptx'):
+        raise HTTPException(status_code=400, detail="This endpoint only extracts PowerPoint files.")
+
+    text = _extract_ppt_text(content)
+    return ExtractTextResponse(text=text)

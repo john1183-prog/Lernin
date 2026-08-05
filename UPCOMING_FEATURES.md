@@ -60,17 +60,51 @@ HTML-unsafe characters — not just read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
 
-### Smart daily session planner
-Currently `study.js` queues due cards by FSRS due date only. A smarter
-planner would factor in available study time, weak topics, and
-prerequisites (don't surface a card whose `dependsOn` cards haven't been
-reviewed recently) — now buildable against the real relationship data
-and a working explorer to reason about it against.
+### Smart daily session planner — spec locked, ready to build
+Currently `study.js` queues due cards by FSRS due date only. Design
+session settled the open questions (see "Found this session" below
+for the relationship-dropdown bug that had to be fixed first — no
+`dependsOn` data existed until that fix):
+
+- **Soft reordering only, never blocking.** A new card whose
+  prerequisite hasn't been reviewed still gets introduced if you reach
+  it — it's just deprioritized within the queue, never excluded. FSRS
+  due dates are about memory decay; excluding a genuinely due review
+  over a soft pedagogical relationship risks hurting retention.
+- **Applies to both new cards and due reviews.** Not just new-card
+  introduction order — due reviews get reordered too, so a
+  prerequisite is reviewed right before its dependent in the same
+  session (priming effect).
+- **Reorders only within the existing queue — never injects cards.**
+  If a prerequisite isn't already in today's queue (not due, or in a
+  different deck you're not studying), do nothing — never pull it in
+  from another deck or bump a not-yet-due card into today's session.
+  This is what makes cross-deck `dependsOn` safe by construction: it
+  naturally never fires across decks unless both cards already happen
+  to be in the same session.
+- **Cycle safety**: cap total reorder passes (e.g. `queue.length * 3`)
+  so a circular dependency (A→B→A) can't hang the sort — just
+  terminates without fully resolving, no user-facing effect.
+- **Suspended/leeched prerequisites count as satisfied** — a card
+  shouldn't get reordered away because of an unrelated leech problem.
+- **Settings toggle, default ON** — "Smart ordering" or similar, so
+  there's an escape hatch if it ever misbehaves.
+- Algorithm: after `interleaveQueue()` builds the normal order, a
+  post-process pass walks the queue, and for each card pulls its
+  `dependsOn` prerequisites (via `getRelationshipsFrom`, filtered to
+  `type === 'dependsOn'` and restricted to cards already in the
+  queue) earlier if they're currently positioned later. Runs before
+  the existing `startCardId` override (explicit "study this card now"
+  from card detail/map always wins over automatic ordering).
 
 ### Visual connections between related concepts on the map
 `canvas.js` could draw lines/arcs between related islands (possibly
 across territories) using the same relationship data. Purely visual, no
-Study Mode logic changes needed.
+Study Mode logic changes needed. Design settled: one line per
+deck-pair (not one per relationship — aggregate, weight by count),
+single subtle dashed style with no direction/arrowheads (unreadable at
+that zoom level anyway), hover-to-highlight-connected matching the
+existing L2 node pattern.
 
 ---
 
@@ -261,6 +295,54 @@ restored once explicitly requested:
   JSON, fenced with preamble, smart quotes, zero-width + trailing comma,
   unescaped internal quote, invalid input) — all parse correctly or
   fail cleanly with the expected error.
+
+### Relationship-type dropdown was silently broken (fixed) — critical, found during smart-planner design
+While designing prerequisite-aware queuing (see below), tracing
+`addRelationship()`'s exact validation turned up a live bug blocking
+it entirely: the card-detail "Add relationship" dropdown sent
+`depends_on`/`related_to`/`prerequisite` (snake_case, plus a third
+option that doesn't exist), but `addRelationship()` in db.js only ever
+accepted `dependsOn`/`related` (camelCase, two options). Every single
+click has been throwing and getting silently swallowed by the
+try/catch since whichever commit introduced the mismatch — meaning
+almost no `dependsOn`/`related` data likely exists in real decks yet.
+Fixed: dropdown now sends `dependsOn`/`related` matching what the
+backend actually validates. Confirmed no other snake_case leftovers
+anywhere else in the codebase. This was a hard blocker for the smart
+planner (no relationship data = nothing to plan around), so it had to
+be fixed first.
+
+### PowerPoint import — verified, hardened, and now works without an API key
+Asked to confirm whether .pptx import actually works: mostly, but with
+real gaps, now closed.
+
+- **Tables and speaker notes were silently dropped.** The old
+  `_extract_ppt_text` only walked `shape.text`, which doesn't exist on
+  table shapes (`shape.table`) or group shapes — both common in
+  lecture/problem-set slides. Verified with a synthetic .pptx
+  containing a title+bullets slide, a table, speaker notes, and a
+  grouped textbox: only the title/bullets came through before the
+  fix. Now recursively walks group shapes, extracts table cells
+  (`row | cells | joined`), and appends speaker notes per slide
+  (`[Speaker notes: ...]`). Re-verified against the same file — all
+  four content types now extract correctly.
+- **PPTX extraction was gated behind BYOK for no real reason.** Unlike
+  PDF (extracted client-side via pdf.js for everyone, BYOK only gates
+  the generation call after), PPTX went straight to the vision
+  endpoint, which requires an API key — so manual (non-BYOK) users got
+  zero pre-extraction, just "upload the file yourself to ChatGPT/
+  Claude/Gemini." Added `/api/extract-ppt-text` — unauthenticated,
+  rate-limited, pure parsing (no LLM call, so no key needed) — and
+  routed PPTX through it first for everyone, falling back to vision
+  (BYOK) or the file-name-only manual prompt (non-BYOK, unavoidable
+  without OCR) only when a deck is genuinely image-heavy (<50 chars
+  extracted). Manual-mode users now get the same real pre-filled
+  prompt text BYOK users always got. Verified over real HTTP
+  (uvicorn + curl): correct extraction, correct 400 on wrong file
+  type, correct graceful empty-string on a corrupted file.
+- **Added a client-side file-size pre-check** (20MB, matching the
+  backend's existing limit) so an oversized file fails fast with a
+  clear message instead of a wasted upload round-trip.
 
 ### Still open — found this session, not yet addressed
 - **Relationship picker no longer available at card-creation time.**

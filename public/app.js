@@ -995,6 +995,7 @@ function renderHelp() {
           <li><strong>Your Claude or Gemini API key</strong> — one-tap generation. Key stays on device; sent only to that provider when you generate.</li>
           <li><strong>Paste into any AI</strong> — copy the prompt, paste JSON back. Free, slightly more friction.</li>
         </ul>
+        <p>Text-based PDFs, .txt/.md, and PowerPoint files (.ppt/.pptx) all get their text extracted automatically — including PowerPoint tables and speaker notes — and this works the same whether or not you've added an API key; only the actual card generation step needs one. Scanned PDFs and image-heavy slide decks fall back to AI vision if you have a key, or the manual paste flow if you don't. Plain images (.jpg/.png) always go through vision.</p>
         <p><em>Max tip:</em> Prefer fewer sharp cards over hundreds of vague ones. One idea per card.</p>
       `
     },
@@ -1713,6 +1714,11 @@ async function renderImportView(deckId) {
       return;
     }
 
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('That file is over 20MB — try a smaller one or split it up.', 5000);
+      return;
+    }
+
     let config;
     try {
       config = await getApiConfig();
@@ -1772,8 +1778,41 @@ async function renderImportView(deckId) {
       return;
     }
 
-    // Vision path for images and PowerPoint
-    if (isImage || isPpt) {
+    if (isPpt) {
+      progressArea.style.display = 'block';
+      statusText.textContent = 'Extracting text from PowerPoint...';
+      progressFill.style.width = '20%';
+
+      try {
+        const text = await extractTextFromPpt(file);
+        progressFill.style.width = '100%';
+        statusText.textContent = 'Extraction complete.';
+
+        if (text.trim().length < 50) {
+          showToast('Slides look image-heavy. Using AI vision...');
+          if (isByok) {
+            await uploadVisionFile(file, deckId, config);
+          } else {
+            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+          }
+          return;
+        }
+
+        await handleExtractedText(text, deckId, config, file.name);
+      } catch (err) {
+        console.error('PPTX extraction failed:', err);
+        showToast('Could not extract text. Falling back to AI vision...', 4000);
+        if (isByok) {
+          await uploadVisionFile(file, deckId, config);
+        } else {
+          renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+        }
+      }
+      return;
+    }
+
+    // Vision path for images — no text to extract, always goes to vision.
+    if (isImage) {
       if (isByok) {
         progressArea.style.display = 'block';
         statusText.textContent = 'Reading document with AI...';
@@ -1805,6 +1844,24 @@ async function handleExtractedText(text, deckId, config, filename) {
   } else {
     renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
   }
+}
+
+/**
+ * PowerPoint text extraction — hits the unauthenticated backend endpoint
+ * (pure parsing, no LLM call, no API key needed) so this works for
+ * everyone, not just BYOK users. Mirrors how PDF extraction already runs
+ * client-side for everyone via pdf.js.
+ */
+async function extractTextFromPpt(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch('/api/extract-ppt-text', { method: 'POST', body: formData });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || `Extraction failed: ${response.status}`);
+  }
+  const data = await response.json();
+  return data.text || '';
 }
 
 async function uploadVisionFile(file, deckId, config) {
