@@ -514,10 +514,11 @@ async function enterMap() {
 }
 
 async function renderSettings() {
-  let existing, reminderSettings;
+  let existing, reminderSettings, smartOrderingEnabled;
   try {
     existing = await getApiConfig();
     reminderSettings = await getReminderSettings();
+    smartOrderingEnabled = (await getSetting('smartOrderingEnabled')) !== false;
   } catch (err) {
     showToast('Failed to load settings.', 5000);
     return navigate('/');
@@ -728,6 +729,32 @@ async function renderSettings() {
     showToast(reminderToggle.checked ? 'Reminders on.' : 'Reminders off.');
   });
   wrap.appendChild(reminderSection);
+
+  const plannerSection = makeSection('Smart ordering');
+  const plannerIntro = document.createElement('p');
+  plannerIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  plannerIntro.textContent = 'When cards are linked with "Depends on," Lernin reorders your session so prerequisites come up before the cards that depend on them. Nothing is ever excluded — a due card always still appears, just possibly resequenced.';
+  plannerSection.appendChild(plannerIntro);
+
+  const plannerLabel = document.createElement('label');
+  plannerLabel.style.cssText = 'display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm);';
+  const plannerToggle = document.createElement('input');
+  plannerToggle.type = 'checkbox';
+  plannerToggle.checked = smartOrderingEnabled;
+  plannerLabel.appendChild(plannerToggle);
+  plannerLabel.appendChild(document.createTextNode(' Reorder sessions by prerequisite'));
+  plannerSection.appendChild(plannerLabel);
+
+  plannerToggle.addEventListener('change', async () => {
+    try {
+      await saveSetting('smartOrderingEnabled', plannerToggle.checked);
+      showToast(plannerToggle.checked ? 'Smart ordering on.' : 'Smart ordering off.');
+    } catch (err) {
+      showToast('Failed to save setting.', 4000);
+      plannerToggle.checked = !plannerToggle.checked;
+    }
+  });
+  wrap.appendChild(plannerSection);
 
   const toolkitSection = makeSection('Reading toolkit');
   const toolkitIntro = document.createElement('p');
@@ -1041,6 +1068,7 @@ function renderHelp() {
       body: `
         <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
         <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions.</p>
+        <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
         <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name.</p>
       `
     },

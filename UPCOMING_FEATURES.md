@@ -60,42 +60,18 @@ HTML-unsafe characters — not just read through.
 
 **Not shipped yet, on purpose (decided when scoping this):**
 
-### Smart daily session planner — spec locked, ready to build
-Currently `study.js` queues due cards by FSRS due date only. Design
-session settled the open questions (see "Found this session" below
-for the relationship-dropdown bug that had to be fixed first — no
-`dependsOn` data existed until that fix):
-
-- **Soft reordering only, never blocking.** A new card whose
-  prerequisite hasn't been reviewed still gets introduced if you reach
-  it — it's just deprioritized within the queue, never excluded. FSRS
-  due dates are about memory decay; excluding a genuinely due review
-  over a soft pedagogical relationship risks hurting retention.
-- **Applies to both new cards and due reviews.** Not just new-card
-  introduction order — due reviews get reordered too, so a
-  prerequisite is reviewed right before its dependent in the same
-  session (priming effect).
-- **Reorders only within the existing queue — never injects cards.**
-  If a prerequisite isn't already in today's queue (not due, or in a
-  different deck you're not studying), do nothing — never pull it in
-  from another deck or bump a not-yet-due card into today's session.
-  This is what makes cross-deck `dependsOn` safe by construction: it
-  naturally never fires across decks unless both cards already happen
-  to be in the same session.
-- **Cycle safety**: cap total reorder passes (e.g. `queue.length * 3`)
-  so a circular dependency (A→B→A) can't hang the sort — just
-  terminates without fully resolving, no user-facing effect.
-- **Suspended/leeched prerequisites count as satisfied** — a card
-  shouldn't get reordered away because of an unrelated leech problem.
-- **Settings toggle, default ON** — "Smart ordering" or similar, so
-  there's an escape hatch if it ever misbehaves.
-- Algorithm: after `interleaveQueue()` builds the normal order, a
-  post-process pass walks the queue, and for each card pulls its
-  `dependsOn` prerequisites (via `getRelationshipsFrom`, filtered to
-  `type === 'dependsOn'` and restricted to cards already in the
-  queue) earlier if they're currently positioned later. Runs before
-  the existing `startCardId` override (explicit "study this card now"
-  from card detail/map always wins over automatic ordering).
+### Smart daily session planner — shipped
+`study.js`'s `applyPrerequisiteOrdering()` soft-reorders the queue
+after `interleaveQueue()`, before the explicit `startCardId` override
+(manually choosing a card to study always wins over automatic
+ordering). Settings → "Reorder sessions by prerequisite", default on
+(`getSetting('smartOrderingEnabled')`, anything but explicit `false`
+counts as enabled). Verified against 6 scenarios in a standalone test
+harness: simple pull-forward, chained dependencies, prerequisite
+outside today's queue (correctly left alone — no injection), circular
+dependency (terminates safely via the `queue.length * 3` pass cap,
+doesn't hang), already-correct order (no unnecessary moves), and
+`related`-type links (correctly ignored — only `dependsOn` reorders).
 
 ### Visual connections between related concepts on the map
 `canvas.js` could draw lines/arcs between related islands (possibly
@@ -164,8 +140,9 @@ with a relationship picker, Study Mode rendering, a card browser +
 relationship explorer, cross-deck reverse lookup, and AI generation —
 both the API-key path and manual-paste mode — actually populating
 formula fields from source text with anti-hallucination guardrails),
-local study reminders, and a map territory activity halo — only the
-smart session planner and map connections remain, see Tier 2 above.
+local study reminders, a map territory activity halo, and a
+prerequisite-aware smart session planner — only the visual map
+connections between related islands remain, see Tier 2 above.
 
 A **Reading Toolkit** (Settings → "Open Reading Toolkit",
 `/reading-toolkit`) — an explicitly side/non-core feature, a static

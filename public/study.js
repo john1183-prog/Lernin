@@ -3,7 +3,8 @@
 
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
-  getReviewLogForCard, getDeck, removeLastReviewLogForCard
+  getReviewLogForCard, getDeck, removeLastReviewLogForCard,
+  getRelationshipsFrom, getSetting
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import { renderMath, showToast } from './app.js';
@@ -90,6 +91,19 @@ export async function startStudySession(container, opts = {}) {
   // Interleave new and review
   session.queue = interleaveQueue(cards);
 
+  // Smart ordering: soft-reorder so prerequisites (dependsOn) come
+  // before their dependents when both are already in today's queue.
+  // Never blocks, never injects cards from outside the queue — see
+  // UPCOMING_FEATURES.md for the full spec and reasoning.
+  try {
+    const smartOrderingEnabled = await getSetting('smartOrderingEnabled');
+    if (smartOrderingEnabled !== false) {
+      session.queue = await applyPrerequisiteOrdering(session.queue);
+    }
+  } catch (err) {
+    // Non-fatal — study with the plain interleaved order if this fails.
+  }
+
   // Rotate to startCardId if specified
   if (session.startCardId) {
     const idx = session.queue.findIndex(c => c.id === session.startCardId);
@@ -114,6 +128,67 @@ function interleaveQueue(cards) {
     if (n < news.length) result.push(news[n++]);
     if (r < reviews.length) result.push(reviews[r++]);
   }
+  return result;
+}
+
+/**
+ * Soft prerequisite-first reordering. For each card in the queue, pulls
+ * its `dependsOn` prerequisites earlier if they're also in the queue
+ * but currently positioned later — so a prerequisite gets reviewed (or
+ * introduced) right before its dependent in the same session.
+ *
+ * Deliberately does NOT: exclude/block anything (a due review always
+ * still appears — this only changes order), or pull in cards that
+ * aren't already in the queue (a prerequisite in another deck, or one
+ * that isn't due today, is simply left alone — this is what makes
+ * cross-deck dependsOn safe without extra cross-deck logic). Suspended
+ * prerequisites are treated as satisfied (skipped), since a leech
+ * elsewhere shouldn't reorder an unrelated card.
+ */
+async function applyPrerequisiteOrdering(queue) {
+  if (queue.length < 2) return queue;
+
+  const idSet = new Set(queue.map(c => c.id));
+  const prereqMap = new Map();
+
+  for (const card of queue) {
+    try {
+      const rels = await getRelationshipsFrom(card.id);
+      const prereqs = rels
+        .filter(r => r.type === 'dependsOn' && r.cardId !== card.id && idSet.has(r.cardId))
+        .map(r => r.cardId);
+      if (prereqs.length) prereqMap.set(card.id, prereqs);
+    } catch (err) {
+      // Non-fatal — skip reordering for this one card if lookup fails.
+    }
+  }
+
+  if (prereqMap.size === 0) return queue; // common case — nothing to do
+
+  const result = [...queue];
+  const maxPasses = result.length * 3; // safety valve against cycles
+  let passes = 0;
+  let moved = true;
+
+  while (moved && passes < maxPasses) {
+    moved = false;
+    passes++;
+    for (let i = 0; i < result.length; i++) {
+      const prereqs = prereqMap.get(result[i].id);
+      if (!prereqs) continue;
+      for (const prereqId of prereqs) {
+        const pIdx = result.findIndex(c => c.id === prereqId);
+        if (pIdx > i && !result[pIdx].suspended) {
+          const [p] = result.splice(pIdx, 1);
+          result.splice(i, 0, p);
+          moved = true;
+          break;
+        }
+      }
+      if (moved) break;
+    }
+  }
+
   return result;
 }
 
