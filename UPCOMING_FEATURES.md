@@ -191,15 +191,23 @@ app.js — plain data, edit directly to add/remove prompts.
 **Card browser redesign** — the per-deck Cards view replaced its flat
 stacked-row list with a solitaire-style grid (`.card-tile-grid` in
 styles.css). Each card is a fixed-aspect-ratio (5:7) tile with a
-dog-ear corner fold, a suit as the type indicator (♠ basic, ♣ cloze,
-♦ formula — `CARD_TYPE_SUIT` in app.js) and a colored dot for review
+dog-ear corner fold, a custom mark as the type indicator (chevron for
+basic, gapped line for cloze, division sign for formula —
+`CARD_TYPE_ICON` in app.js, inline SVG) and a colored dot for review
 stage (`CARD_STATE_COLOR`, reusing the same rust/amber/green palette
 as the leech-review grade dots for cross-view color consistency),
-plus a ♥ badge + reduced opacity on suspended cards. Text is
-centered and line-clamped rather than truncated by character count.
-Actually rendered via headless Chrome screenshots (light mode, dark
-mode, a denser 12-card grid) before shipping, not just code-reviewed
-— all three held up. A one-line legend under search explains the
+plus a pause-mark badge (`CARD_SUSPENDED_ICON`) + reduced opacity on
+suspended cards. Originally shipped with actual playing-card suits
+(♠♣♦♥) — replaced after feedback that it read as borrowed-from-a-
+card-game rather than Lernin's own; the custom marks were iterated
+through several rounds of headless-Chrome screenshot testing before
+landing on ones that read clearly at 14px without ambiguity (an
+early "two bars" mark for basic looked like an equals sign; an early
+formula mark looked like a checkmark). Text is centered and
+line-clamped rather than truncated by character count. Actually
+rendered via headless Chrome screenshots (light mode, dark mode, a
+denser 12-card grid) before shipping, not just code-reviewed — all
+three held up. A one-line legend under search explains the
 notation.
 
 **Sound effects** — synthesized via Web Audio API in a new `sound.js`

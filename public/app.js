@@ -1099,7 +1099,7 @@ function renderHelp() {
         <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
         <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions.</p>
         <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
-        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a solitaire-style spread — suit (♠ basic, ♣ cloze, ♦ formula) and a colored dot for review stage, ♥ badge if suspended.</p>
+        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a spread of tiles with their own marks — not playing-card suits, just Lernin's own corner marks: a chevron for basic, a gapped line for cloze, a division sign for formula — plus a colored dot for review stage and a small paused mark if suspended.</p>
       `
     },
     {
@@ -2308,11 +2308,17 @@ async function renderNewCardForm(deckId) {
   root.appendChild(wrap);
 }
 
-const CARD_TYPE_SUIT = {
-  basic: '♠',
-  cloze: '♣',
-  formula: '♦'
+// Custom marks for the card browser tiles — deliberately not playing-card
+// suits (this isn't a card game). Chevron = direct recall (echoes the
+// flip-to-reveal motif already central to study mode), gapped line =
+// fill-in-the-blank, division sign = a formula/equation card.
+const CARD_TYPE_ICON = {
+  basic: '<svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4.5 L7.5 10.5 L11 4.5"/></svg>',
+  cloze: '<svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2.5" y1="7.5" x2="5.5" y2="7.5"/><line x1="9.5" y1="7.5" x2="12.5" y2="7.5"/></svg>',
+  formula: '<svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="7.5" x2="12" y2="7.5"/><circle cx="7.5" cy="3.8" r="0.9" fill="currentColor" stroke="none"/><circle cx="7.5" cy="11.2" r="0.9" fill="currentColor" stroke="none"/></svg>'
 };
+
+const CARD_SUSPENDED_ICON = '<svg width="13" height="13" viewBox="0 0 15 15" fill="currentColor"><rect x="4" y="3" width="2.3" height="9" rx="1"/><rect x="8.7" y="3" width="2.3" height="9" rx="1"/></svg>';
 
 // Reuses the same semantic palette as LEECH_GRADE_COLOR (rust/amber/green)
 // so color meaning stays consistent across the app — 'new' gets a neutral
@@ -2361,7 +2367,7 @@ async function renderCardBrowser(deckId) {
 
   const legend = document.createElement('p');
   legend.style.cssText = 'padding:8px var(--space-md) 0; margin:0; font-size:11px; color:var(--ink-muted);';
-  legend.innerHTML = '♠ Basic &nbsp; ♣ Cloze &nbsp; ♦ Formula &nbsp;·&nbsp; dot = review stage &nbsp;·&nbsp; ♥ suspended';
+  legend.innerHTML = 'v Basic &nbsp; -&nbsp;- Cloze &nbsp; ÷ Formula &nbsp;·&nbsp; dot = review stage &nbsp;·&nbsp; || suspended';
   wrap.appendChild(legend);
 
   const list = document.createElement('div');
@@ -2385,10 +2391,11 @@ async function renderCardBrowser(deckId) {
 
       const corner = document.createElement('div');
       corner.className = 'card-tile-corner';
-      const suit = document.createElement('span');
-      suit.className = 'card-tile-suit';
-      suit.textContent = CARD_TYPE_SUIT[card.type] || CARD_TYPE_SUIT.basic;
-      corner.appendChild(suit);
+      const typeIcon = document.createElement('span');
+      typeIcon.className = 'card-tile-suit';
+      typeIcon.innerHTML = CARD_TYPE_ICON[card.type] || CARD_TYPE_ICON.basic;
+      typeIcon.title = card.type || 'basic';
+      corner.appendChild(typeIcon);
       const dot = document.createElement('span');
       dot.className = 'card-tile-state-dot';
       dot.style.background = CARD_STATE_COLOR[card.state] || CARD_STATE_COLOR.new;
@@ -2405,11 +2412,11 @@ async function renderCardBrowser(deckId) {
       tile.appendChild(text);
 
       if (isSuspended) {
-        const heart = document.createElement('span');
-        heart.className = 'card-tile-heart';
-        heart.textContent = '♥';
-        heart.title = 'Suspended — needs attention';
-        tile.appendChild(heart);
+        const paused = document.createElement('span');
+        paused.className = 'card-tile-heart';
+        paused.innerHTML = CARD_SUSPENDED_ICON;
+        paused.title = 'Suspended — needs attention';
+        tile.appendChild(paused);
       }
 
       tile.addEventListener('click', () => renderCardDetailView(card, deck));
