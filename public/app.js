@@ -14,7 +14,7 @@ import {
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
-import { setSoundEnabledCache } from './sound.js';
+import { setSoundEnabledCache, initSoundSetting, playNavigate } from './sound.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -182,9 +182,17 @@ function runViewCleanup() {
   activeViewCleanup = null;
 }
 
+let hasNavigatedOnce = false;
+
 async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
   const [_, route, id] = path.split('/');
+
+  // Skip the sound on the very first call (cold app open) — a sound
+  // firing before the person has done anything reads as an ad
+  // autoplaying, not feedback for an action they took.
+  if (hasNavigatedOnce) playNavigate();
+  hasNavigatedOnce = true;
 
   // Tear down previous view (keyboard, map rAF, gestures) before swapping DOM
   runViewCleanup();
@@ -761,7 +769,7 @@ async function renderSettings() {
   const soundSection = makeSection('Sound effects');
   const soundIntro = document.createElement('p');
   soundIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
-  soundIntro.textContent = 'Small sounds for flipping a card, grading, and finishing a session. Off by default — safe to leave off if you study somewhere quiet.';
+  soundIntro.textContent = 'Small sounds for flipping a card, grading, finishing a session, and moving between screens. Off by default — safe to leave off if you study somewhere quiet.';
   soundSection.appendChild(soundIntro);
 
   const soundLabel = document.createElement('label');
@@ -2987,5 +2995,6 @@ window.addEventListener('hashchange', handleRoute);
 initTheme();
 initFont();
 initGenerationListeners();
+initSoundSetting();
 handleRoute();
 checkAndShowStudyReminder();

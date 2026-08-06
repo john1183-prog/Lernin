@@ -127,3 +127,10 @@ export function playSessionComplete() {
     { freq: 783.99, start: 0.24, duration: 0.3, gain: 0.065 }
   ]);
 }
+
+export function playNavigate() {
+  // Very short, quiet, single-pitch tap — navigation happens far more
+  // often than a flip or a grade, so this stays deliberately smaller
+  // than either rather than competing with them.
+  playTones([{ freq: 340, start: 0, duration: 0.035, gain: 0.035 }]);
+}
