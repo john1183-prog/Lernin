@@ -40,6 +40,7 @@ let canvasEl = null;
 let ctx = null;
 let onExitCallback = null;
 let rafId = null;
+let idleTimeoutId = null;
 
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
@@ -129,13 +130,15 @@ export async function initCanvasView(targetContainer, opts = {}) {
   buildOverlays();
   attachGestureHandlers();
   updateBreadcrumb();
-  rafId = requestAnimationFrame(renderLoop);
+  rafId = requestAnimationFrame(renderLoop); // first frame always immediate
   return destroyCanvasView;
 }
 
 export function destroyCanvasView() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
+  if (idleTimeoutId) clearTimeout(idleTimeoutId);
+  idleTimeoutId = null;
   if (canvasEl) {
     canvasEl.removeEventListener('pointerdown', onPointerDown);
     canvasEl.removeEventListener('pointermove', onPointerMove);
@@ -377,6 +380,7 @@ function exitToL1() {
   fitCameraToContent();
   updateBreadcrumb();
   updateToolbar();
+  scheduleFrame(0);
 }
 
 function exitToL2() {
@@ -387,6 +391,7 @@ function exitToL2() {
   hideDetailPanel();
   updateBreadcrumb();
   updateToolbar();
+  scheduleFrame(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +478,34 @@ function rectIntersects(a, b) {
 // Render loop
 // ---------------------------------------------------------------------------
 
+/**
+ * Schedules the next frame. delayMs=0 means "as soon as possible"
+ * (requestAnimationFrame); >0 throttles to that interval. Guards against
+ * double-scheduling if something is already pending.
+ */
+function scheduleFrame(delayMs) {
+  if (delayMs === 0) {
+    // Urgent — cancel any pending slow idle tick and go immediate.
+    if (idleTimeoutId !== null) {
+      clearTimeout(idleTimeoutId);
+      idleTimeoutId = null;
+    }
+    if (rafId === null) {
+      rafId = requestAnimationFrame(renderLoop);
+    }
+    return;
+  }
+  // Throttled idle tick — only schedule if nothing is already pending.
+  if (rafId !== null || idleTimeoutId !== null) return;
+  idleTimeoutId = setTimeout(() => {
+    idleTimeoutId = null;
+    rafId = requestAnimationFrame(renderLoop);
+  }, delayMs);
+}
+
 function renderLoop() {
+  rafId = null;
+
   camera.x += (targetCamera.x - camera.x) * 0.12;
   camera.y += (targetCamera.y - camera.y) * 0.12;
   camera.zoom += (targetCamera.zoom - camera.zoom) * 0.12;
@@ -490,7 +522,21 @@ function renderLoop() {
     renderL2();
   }
 
-  rafId = requestAnimationFrame(renderLoop);
+  const cameraSettled = Math.abs(targetCamera.x - camera.x) < 0.4 &&
+                         Math.abs(targetCamera.y - camera.y) < 0.4 &&
+                         Math.abs(targetCamera.zoom - camera.zoom) < 0.0015;
+  const isActive = activePointers.size > 0 || !cameraSettled;
+
+  // Full rate while actively dragging/panning/pinching or the camera is
+  // easing toward a new target; otherwise a slow ~4fps idle tick. This
+  // was previously an unconditional 60fps loop even while the map sat
+  // completely idle — real battery/CPU cost for a canvas that wasn't
+  // changing. A slow idle tick (rather than instrumenting every single
+  // state-mutating call site with an explicit redraw trigger) is a
+  // deliberate safety trade-off: it self-corrects within ~250ms even if
+  // some future change forgets to trigger a redraw, at a small fraction
+  // of the original cost — 15x+ fewer frames while idle.
+  scheduleFrame(isActive ? 0 : 250);
 }
 
 function renderL1() {
@@ -867,6 +913,7 @@ function attachGestureHandlers() {
 function onPointerDown(e) {
   canvasEl.setPointerCapture(e.pointerId);
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  scheduleFrame(0);
   const rect = canvasEl.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
@@ -984,15 +1031,21 @@ function onPointerUp(e) {
   if (wasTap) {
     handleTap(sx, sy);
   } else {
-    // Persist drags
+    // Persist drags. Deliberately not awaited — a position save
+    // shouldn't block the next drag frame — but a failure is no longer
+    // fully silent: console.warn at minimum, so a real storage problem
+    // (quota, eviction) leaves a trace instead of just vanishing.
     if (draggedIsland) {
-      saveIslandPosition(draggedIsland.id, draggedIsland.pos.x, draggedIsland.pos.y);
+      saveIslandPosition(draggedIsland.id, draggedIsland.pos.x, draggedIsland.pos.y)
+        .catch(err => console.warn('Failed to save island position:', err));
     }
     if (draggedCard) {
-      saveConceptPosition(draggedCard.id, draggedCard.x, draggedCard.y);
+      saveConceptPosition(draggedCard.id, draggedCard.x, draggedCard.y)
+        .catch(err => console.warn('Failed to save card position:', err));
     }
     if (draggedLandmark) {
-      saveLandmark(draggedLandmark);
+      saveLandmark(draggedLandmark)
+        .catch(err => console.warn('Failed to save landmark position:', err));
     }
   }
 
@@ -1020,6 +1073,7 @@ function handleTap(sx, sy) {
       if (pathBuildMode) {
         if (!pathDraft.includes(card.id)) pathDraft.push(card.id);
         updateToolbar();
+        scheduleFrame(0);
         return;
       }
       if (annotateMode) return;
@@ -1029,11 +1083,35 @@ function handleTap(sx, sy) {
     if (annotateMode) {
       // Place text annotation
       const w = screenToWorld(sx, sy);
-      const text = prompt('Annotation text?');
-      if (text && text.trim()) {
-        saveAnnotation({ deckId: activeDeckId, type: 'text', text: text.trim(), x: w.x, y: w.y })
-          .then(rec => { annotations.push(rec); });
-      }
+      promptTextModal({ title: 'Annotation text', placeholder: 'Note…', submitLabel: 'Add' }, async (text) => {
+        const rec = await saveAnnotation({ deckId: activeDeckId, type: 'text', text, x: w.x, y: w.y });
+        annotations.push(rec);
+        scheduleFrame(0);
+      });
+      return;
+    }
+
+    // Outside annotate/path-build mode, a plain tap on an existing
+    // landmark or annotation offers to delete it — previously neither
+    // was reachable at all (only draggable), so this was pure dead
+    // capability: deleteLandmark/deleteAnnotation existed in db.js but
+    // nothing in the UI ever called them.
+    const landmark = hitTestLandmark(sx, sy);
+    if (landmark) {
+      confirmModal(`Delete landmark "${landmark.name}"?`, 'Delete', async () => {
+        await deleteLandmark(landmark.id);
+        landmarks = landmarks.filter(l => l.id !== landmark.id);
+        scheduleFrame(0);
+      });
+      return;
+    }
+    const annotation = hitTestAnnotation(sx, sy);
+    if (annotation) {
+      confirmModal('Delete this annotation?', 'Delete', async () => {
+        await deleteAnnotation(annotation.id);
+        annotations = annotations.filter(a => a.id !== annotation.id);
+        scheduleFrame(0);
+      });
       return;
     }
     return;
@@ -1051,6 +1129,7 @@ function onWheel(e) {
   const next = clampZoom(camera.zoom * (1 + zoomDelta));
   targetCamera.zoom = next;
   camera.zoom = next;
+  scheduleFrame(0);
 
   // Zoom-out past threshold returns to previous level
   if (zoomLevel === 3 && next < 1.4) exitToL2();
@@ -1080,6 +1159,60 @@ function hitTestCard(screenX, screenY) {
     const s = worldToScreen(node.x, node.y);
     const r = node.radius * camera.zoom + 4;
     if (distance({ x: screenX, y: screenY }, s) <= r) return node;
+  }
+  return null;
+}
+
+/** Small reusable confirm modal — same pattern as promptAnnotationText. */
+function confirmModal(message, confirmLabel, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:absolute; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:50;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:16px; width:min(300px, 85%); box-shadow:var(--shadow-lg);';
+  box.innerHTML = `<div style="font-size:14px; color:var(--ink); margin-bottom:14px; line-height:1.4;">${escapeHtml(message)}</div>`;
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding:8px 14px; border:none; border-radius:var(--radius-sm); background:var(--surface-raised, var(--surface)); color:var(--ink-secondary); font-size:13px; cursor:pointer;';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = confirmLabel;
+  confirmBtn.style.cssText = 'padding:8px 14px; border:none; border-radius:var(--radius-sm); background:#C4472B; color:white; font-size:13px; font-weight:600; cursor:pointer;';
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(confirmBtn);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  (container || document.body).appendChild(overlay);
+
+  function close() { overlay.remove(); }
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    try {
+      await onConfirm();
+      close();
+    } catch (err) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Failed — retry?';
+    }
+  });
+}
+
+function hitTestAnnotation(screenX, screenY) {
+  for (const ann of annotations) {
+    if (ann.type !== 'text') continue; // freehand-path annotations aren't hit-testable yet
+    const s = worldToScreen(ann.x, ann.y);
+    const w = Math.max(40, (ann.text || '').length * 6.5 * camera.zoom);
+    const h = 18 * camera.zoom;
+    if (screenX >= s.x - 4 && screenX <= s.x + w && screenY >= s.y - h && screenY <= s.y + 4) return ann;
   }
   return null;
 }
@@ -1219,10 +1352,13 @@ function renderPathPanel() {
   pathPanelEl.innerHTML = `
     <div class="map-path-panel-title">Paths</div>
     ${studyPaths.map(p => `
-      <button class="map-path-item" data-id="${p.id}">
-        <span>${escapeHtml(p.name)}</span>
-        <span class="map-path-count">${p.nodeIds?.length || 0}</span>
-      </button>
+      <div class="map-path-row" style="display:flex; align-items:center; gap:4px;">
+        <button class="map-path-item" data-id="${p.id}" style="flex:1;">
+          <span>${escapeHtml(p.name)}</span>
+          <span class="map-path-count">${p.nodeIds?.length || 0}</span>
+        </button>
+        <button class="map-path-delete" data-id="${p.id}" title="Delete path" style="border:none; background:transparent; color:var(--ink-muted); font-size:14px; cursor:pointer; padding:4px 8px;">×</button>
+      </div>
     `).join('')}
   `;
   pathPanelEl.querySelectorAll('.map-path-item').forEach(btn => {
@@ -1231,39 +1367,55 @@ function renderPathPanel() {
       if (path) startSpatialFromMap({ pathNodeIds: path.nodeIds });
     });
   });
+  pathPanelEl.querySelectorAll('.map-path-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const path = studyPaths.find(p => p.id === btn.dataset.id);
+      if (!path) return;
+      confirmModal(`Delete path "${path.name}"?`, 'Delete', async () => {
+        await deleteStudyPath(path.id);
+        studyPaths = studyPaths.filter(p => p.id !== path.id);
+        renderPathPanel();
+        scheduleFrame(0);
+      });
+    });
+  });
 }
 
 async function onAddLandmark() {
   if (!activeDeckId) return;
-  const name = prompt('Landmark name?', 'Fundamentals');
-  if (!name || !name.trim()) return;
-  const rec = await saveLandmark({
-    deckId: activeDeckId,
-    name: name.trim(),
-    x: camera.x,
-    y: camera.y,
-    w: 240,
-    h: 170
+  promptTextModal({ title: 'Landmark name', placeholder: 'Fundamentals', defaultValue: 'Fundamentals', submitLabel: 'Add' }, async (name) => {
+    const rec = await saveLandmark({
+      deckId: activeDeckId,
+      name,
+      x: camera.x,
+      y: camera.y,
+      w: 240,
+      h: 170
+    });
+    landmarks.push(rec);
+    scheduleFrame(0);
   });
-  landmarks.push(rec);
 }
 
 async function onSavePath() {
   if (!activeDeckId || pathDraft.length < 2) {
-    alert('Tap at least 2 cards to build a path.');
+    infoModal('Tap at least 2 cards to build a path.');
     return;
   }
-  const name = prompt('Path name?', 'Study path');
-  if (!name) return;
-  const rec = await saveStudyPath({
-    deckId: activeDeckId,
-    name: name.trim(),
-    nodeIds: [...pathDraft]
+  promptTextModal({ title: 'Path name', placeholder: 'Study path', defaultValue: 'Study path', submitLabel: 'Save' }, async (name) => {
+    const rec = await saveStudyPath({
+      deckId: activeDeckId,
+      name,
+      nodeIds: [...pathDraft]
+    });
+    studyPaths.push(rec);
+    pathBuildMode = false;
+    pathDraft = [];
+    updateToolbar();
+    renderPathPanel();
+    scheduleFrame(0);
   });
-  studyPaths.push(rec);
-  pathBuildMode = false;
-  pathDraft = [];
-  updateToolbar();
 }
 
 async function showDetailPanel(cardId) {
@@ -1309,10 +1461,106 @@ async function showDetailPanel(cardId) {
   });
 }
 
+/**
+ * Reusable text-input modal — replaces native prompt() calls for
+ * annotation text, landmark naming, and path naming. One implementation,
+ * three call sites, instead of three separate native dialogs. Shows an
+ * inline error and stays open on save failure, rather than silently
+ * losing what was typed. Self-contained in canvas.js (no import from
+ * app.js, to avoid a circular module dependency) but uses the same CSS
+ * variables as the rest of the app so it looks native to it.
+ */
+function promptTextModal({ title, placeholder = '', defaultValue = '', submitLabel = 'Save' }, onSubmit) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:absolute; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:50;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:16px; width:min(320px, 85%); box-shadow:var(--shadow-lg);';
+  box.innerHTML = `<div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:10px;">${escapeHtml(title)}</div>`;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = placeholder;
+  input.value = defaultValue;
+  input.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.1); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); font-size:14px; box-sizing:border-box; margin-bottom:8px;';
+  box.appendChild(input);
+
+  const errorLine = document.createElement('div');
+  errorLine.style.cssText = 'font-size:12px; color:#C4472B; margin-bottom:8px; display:none;';
+  box.appendChild(errorLine);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding:8px 14px; border:none; border-radius:var(--radius-sm); background:var(--surface-raised, var(--surface)); color:var(--ink-secondary); font-size:13px; cursor:pointer;';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.textContent = submitLabel;
+  saveBtn.style.cssText = 'padding:8px 14px; border:none; border-radius:var(--radius-sm); background:var(--accent); color:white; font-size:13px; font-weight:600; cursor:pointer;';
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  (container || document.body).appendChild(overlay);
+
+  input.focus();
+  input.select();
+
+  function close() { overlay.remove(); }
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  async function attemptSubmit() {
+    const text = input.value.trim();
+    if (!text) { close(); return; }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await onSubmit(text);
+      close();
+    } catch (err) {
+      errorLine.textContent = 'Could not save — try again.';
+      errorLine.style.display = 'block';
+      saveBtn.disabled = false;
+      saveBtn.textContent = submitLabel;
+    }
+  }
+  saveBtn.addEventListener('click', attemptSubmit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') attemptSubmit();
+    if (e.key === 'Escape') close();
+  });
+}
+
+/** Single-button info modal — replaces native alert() calls. */
+function infoModal(message) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:absolute; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:50;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:16px; width:min(300px, 85%); box-shadow:var(--shadow-lg); text-align:center;';
+  box.innerHTML = `<div style="font-size:14px; color:var(--ink); margin-bottom:14px; line-height:1.4;">${escapeHtml(message)}</div>`;
+  const okBtn = document.createElement('button');
+  okBtn.type = 'button';
+  okBtn.textContent = 'OK';
+  okBtn.style.cssText = 'padding:8px 20px; border:none; border-radius:var(--radius-sm); background:var(--accent); color:white; font-size:13px; font-weight:600; cursor:pointer;';
+  okBtn.addEventListener('click', () => overlay.remove());
+  box.appendChild(okBtn);
+  overlay.appendChild(box);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  (container || document.body).appendChild(overlay);
+  okBtn.focus();
+}
+
 function hideDetailPanel() {
   detailPanelEl?.remove();
   detailPanelEl = null;
 }
+
 
 async function startSpatialFromMap(opts = {}) {
   if (!activeDeckId) return;
