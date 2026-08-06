@@ -1105,7 +1105,7 @@ function renderHelp() {
       title: 'Formula cards & relationships',
       body: `
         <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
-        <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions.</p>
+        <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions. Right after creating a new card, you'll get a chance to link it to others while it's fresh — or skip it and link later from the card's detail view.</p>
         <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
         <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a spread of tiles with their own marks — not playing-card suits, just Lernin's own corner marks: a chevron for basic, a gapped line for cloze, a division sign for formula — plus a colored dot for review stage and a small paused mark if suspended.</p>
       `
@@ -2304,15 +2304,82 @@ async function renderNewCardForm(deckId) {
     }
 
     try {
-      await saveManualCard(card);
+      const newId = await saveManualCard(card);
       showToast('Card saved.');
-      goBack();
+      showPostSaveLinkStep(deck, { id: newId, front });
     } catch (err) {
       showToast(err.message || 'Failed to save card.', 5000);
     }
   });
 
   wrap.appendChild(form);
+  root.appendChild(wrap);
+}
+
+/**
+ * Shown right after a new card saves — offers the same relationship
+ * picker card detail view has, so you can link "depends on"/"related"
+ * cards without leaving the creation flow to go find the card in the
+ * browser afterward. "Done" (or the header back button) leaves; there's
+ * no requirement to link anything.
+ */
+function showPostSaveLinkStep(deck, card) {
+  root.innerHTML = '';
+  root.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:560px; margin:0 auto; padding-bottom:var(--space-2xl);';
+
+  const header = document.createElement('div');
+  header.className = 'app-header';
+  header.innerHTML = `
+    <button class="back-btn" id="linkStepDone" aria-label="Done">←</button>
+    <div class="app-header-title">Card saved</div>
+    <div style="width:48px;"></div>
+  `;
+  wrap.appendChild(header);
+  header.querySelector('#linkStepDone').addEventListener('click', goBack);
+
+  const sub = document.createElement('p');
+  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted);';
+  sub.textContent = 'Optional — link this card to others while it\'s fresh in mind.';
+  wrap.appendChild(sub);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:12px;';
+
+  const linkedList = document.createElement('div');
+  linkedList.style.cssText = 'display:none; flex-direction:column; gap:4px; font-size:13px; color:var(--ink-secondary);';
+  body.appendChild(linkedList);
+
+  const picker = buildRelationshipPicker(card, (linkedCard) => {
+    linkedList.style.display = 'flex';
+    const row = document.createElement('div');
+    row.textContent = `✓ Linked to "${linkedCard.front.substring(0, 60)}"`;
+    linkedList.appendChild(row);
+  });
+  body.appendChild(picker);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex; gap:10px;';
+
+  const addAnotherBtn = document.createElement('button');
+  addAnotherBtn.type = 'button';
+  addAnotherBtn.style.cssText = 'flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface); color:var(--ink-secondary); font-size:15px; cursor:pointer; box-shadow:var(--shadow-sm);';
+  addAnotherBtn.textContent = '+ Add another card';
+  addAnotherBtn.addEventListener('click', () => renderNewCardForm(deck.id));
+  actions.appendChild(addAnotherBtn);
+
+  const doneBtn = document.createElement('button');
+  doneBtn.type = 'button';
+  doneBtn.className = 'btn-primary';
+  doneBtn.style.cssText = 'flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:15px; font-weight:600; cursor:pointer;';
+  doneBtn.textContent = 'Done';
+  doneBtn.addEventListener('click', goBack);
+  actions.appendChild(doneBtn);
+
+  body.appendChild(actions);
+  wrap.appendChild(body);
   root.appendChild(wrap);
 }
 
@@ -2573,6 +2640,73 @@ async function renderLeechView(deckId) {
   root.appendChild(wrap);
 }
 
+/**
+ * Live-search "Add relationship" picker for a given card. Shared between
+ * card detail view and the post-save step in the new card form, so both
+ * stay in sync rather than duplicating this UI in two places.
+ * onLinked(linkedCard) fires after a successful link — caller decides
+ * what to do next (full re-render in detail view, a lightweight running
+ * list in the new-card flow).
+ */
+function buildRelationshipPicker(card, onLinked) {
+  const addRelBlock = document.createElement('div');
+  addRelBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+  addRelBlock.innerHTML = '<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Add relationship</div>';
+
+  const relTypeSelect = document.createElement('select');
+  relTypeSelect.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
+  relTypeSelect.innerHTML = `
+    <option value="dependsOn">Depends on</option>
+    <option value="related">Related</option>
+  `;
+  addRelBlock.appendChild(relTypeSelect);
+
+  const relSearch = document.createElement('input');
+  relSearch.type = 'text';
+  relSearch.placeholder = 'Search cards by answer…';
+  relSearch.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
+  addRelBlock.appendChild(relSearch);
+
+  const relResults = document.createElement('div');
+  relResults.style.cssText = 'display:flex; flex-direction:column; gap:4px; max-height:200px; overflow-y:auto;';
+  addRelBlock.appendChild(relResults);
+
+  relSearch.addEventListener('input', async () => {
+    const query = relSearch.value.trim();
+    if (!query) {
+      relResults.innerHTML = '';
+      return;
+    }
+    try {
+      const results = await searchCardsByAnswer(query);
+      relResults.innerHTML = '';
+      for (const c of results.slice(0, 10)) {
+        if (c.id === card.id) continue;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.style.cssText = 'text-align:left; padding:8px 10px; border:none; background:var(--bg); border-radius:var(--radius-sm); cursor:pointer; font-size:13px; color:var(--ink);';
+        row.textContent = c.front.substring(0, 80);
+        row.addEventListener('click', async () => {
+          try {
+            await addRelationship(card.id, c.id, relTypeSelect.value);
+            showToast('Relationship added.');
+            relSearch.value = '';
+            relResults.innerHTML = '';
+            if (onLinked) onLinked(c);
+          } catch (err) {
+            showToast(err.message || 'Failed to add relationship.', 5000);
+          }
+        });
+        relResults.appendChild(row);
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+    }
+  });
+
+  return addRelBlock;
+}
+
 async function renderCardDetailView(card, deck) {
   root.innerHTML = '';
   root.style.padding = '0';
@@ -2636,59 +2770,7 @@ async function renderCardDetailView(card, deck) {
   }
 
   // Add relationship
-  const addRelBlock = document.createElement('div');
-  addRelBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
-  addRelBlock.innerHTML = '<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Add relationship</div>';
-
-  const relTypeSelect = document.createElement('select');
-  relTypeSelect.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
-  relTypeSelect.innerHTML = `
-    <option value="dependsOn">Depends on</option>
-    <option value="related">Related</option>
-  `;
-  addRelBlock.appendChild(relTypeSelect);
-
-  const relSearch = document.createElement('input');
-  relSearch.type = 'text';
-  relSearch.placeholder = 'Search cards by answer…';
-  relSearch.style.cssText = 'width:100%; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:14px; margin-bottom:8px; box-sizing:border-box;';
-  addRelBlock.appendChild(relSearch);
-
-  const relResults = document.createElement('div');
-  relResults.style.cssText = 'display:flex; flex-direction:column; gap:4px; max-height:200px; overflow-y:auto;';
-  addRelBlock.appendChild(relResults);
-
-  relSearch.addEventListener('input', async () => {
-    const query = relSearch.value.trim();
-    if (!query) {
-      relResults.innerHTML = '';
-      return;
-    }
-    try {
-      const results = await searchCardsByAnswer(query);
-      relResults.innerHTML = '';
-      for (const c of results.slice(0, 10)) {
-        if (c.id === card.id) continue;
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.style.cssText = 'text-align:left; padding:8px 10px; border:none; background:var(--bg); border-radius:var(--radius-sm); cursor:pointer; font-size:13px; color:var(--ink);';
-        row.textContent = c.front.substring(0, 80);
-        row.addEventListener('click', async () => {
-          try {
-            await addRelationship(card.id, c.id, relTypeSelect.value);
-            showToast('Relationship added.');
-            renderCardDetailView(card, deck);
-          } catch (err) {
-            showToast(err.message || 'Failed to add relationship.', 5000);
-          }
-        });
-        relResults.appendChild(row);
-      }
-    } catch (err) {
-      console.error('Search failed:', err);
-    }
-  });
-
+  const addRelBlock = buildRelationshipPicker(card, () => renderCardDetailView(card, deck));
   body.appendChild(addRelBlock);
 
   const studyBtn = document.createElement('button');

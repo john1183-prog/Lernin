@@ -221,7 +221,28 @@ gets used in libraries and other quiet shared spaces, so this is one
 of the few opt-in toggles here that defaults off rather than on.
 Toggling takes effect immediately mid-session via a cached-setting
 pattern (`setSoundEnabledCache`), no restart needed. `sound.js` added
-to the service worker precache list, cache bumped to v24.
+to the service worker precache list, cache bumped to v24. A follow-up
+pass added `playNavigate()`, a quieter/shorter tap hooked into
+`handleRoute()` (the single true entry point for every route change,
+including browser back/forward — `navigate()` alone wouldn't have
+covered those) — skips the very first cold-load call so nothing plays
+before the person has done anything.
+
+**Relationship picker restored at card-creation time** — not via the
+originally-suggested silent-autosave approach (too much new
+complexity/risk for what it bought: what happens on Cancel after an
+autosave, keeping type changes in sync, etc.). Simpler version
+shipped instead: the existing single Save button is untouched: after
+a successful save, `showPostSaveLinkStep()` shows the same live-search
+picker card detail view has (extracted into a shared
+`buildRelationshipPicker()` so both stay in sync rather than
+duplicating ~50 lines of UI) before returning you to wherever you
+were. Skippable — "Done" leaves immediately, nothing is required.
+"+ Add another card" loops back into the form for chaining several
+related cards in one sitting. Both exit paths use `goBack()` rather
+than a hardcoded destination, since the URL hash never changes during
+this synthetic post-save step — consistent with every other back
+button in the app.
 
 ---
 
@@ -393,18 +414,6 @@ real gaps, now closed.
   clear message instead of a wasted upload round-trip.
 
 ### Still open — found this session, not yet addressed
-- **Relationship picker no longer available at card-creation time.**
-  You used to be able to link "depends on"/"related" cards live while
-  creating a new card. `renderNewCardForm` now has no relationship
-  code at all — linking only works after the fact, via card detail
-  view (`addRelationship` call there) or by drawing lines on the map.
-  Not fixed yet. Suggested approach: silently auto-save the card as
-  soon as front+back have real content (same mechanism
-  `saveManualCard` already uses), then reveal the same live-search
-  picker card detail view already has, in that same screen — treats
-  "new card form" as becoming the card's own detail view the moment
-  it has a real ID, rather than duplicating picker UI or building a
-  separate pre-save staging mechanism.
 
 ---
 
