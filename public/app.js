@@ -551,13 +551,20 @@ async function renderSettings() {
   wrap.appendChild(header);
   header.querySelector('#settingsBack').addEventListener('click', goBack);
 
+  const genSection = document.createElement('div');
+  genSection.style.cssText = 'padding:0 var(--space-md); margin-bottom:var(--space-xl);';
+  const genHeading = document.createElement('h3');
+  genHeading.style.cssText = 'font-size:15px; font-weight:600; color:var(--ink); margin-bottom:10px;';
+  genHeading.textContent = 'AI card generation';
+  genSection.appendChild(genHeading);
+
   const intro = document.createElement('p');
-  intro.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; color:var(--ink-secondary); font-size:14px; line-height:1.6;';
+  intro.style.cssText = 'margin:0 0 var(--space-md); color:var(--ink-secondary); font-size:14px; line-height:1.6;';
   intro.textContent = 'Choose how you\'d like to generate cards. Bring your own Claude or Gemini API key for one-tap generation, or use "Paste into any AI" if you don\'t have a key — no key is stored or sent anywhere except directly to the provider you choose at the moment you generate cards.';
-  wrap.appendChild(intro);
+  genSection.appendChild(intro);
 
   const form = document.createElement('form');
-  form.style.cssText = 'padding:0 var(--space-md);';
+  form.style.cssText = '';
 
   const providerLabel = document.createElement('div');
   providerLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
@@ -664,7 +671,8 @@ async function renderSettings() {
     await renderSettings();
   });
 
-  wrap.appendChild(form);
+  genSection.appendChild(form);
+  wrap.appendChild(genSection);
 
   /* Appearance section with font selector */
   const appearanceSection = makeSection('Appearance');
@@ -793,20 +801,6 @@ async function renderSettings() {
   });
   wrap.appendChild(soundSection);
 
-  const toolkitSection = makeSection('Reading toolkit');
-  const toolkitIntro = document.createElement('p');
-  toolkitIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
-  toolkitIntro.textContent = 'A side library of copy-ready prompts for pairing your reading with an AI — separate from card generation.';
-  toolkitSection.appendChild(toolkitIntro);
-
-  const toolkitBtn = document.createElement('button');
-  toolkitBtn.type = 'button';
-  toolkitBtn.style.cssText = 'width:100%; text-align:left; display:flex; align-items:center; gap:10px; padding:12px 14px; border:none; background:var(--surface); color:var(--ink); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); font-size:14px;';
-  toolkitBtn.innerHTML = `<span style="font-size:18px;">📖</span><span>Open Reading Toolkit</span>`;
-  toolkitBtn.addEventListener('click', () => navigate('/reading-toolkit'));
-  toolkitSection.appendChild(toolkitBtn);
-  wrap.appendChild(toolkitSection);
-
   const storageSection = makeSection('Storage');
   const storageUsageText = document.createElement('p');
   storageUsageText.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px;';
@@ -856,6 +850,20 @@ async function renderSettings() {
   storageBtnRow.appendChild(hardReloadBtn);
   storageSection.appendChild(storageBtnRow);
   wrap.appendChild(storageSection);
+
+  const toolkitSection = makeSection('Reading toolkit');
+  const toolkitIntro = document.createElement('p');
+  toolkitIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  toolkitIntro.textContent = 'A side library of copy-ready prompts for pairing your reading with an AI — separate from card generation.';
+  toolkitSection.appendChild(toolkitIntro);
+
+  const toolkitBtn = document.createElement('button');
+  toolkitBtn.type = 'button';
+  toolkitBtn.style.cssText = 'width:100%; text-align:left; display:flex; align-items:center; gap:10px; padding:12px 14px; border:none; background:var(--surface); color:var(--ink); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); font-size:14px;';
+  toolkitBtn.innerHTML = `<span style="font-size:18px;">📖</span><span>Open Reading Toolkit</span>`;
+  toolkitBtn.addEventListener('click', () => navigate('/reading-toolkit'));
+  toolkitSection.appendChild(toolkitBtn);
+  wrap.appendChild(toolkitSection);
 
   const dangerSection = makeSection('Danger zone');
   const dangerIntro = document.createElement('p');

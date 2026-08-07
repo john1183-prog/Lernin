@@ -250,6 +250,17 @@ together since they all touch canvas.js:
 
 ## Active — real user feedback, not yet fully addressed
 
+### Settings page tidy-up
+The API config form at the top was a raw `<form>` with no section
+heading, structurally inconsistent with every block below it (all of
+which use a shared `makeSection(title)` helper — a titled card).
+Wrapped it in the same pattern ("AI card generation"). Also reordered:
+Reading Toolkit (explicitly a side/non-core feature) was sitting
+between Sound effects and Storage — moved to just above Danger zone,
+so the settings that are actually about the app's core behavior
+(generation, appearance, study experience, storage) all group
+together first.
+
 ### Gemini generation silently failing + import UX confusion (fixed)
 User report: tried an old Gemini key, generation failed, landed in
 manual mode with no idea why. Root cause turned out to be three
