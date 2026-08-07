@@ -8,7 +8,7 @@ import {
   getAllDecks, getCardsByDeck, getCard, getDeck,
   saveIslandPosition, getIslandPositionOverrides, clearIslandPosition,
   saveConceptPosition, getConceptPositionOverrides,
-  getRelationshipsFrom, getRelationshipsTo,
+  getRelationshipsFrom, getRelationshipsTo, getCrossDeckRelationshipPairs,
   saveLandmark, getLandmarksForDeck, deleteLandmark,
   saveStudyPath, getStudyPathsForDeck, deleteStudyPath,
   saveAnnotation, getAnnotationsForDeck, deleteAnnotation
@@ -50,6 +50,7 @@ let zoomLevel = 1;
 let activeDeckId = null;       // L2/L3
 let activeCardId = null;       // L3
 let worldTerritories = [];
+let crossDeckPairs = []; // [{deckIdA, deckIdB, count}] — island-to-island lines at L1
 let cardNodes = [];            // L2 nodes for active deck
 let landmarks = [];
 let annotations = [];
@@ -202,6 +203,12 @@ async function buildWorldModel() {
     getAllDecks(),
     getIslandPositionOverrides()
   ]);
+  try {
+    crossDeckPairs = await getCrossDeckRelationshipPairs();
+  } catch (err) {
+    console.warn('Failed to load cross-deck relationships — island lines skipped:', err);
+    crossDeckPairs = [];
+  }
 
   const byTerritory = new Map();
   for (const deck of decks) {
@@ -541,6 +548,7 @@ function renderLoop() {
 
 function renderL1() {
   const viewport = getWorldViewportRect();
+  drawIslandConnections();
   for (const territory of worldTerritories) {
     const bounds = territory.bounds ?? territoryBounds(territory);
     if (!rectIntersects(bounds, viewport)) continue;
@@ -587,6 +595,47 @@ function territoryBounds(territory) {
     maxY = Math.max(maxY, island.pos.y + pad);
   }
   return { minX, minY, maxX, maxY };
+}
+
+function findIslandByDeckId(deckId) {
+  for (const territory of worldTerritories) {
+    const island = territory.islands.find(i => i.deckId === deckId);
+    if (island) return island;
+  }
+  return null;
+}
+
+/**
+ * Island-to-island lines at L1 — one line per deck pair (aggregated,
+ * not one per relationship), weighted by how many relationships cross
+ * that pair. Same visual language as L2's relationship lines (dashed,
+ * MAP_INK, alpha-based highlight) but simpler: no direction/arrowheads,
+ * since at this zoom level they'd be unreadable clutter, not signal.
+ */
+function drawIslandConnections() {
+  if (crossDeckPairs.length === 0) return;
+  for (const pair of crossDeckPairs) {
+    const a = findIslandByDeckId(pair.deckIdA);
+    const b = findIslandByDeckId(pair.deckIdB);
+    if (!a || !b) continue; // one side deleted/renamed since aggregation ran — skip safely
+
+    const sa = worldToScreen(a.pos.x, a.pos.y);
+    const sb = worldToScreen(b.pos.x, b.pos.y);
+
+    const isHi = hoveredIsland && (hoveredIsland.deckId === pair.deckIdA || hoveredIsland.deckId === pair.deckIdB);
+    const dim = hoveredIsland && !isHi;
+
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.06 : (isHi ? 0.55 : 0.22);
+    ctx.strokeStyle = MAP_INK;
+    ctx.lineWidth = Math.min(1 + pair.count * 0.4, 3) * (isHi ? 1.4 : 1);
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sb.x, sb.y);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawTerritory(territory, viewport) {

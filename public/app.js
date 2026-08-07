@@ -1085,8 +1085,8 @@ function renderHelp() {
       body: `
         <p>Open <strong>🗺️ Map</strong>. Three zoom levels (Method of Loci, digital):</p>
         <ol>
-          <li><strong>L1 Territories</strong> — courses/groups as regions; decks as islands. Drag islands; positions save.</li>
-          <li><strong>L2 Deck view</strong> — tap an island. Cards become nodes. Drag them. Add <strong>landmarks</strong> (named zones). Draw <strong>relationship lines</strong> (depends-on / related). Build a <strong>study path</strong> by tapping nodes in order.</li>
+          <li><strong>L1 Territories</strong> — courses/groups as regions; decks as islands. Drag islands; positions save. A dashed line connects any two islands with cards linked across decks — thicker with more links. Hover (or drag near) an island to highlight its connections.</li>
+          <li><strong>L2 Deck view</strong> — tap an island. Cards become nodes. Drag them. Add <strong>landmarks</strong> (named zones) and <strong>annotations</strong> — tap either again (outside annotate mode) to delete it. Draw <strong>relationship lines</strong> (depends-on / related). Build a <strong>study path</strong> by tapping nodes in order; delete a path with the × next to it in the Paths panel.</li>
           <li><strong>L3 Card detail</strong> — tap a node for full front/back/formula and a button to study that card.</li>
         </ol>
         <p>Toolbar on L2:</p>

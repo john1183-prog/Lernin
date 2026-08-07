@@ -1239,6 +1239,37 @@ export async function removeRelationship(relationshipId) {
  * card is deleted (cross-store cascade on every delete adds real
  * complexity for a case that's cheap to just filter out at read time).
  */
+/**
+ * Aggregates every cross-deck relationship into one entry per deck pair,
+ * with a count — feeds the L1 island-to-island lines on the map. Same-
+ * deck relationships are excluded; those already render as lines at L2.
+ * Returns [{ deckIdA, deckIdB, count }], deckIdA < deckIdB alphabetically
+ * so a pair is never double-counted in both directions.
+ */
+export async function getCrossDeckRelationshipPairs() {
+  const db = await getDB();
+  const [relationships, allCards] = await Promise.all([
+    db.getAll('cardRelationships'),
+    db.getAll('cards')
+  ]);
+  const deckIdByCardId = new Map(allCards.map(c => [c.id, c.deckId]));
+
+  const pairCounts = new Map(); // "deckA|deckB" -> count
+  for (const rel of relationships) {
+    const deckA = deckIdByCardId.get(rel.fromCardId);
+    const deckB = deckIdByCardId.get(rel.toCardId);
+    if (!deckA || !deckB || deckA === deckB) continue; // same-deck or dangling — skip
+    const [lo, hi] = deckA < deckB ? [deckA, deckB] : [deckB, deckA];
+    const key = `${lo}|${hi}`;
+    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+  }
+
+  return Array.from(pairCounts.entries()).map(([key, count]) => {
+    const [deckIdA, deckIdB] = key.split('|');
+    return { deckIdA, deckIdB, count };
+  });
+}
+
 export async function getRelationshipsFrom(cardId) {
   const db = await getDB();
   const rels = await db.getAllFromIndex('cardRelationships', 'by_fromCardId', cardId);

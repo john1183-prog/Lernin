@@ -20,9 +20,8 @@ These can each be picked up independently, in any order.
 
 ## Tier 2 — Rich cards and relationships
 
-The foundational decisions got made and the first slice shipped (see
-below) — remaining items here are follow-ups, each independently
-buildable now that the data layer exists and is tested.
+Fully shipped — every item originally scoped here, including the
+follow-ups, is done (see below).
 
 **Shipped:** a third card type, `'formula'` (alongside `basic`/`cloze`),
 with `formula`/`variables`/`assumptions`/`commonMistakes`/`applications`
@@ -73,15 +72,6 @@ dependency (terminates safely via the `queue.length * 3` pass cap,
 doesn't hang), already-correct order (no unnecessary moves), and
 `related`-type links (correctly ignored — only `dependsOn` reorders).
 
-### Visual connections between related concepts on the map
-`canvas.js` could draw lines/arcs between related islands (possibly
-across territories) using the same relationship data. Purely visual, no
-Study Mode logic changes needed. Design settled: one line per
-deck-pair (not one per relationship — aggregate, weight by count),
-single subtle dashed style with no direction/arrowheads (unreadable at
-that zoom level anyway), hover-to-highlight-connected matching the
-existing L2 node pattern.
-
 ---
 
 ## Tier 3 — Explicitly deferred, with reasons
@@ -110,49 +100,18 @@ to the mastery color progression, to avoid reintroducing the exact
 background/foreground hue-collision bug that `--map-bg` was just fixed
 for (see the Active section below).
 
-### Map — redesigned outside this chat, audited here
+### Map — redesigned outside this chat, audited and cleaned up here
 The "fuller discussion" mentioned below happened outside Claude
 entirely — commits `4559b85` ("recreated the map") and `7b7bb2c`
 ("bug fixes") were a from-scratch canvas.js/db.js rewrite, prototyped
-in a separate `lernin-spatial/` folder and then merged into `public/`.
-Asked to verify it (not just take it on faith): the integration itself
-is genuinely clean — all 19 functions canvas.js imports from db.js
-exist, all 3 exports app.js needs from canvas.js are present, every
-IndexedDB store it touches (territoryLayout, conceptLayouts,
-landmarks, studyPaths, annotations) is in the schema, zero
-TODO/FIXME/console.error markers. That's a real accomplishment for a
-merge this size — this is exactly the kind of seam where this file's
-other audit entries found real breakage.
-
-That said, four things are worth a cleanup pass, found by actually
-reading the code rather than assuming a rewrite this large "just
-works":
-- **Unconditional 60fps render loop is back.** Already fixed once in
-  an earlier performance audit (see "Already shipped" list), but the
-  rewrite didn't carry it forward — `renderLoop()` in canvas.js
-  redraws every frame regardless of whether anything's animating.
-  Does get `cancelAnimationFrame`'d on `destroyCanvasView()`, so it's
-  not a permanent background drain, but real cost while the map sits
-  open and idle.
-- **No delete UI for landmarks, study paths, or annotations.**
-  `deleteLandmark`/`deleteStudyPath`/`deleteAnnotation` are imported
-  from db.js but never called anywhere in canvas.js — same
-  backend-exists-UI-was-never-wired pattern as the leech review gap
-  above. Once created, these are permanent.
-- **Fire-and-forget writes, no failure feedback.**
-  `saveIslandPosition`/`saveConceptPosition`/`saveAnnotation` are
-  called with no `await` and no `.catch()`. Reasonable for position
-  drags (shouldn't block on a write), less so for `saveAnnotation` —
-  a typed annotation could silently fail to persist with zero
-  indication to the user.
-- **Annotation text uses the browser's native `prompt()`** — jarring,
-  unstylable, inconsistent with the sheet/modal pattern used
-  everywhere else (deck actions, export options).
-
-Suggested: bundle a fix for these with the island-to-island lines
-work (Tier 2, "Visual connections between related concepts on the
-map," above), since both touch canvas.js directly — most efficient
-done together rather than as separate passes.
+in a separate `lernin-spatial/` folder and merged into `public/`.
+Verified rather than taken on faith: the integration itself was
+genuinely clean (all imports/exports/schema lined up). Four real gaps
+were found by reading the actual code — render loop, delete UI,
+silent writes, native dialogs — all four now fixed, see "Already
+shipped" below for details. Island-to-island lines at L1 (the
+originally-requested Tier 2 follow-up) shipped in the same pass,
+bundled together since both touched canvas.js directly.
 
 ---
 
@@ -243,6 +202,49 @@ related cards in one sitting. Both exit paths use `goBack()` rather
 than a hardcoded destination, since the URL hash never changes during
 this synthetic post-save step — consistent with every other back
 button in the app.
+
+**Map cleanup pass + island-to-island lines at L1** — the four gaps
+found while auditing the outside-chat map redesign, all fixed
+together since they all touch canvas.js:
+- **Render loop**: replaced the unconditional 60fps `renderLoop()`
+  with an activity-gated one (`scheduleFrame(delayMs)`) — full rate
+  while `activePointers.size > 0` (dragging/panning/pinching) or the
+  camera hasn't settled toward its target, a throttled ~250ms idle
+  tick otherwise. A slow self-correcting idle tick rather than a
+  fully precise dirty-flag system was a deliberate trade-off: still a
+  15x+ reduction in idle frames, but self-corrects within ~250ms even
+  if some future change forgets to trigger a redraw, instead of
+  risking a frozen map from one missed call site. Wired into every
+  discrete interaction that needs to feel instant regardless of idle
+  state: wheel zoom, pointer-down, exit-to-L1/L2, tap-to-add
+  annotation/landmark, path-draft additions.
+- **Delete UI**: `deleteLandmark`/`deleteStudyPath`/`deleteAnnotation`
+  were imported from db.js but never called anywhere — now, a plain
+  tap on an existing landmark or annotation (outside annotate mode,
+  which still means "add new" as before) shows a delete-confirm
+  modal; study paths get a "×" button in the existing Paths panel.
+- **Silent writes**: `saveIslandPosition`/`saveConceptPosition`
+  stay fire-and-forget (correct — shouldn't block the next drag
+  frame on a write) but now `.catch()` into a `console.warn` instead
+  of vanishing entirely; `saveAnnotation` properly propagates
+  failures into the new modal so a failed save doesn't just silently
+  lose what was typed.
+- **Native dialogs**: all three (`prompt()` ×2 for landmark/path
+  naming, `alert()` ×1 for the "need 2+ cards" path-build message,
+  plus the annotation-text `prompt()` already mentioned above)
+  replaced with custom modals matching the app's actual design
+  language — consolidated into two reusable helpers
+  (`promptTextModal`, `infoModal`, plus `confirmModal` for the new
+  delete confirmations) rather than one-off implementations each.
+- **Island-to-island lines**: new `getCrossDeckRelationshipPairs()`
+  in db.js aggregates every cross-deck relationship into one entry
+  per deck pair with a count (tested against reverse-direction and
+  same-deck edge cases before wiring in). `drawIslandConnections()`
+  in canvas.js draws one dashed line per pair at L1, weighted by
+  count, dimmed/highlighted via the existing `hoveredIsland`
+  mechanism — same hover pattern L2 already had, just extended to
+  islands. A failure to load relationship data degrades to "no lines"
+  rather than breaking map load, since it's decoration, not core.
 
 ---
 
