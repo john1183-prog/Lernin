@@ -75,7 +75,7 @@ SYSTEM_PROMPT = (
 )
 
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-latest")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 GENERATE_CARDS_TOOL = {
     "name": "submit_cards",

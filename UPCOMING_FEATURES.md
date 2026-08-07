@@ -250,6 +250,75 @@ together since they all touch canvas.js:
 
 ## Active — real user feedback, not yet fully addressed
 
+### Gemini generation silently failing + import UX confusion (fixed)
+User report: tried an old Gemini key, generation failed, landed in
+manual mode with no idea why. Root cause turned out to be three
+compounding bugs, not one:
+
+1. **`GEMINI_MODEL` defaulted to `gemini-1.5-flash-latest` — a fully
+   shut-down model.** Confirmed via web search: all Gemini 1.0 and 1.5
+   models return 404 as of their retirement. Every default-config
+   Gemini call has been failing regardless of key validity. Updated
+   default to `gemini-3.6-flash` (current GA, stable, no shutdown
+   date announced as of Aug 2026) — still overridable via the
+   `GEMINI_MODEL` env var without a code change. Worth revisiting
+   periodically; hardcoded model IDs in a fast-moving API surface are
+   an ongoing maintenance item, not a one-time fix.
+2. **The frontend discarded the backend's specific error message for
+   any status code other than 401/400.** Gemini failures come back as
+   502 from our backend (`_call_gemini` wraps the provider's status
+   code), so the actual reason ("Gemini error: 404") was thrown away
+   in favor of a generic "Generation failed: 502". Fixed in api.js's
+   `generateCards()` — now always tries to extract `body.detail`
+   regardless of status.
+3. **Double-toast, unexplained redirect to manual mode.**
+   `generateCards()` emitted its own vague toast via
+   `recall:generation-error` *and* `handleExtractedText()` showed a
+   second generic one, then silently dropped into manual mode with no
+   explanation. Restructured: `generateCards()` now returns
+   `{ cards, summary, error }` instead of emitting a toast-triggering
+   event (it has exactly one caller, confirmed before removing the
+   emission) — one clear, specific message now: "Automatic generation
+   failed: {reason} — switching to manual mode. Check your key in
+   Settings, or paste the text into any AI instead."
+
+Also addressed the broader version of the same complaint — landing in
+manual mode with no context wasn't unique to the Gemini-failure path.
+`renderManualJSONImport()` now takes a `reason` parameter
+(`no-key`/`scanned`/`extraction-failed`/`generation-failed`/
+`empty-result`/`direct`) and shows context-appropriate copy instead of
+one hardcoded message that always assumed "scanned PDF or image-heavy
+slides" — misleading for what's actually the most common case (no API
+key configured at all).
+
+### Import view redesign
+Two more things addressed in the same pass, since they touched the
+same view:
+- **Upfront key-status hint.** The old flow only explained "why
+  manual mode" after the fact, once you'd already uploaded something
+  and hit a dead end. `renderImportView()` now checks `getApiConfig()`
+  before you pick a file and shows a plain-language note ("No API key
+  added — uploads will use free manual mode...") with a direct link to
+  Settings, so first-time users aren't surprised.
+- **Styled upload area + direct JSON-paste entry point.** The file
+  picker was a bare `<input type="file">` with a thin border — no
+  visual weight as an actual action. Restyled as a proper card with a
+  dashed drop-zone-style button. Added a second card, "No file? Start
+  from a prompt" → "Paste JSON directly", for anything with no
+  document to upload at all — language learning, general topics,
+  brainstormed content, anything you'd rather just describe to an AI
+  than hunt for a source file first. Required a real fix, not just UI:
+  the shared prompt template (`AI_PROMPT_TEXT` in manual-json-import.js)
+  was hardcoded around "I will upload a document," and its placeholder
+  bracket would have been copied verbatim into the prompt unfilled
+  (the textarea is `readonly`, so there was no way for the user to
+  edit it out). Added a `reason === 'direct'` branch that swaps in
+  wording that works standalone and ends on a natural continuation
+  point ("reply with your topic") rather than a broken bracket.
+  Verified the substitution against the real template string, not
+  just visually. Both new call-site cards verified visually in light
+  and dark mode via headless Chrome before shipping.
+
 ### iOS Safari PDF upload (fixed, needs real-device confirmation)
 A user reported PDF import not working on iPhone Safari. Root cause:
 pdf-extract.js was loading pdf.js *and its Worker script* from jsDelivr

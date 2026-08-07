@@ -100,27 +100,27 @@ export async function generateCards(text, deckId) {
     });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 400) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || `Generation failed: ${response.status}`);
-      }
-      throw new Error(`Generation failed: ${response.status}`);
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || `Generation failed: ${response.status}`);
     }
 
     const data = await response.json();
     const deduped = await dedupeAgainstDeck(data.cards, deckId);
     const summary = data.summary || '';
     emit('recall:generation-success', { deckId, cards: deduped, summary });
-    return { cards: deduped, summary };
+    return { cards: deduped, summary, error: null };
   } catch (err) {
     // Network failure — queue for retry rather than a dead end.
     if (err instanceof TypeError) {
       await queueGeneration(deckId, text);
       emit('recall:generation-queued', { deckId });
-      return { cards: [], summary: '' };
+      return { cards: [], summary: '', error: null };
     }
-    emit('recall:generation-error', { deckId, message: err.message });
-    return { cards: [], summary: '' };
+    // No toast-emitting event here — handleExtractedText is this
+    // function's only caller, and it needs the specific error message
+    // to show one clear, accurate toast instead of stacking a generic
+    // "Generation failed" one on top of its own follow-up message.
+    return { cards: [], summary: '', error: err.message };
   }
 }
 

@@ -5,6 +5,12 @@
 import { saveNewCards, saveDocument, getCardsByDeck } from './db.js';
 import { renderMath, showToast } from './app.js';
 
+function escapeHtmlLocal(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
 const EXAMPLE_JSON = `{
   "summary": "Introduction to Newton's Laws of Motion",
   "cards": [
@@ -29,8 +35,47 @@ const EXAMPLE_JSON = `{
  * @param {string} [extractedText] — optional extracted text to inject into prompt
  * @param {string} [filename] — optional filename for vision-file manual mode
  */
-export function renderManualJSONImport(container, deckId, onDone, extractedText, filename) {
+const MANUAL_IMPORT_REASONS = {
+  'direct': {
+    icon: '✍️',
+    title: 'Starting from a prompt',
+    body: "No document needed — copy the prompt below, describe what you want to learn (a language, a topic, anything), run it in any AI chat, and paste the JSON response back here."
+  },
+  'no-key': {
+    icon: '🔑',
+    title: "You haven't added an API key yet",
+    body: 'Settings → API config lets you add a Claude or Gemini key for one-tap imports. Without one, this free manual mode is how import works: copy a prompt, run it in any AI chat, paste the JSON back.'
+  },
+  'scanned': {
+    icon: '🖼️',
+    title: 'This looks image-heavy',
+    body: "Our built-in extractor handles text-based PDFs and PowerPoint files automatically, but this one didn't have enough extractable text — likely a scanned document or slides that are mostly images. Add an API key in Settings for automatic AI-vision handling of this, or use manual mode below."
+  },
+  'extraction-failed': {
+    icon: '⚠️',
+    title: "Couldn't read this file",
+    body: "Text extraction failed — the file may be corrupted or in an unsupported format. You can still get cards from it manually: attach the file directly in any AI chat, then paste the JSON response below."
+  },
+  'generation-failed': {
+    icon: '⚠️',
+    title: 'Automatic generation failed',
+    body: null // filled in per-call with the specific error
+  },
+  'empty-result': {
+    icon: '📭',
+    title: 'Nothing came back',
+    body: "Generation ran but didn't find anything to extract from this content — sometimes happens with very short or sparse text. Try the manual flow below instead."
+  }
+};
+
+export function renderManualJSONImport(container, deckId, onDone, extractedText, filename, reason, reasonDetail) {
   container.innerHTML = '';
+
+  const r = MANUAL_IMPORT_REASONS[reason] || MANUAL_IMPORT_REASONS['no-key'];
+  const alertTitle = r.title;
+  const alertBody = reason === 'generation-failed' && reasonDetail
+    ? `Reason given: "${reasonDetail}". Common causes: an expired or mistyped key, or the provider being temporarily down. Check Settings → API config, or use manual mode below in the meantime.`
+    : r.body;
 
   const wrap = document.createElement('div');
   wrap.className = 'manual-import-view';
@@ -43,17 +88,14 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
 
     <div class="manual-import-body">
       <div class="manual-import-alert">
-        <div class="manual-import-alert-icon">📢</div>
+        <div class="manual-import-alert-icon">${r.icon}</div>
         <div>
-          <strong>Have a scanned PDF or image-heavy slide deck?</strong>
-          <p style="margin:4px 0 0;color:var(--ink-secondary);">
-            Our built-in extractor handles text-based PDFs and PowerPoint files automatically.
-            For scanned documents, image-heavy slides, photos, or any other file type:
-          </p>
+          <strong>${escapeHtmlLocal(alertTitle)}</strong>
+          <p style="margin:4px 0 0;color:var(--ink-secondary);">${escapeHtmlLocal(alertBody)}</p>
           <ol class="manual-import-steps">
             <li>Copy the prompt below</li>
             <li>Go to ChatGPT, Claude, or Gemini</li>
-            <li>Paste the prompt and upload your document</li>
+            <li>${reason === 'direct' ? 'Paste the prompt, then reply with your topic' : 'Paste the prompt and upload your document'}</li>
             <li>Copy the JSON response and paste it below</li>
           </ol>
         </div>
@@ -86,7 +128,22 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
   // Populate prompt
   const promptEl = wrap.querySelector('#aiPrompt');
   let promptValue = AI_PROMPT_TEXT;
-  if (extractedText) {
+  if (reason === 'direct') {
+    // No document at all — the shared template's opening line and
+    // placeholder both assume one, and the textarea is readonly (so a
+    // literal unfilled placeholder would get copied verbatim). Swap in
+    // wording that works when pasted into any AI chat and continued
+    // with the person's own topic as their next message.
+    promptValue = AI_PROMPT_TEXT
+      .replace(
+        'I will upload a document (PDF, PowerPoint, scanned images, or any file type).',
+        "I'll tell you a topic, language, or skill I want to learn — no document, just a description."
+      )
+      .replace(
+        '## What I am uploading\n\n[Paste your document content or describe what you are uploading]',
+        "## What I want flashcards for\n\n[Reply to this message with your topic — e.g. \"Spanish present-tense verbs\" or \"key dates of the French Revolution\" — and any specifics: skill level, focus areas, how many cards.]"
+      );
+  } else if (extractedText) {
     promptValue = AI_PROMPT_TEXT.replace(
       '[Paste your document content or describe what you are uploading]',
       extractedText

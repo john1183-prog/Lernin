@@ -1731,21 +1731,75 @@ async function renderImportView(deckId) {
   const body = document.createElement('div');
   body.style.cssText = 'padding:var(--space-md);';
 
-  const fileLabel = document.createElement('div');
-  fileLabel.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:8px;';
-  fileLabel.textContent = 'Select a file';
-  body.appendChild(fileLabel);
+  // Upfront key-status hint — the old flow only explained "why manual
+  // mode" after the fact, once you'd already uploaded something. Telling
+  // people upfront, before they pick a file, is more useful than a
+  // surprise after the fact.
+  let apiConfig;
+  try { apiConfig = await getApiConfig(); } catch (err) { apiConfig = null; }
+  const hasKey = apiConfig && (apiConfig.provider === 'claude' || apiConfig.provider === 'gemini') && apiConfig.apiKey;
 
+  if (!hasKey) {
+    const keyHint = document.createElement('div');
+    keyHint.style.cssText = 'display:flex; gap:10px; align-items:flex-start; background:var(--surface); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:var(--space-md); box-shadow:var(--shadow-sm);';
+    keyHint.innerHTML = `
+      <span style="font-size:18px; line-height:1;">🔑</span>
+      <div style="font-size:13px; color:var(--ink-secondary); line-height:1.5;">
+        No API key added — uploads will use free manual mode (copy a prompt, paste the JSON back). Add a Claude or Gemini key in <a href="#/settings" style="color:var(--accent); font-weight:600;">Settings</a> for one-tap imports instead.
+      </div>
+    `;
+    body.appendChild(keyHint);
+  }
+
+  // Upload option — styled as an actual action card, not a bare
+  // <input type="file"> with a thin border.
+  const uploadCard = document.createElement('div');
+  uploadCard.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:16px; box-shadow:var(--shadow-sm); margin-bottom:var(--space-md);';
+  uploadCard.innerHTML = `
+    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:4px;">📄 Upload a file</div>
+    <p style="font-size:12px; color:var(--ink-muted); margin:0 0 12px;">Text PDFs, .txt, .md, images, and PowerPoint files.</p>
+  `;
+  const fileInputLabel = document.createElement('label');
+  fileInputLabel.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; border:1.5px dashed var(--sand); border-radius:var(--radius-md); background:var(--bg); color:var(--ink-secondary); font-size:14px; font-weight:500; cursor:pointer; box-sizing:border-box; transition:border-color 0.15s;';
+  fileInputLabel.innerHTML = '<span style="font-size:18px;">⬆️</span><span id="fileLabelText">Choose a file…</span>';
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = '.pdf,.txt,.md,.jpg,.jpeg,.png,.ppt,.pptx';
-  fileInput.style.cssText = 'width:100%; padding:12px; border:1.5px solid var(--sand); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px;';
-  body.appendChild(fileInput);
+  fileInput.style.cssText = 'position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;';
+  fileInputLabel.appendChild(fileInput);
+  uploadCard.appendChild(fileInputLabel);
+  body.appendChild(uploadCard);
 
-  const hint = document.createElement('p');
-  hint.style.cssText = 'font-size:12px; color:var(--ink-muted); margin-top:6px;';
-  hint.textContent = 'Supports text PDFs, .txt, .md, images, and PowerPoint files.';
-  body.appendChild(hint);
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0];
+    if (f) fileInputLabel.querySelector('#fileLabelText').textContent = f.name;
+  });
+
+  // Divider
+  const divider = document.createElement('div');
+  divider.style.cssText = 'display:flex; align-items:center; gap:10px; margin:var(--space-md) 0; color:var(--ink-muted); font-size:12px;';
+  divider.innerHTML = '<div style="flex:1; height:1px; background:var(--sand);"></div><span>OR</span><div style="flex:1; height:1px; background:var(--sand);"></div>';
+  body.appendChild(divider);
+
+  // Direct JSON-paste option — for anything with no document to upload
+  // at all: language learning, general knowledge, brainstormed content —
+  // any topic where you'd rather just prompt an AI directly than hunt
+  // for a source file first.
+  const directCard = document.createElement('div');
+  directCard.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:16px; box-shadow:var(--shadow-sm); margin-bottom:var(--space-md);';
+  directCard.innerHTML = `
+    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:4px;">✍️ No file? Start from a prompt</div>
+    <p style="font-size:12px; color:var(--ink-muted); margin:0 0 12px;">Not everything to learn comes as a document — languages, general topics, anything you can describe. Get a ready-made prompt, run it in any AI, paste the cards back.</p>
+  `;
+  const directBtn = document.createElement('button');
+  directBtn.type = 'button';
+  directBtn.style.cssText = 'width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--accent); color:white; font-size:14px; font-weight:600; cursor:pointer;';
+  directBtn.textContent = 'Paste JSON directly';
+  directBtn.addEventListener('click', () => {
+    renderManualJSONImport(root, deckId, () => navigate('/'), null, null, 'direct');
+  });
+  directCard.appendChild(directBtn);
+  body.appendChild(directCard);
 
   const progressArea = document.createElement('div');
   progressArea.style.cssText = 'margin-top:var(--space-md); display:none;';
@@ -1830,7 +1884,7 @@ async function renderImportView(deckId) {
           if (isByok) {
             await uploadVisionFile(file, deckId, config);
           } else {
-            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name, 'no-key');
           }
           return;
         }
@@ -1839,7 +1893,7 @@ async function renderImportView(deckId) {
       } catch (err) {
         console.error('PDF extraction failed:', err);
         showToast('Could not extract text. Try the manual copy-paste flow instead.', 5000);
-        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name, 'extraction-failed');
       }
       return;
     }
@@ -1859,7 +1913,7 @@ async function renderImportView(deckId) {
           if (isByok) {
             await uploadVisionFile(file, deckId, config);
           } else {
-            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+            renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name, 'no-key');
           }
           return;
         }
@@ -1871,7 +1925,7 @@ async function renderImportView(deckId) {
         if (isByok) {
           await uploadVisionFile(file, deckId, config);
         } else {
-          renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+          renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name, 'extraction-failed');
         }
       }
       return;
@@ -1885,7 +1939,7 @@ async function renderImportView(deckId) {
         progressFill.style.width = '30%';
         await uploadVisionFile(file, deckId, config);
       } else {
-        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name);
+        renderManualJSONImport(root, deckId, () => navigate('/'), null, file.name, 'no-key');
       }
       return;
     }
@@ -1901,14 +1955,22 @@ async function handleExtractedText(text, deckId, config, filename) {
       renderEditStep(result.cards, deckId);
       return;
     }
-    // Offline queue returns empty intentionally — toast already shown.
-    // Online empty result: offer manual paste so the user isn't stuck.
-    if (navigator.onLine) {
-      showToast('Generation returned no cards. You can paste JSON from any AI instead.');
-      renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
+    if (!navigator.onLine) return; // offline queue toast already shown by generateCards()
+
+    if (result && result.error) {
+      // A real failure (bad/expired key, provider outage, rate limit,
+      // dead model on our end) — say so specifically and explain why
+      // manual mode is showing up, rather than landing there with no
+      // explanation. One toast, not two stacked vague ones.
+      showToast(`Automatic generation failed: ${result.error} — switching to manual mode. Check your key in Settings, or paste the text into any AI instead.`, 7000);
+      renderManualJSONImport(root, deckId, () => navigate('/'), text, filename, 'generation-failed', result.error);
+    } else {
+      // Generation genuinely ran and found nothing extractable.
+      showToast('No cards could be extracted from this content. You can paste it into any AI instead.', 5000);
+      renderManualJSONImport(root, deckId, () => navigate('/'), text, filename, 'empty-result');
     }
   } else {
-    renderManualJSONImport(root, deckId, () => navigate('/'), text, filename);
+    renderManualJSONImport(root, deckId, () => navigate('/'), text, filename, 'no-key');
   }
 }
 
