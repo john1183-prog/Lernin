@@ -246,6 +246,34 @@ together since they all touch canvas.js:
   islands. A failure to load relationship data degrades to "no lines"
   rather than breaking map load, since it's decoration, not core.
 
+**Mind Map** — new `mind-map.js`, a standalone per-deck force-directed
+graph, revived from the pre-rewrite `concept-graph.js` (which had been
+reduced to a 16-line deprecated stub redirecting to the territory
+map's L2 — its physics-based layout was replaced by a plain index-
+ordered spiral that ignores relationship structure entirely). Kept as
+its own focused view rather than merged back into the territory map:
+different job (see the shape of a course at a glance vs. explore
+landmarks/paths), and reusing the map's `conceptLayouts` position
+store would mean dragging a node here also relocates that card on the
+territory map. Instead: fresh layout computed every time the view
+opens, in-session dragging is visual-only and never persisted.
+
+The ported physics parameters were **not** trusted as-is. Built a
+standalone test harness before shipping and found the original
+values (repulsion 800, springLength 140) actually produced the
+*opposite* of the intended effect on a realistic sparse graph (a few
+small clusters plus isolated cards, typical of a real deck):
+connected pairs ended up ~35% farther apart than unconnected ones,
+because 140 was longer than the graph's natural repulsion+gravity
+equilibrium spacing, so springs were pulling connected nodes apart
+rather than together — not a porting error (verified the constants
+matched the original file exactly), a pre-existing tuning issue.
+Re-tuned to springLength=95/springK=0.06/iterations=200, verified
+against the actual shipped `runForceLayout()` function (not just the
+test-harness copy) across 15 random-seed trials on a 25-node test
+graph: connected pairs reliably closer, worst-case 1.16x, comfortable
+node spacing at rest for even two max-radius nodes.
+
 ---
 
 ## Active — real user feedback, not yet fully addressed

@@ -15,6 +15,7 @@ import {
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate } from './sound.js';
+import { renderMindMap } from './mind-map.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -210,6 +211,9 @@ async function handleRoute() {
     case 'reading-toolkit': await renderReadingToolkit(); break;
     case 'map':
       activeViewCleanup = id ? await enterConceptGraph(id) : await enterMap();
+      break;
+    case 'mind-map':
+      activeViewCleanup = await enterMindMap(id);
       break;
     case 'documents': await renderDocuments(id); break;
     case 'new-card': await renderNewCardForm(id); break;
@@ -431,7 +435,8 @@ function openBottomSheet(deck) {
     { label: '+ Card', icon: '➕', action: () => navigate(`/new-card/${deck.id}`) },
     { label: 'Cards', icon: '🃏', action: () => navigate(`/cards/${deck.id}`) },
     { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
-    { label: 'Concept Map', icon: '🕸️', action: () => navigate(`/map/${deck.id}`) },
+    { label: 'Map', icon: '🗺️', action: () => navigate(`/map/${deck.id}`) },
+    { label: 'Mind Map', icon: '🕸️', action: () => navigate(`/mind-map/${deck.id}`) },
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
     { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
     { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
@@ -520,6 +525,12 @@ async function enterMap() {
   root.innerHTML = '';
   const cleanup = await initCanvasView(root, { onExit: () => navigate('/') });
   return cleanup || destroyCanvasView;
+}
+
+async function enterMindMap(deckId) {
+  root.innerHTML = '';
+  if (!deckId) { navigate('/'); return null; }
+  return renderMindMap(root, deckId, { onExit: () => navigate('/') });
 }
 
 async function renderSettings() {
@@ -1139,6 +1150,13 @@ function renderHelp() {
       body: `
         <p>Settings → <strong>Open Reading Toolkit</strong>. A separate, static library of copy-ready prompts for pairing your reading with any AI chat tool — before/during/after reading, plus deeper-comprehension prompts like a Feynman check or Socratic push-back.</p>
         <p>Tap Copy, paste into whatever AI you use, fill in the brackets. It doesn't touch your decks, cards, or generation — purely a study aid that lives alongside the app.</p>
+      `
+    },
+    {
+      title: 'Mind Map',
+      body: `
+        <p>Deck sheet → <strong>Mind Map</strong>. A force-directed graph of that deck's cards and their "Depends on"/"Related" links — cards that connect end up clustered near each other, unrelated ones drift apart, so the shape of the material is visible at a glance.</p>
+        <p>Different from the territory <strong>Map</strong>: no landmarks, paths, or exploration tooling, just the graph. Drag nodes to explore during a session — nothing is saved, so it's always a fresh read of the current relationships next time you open it. Tap a node for a quick front/back peek. ↺ re-runs the layout if you've dragged things into a mess.</p>
       `
     }
   ];

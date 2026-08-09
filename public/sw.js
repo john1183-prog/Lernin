@@ -6,7 +6,7 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'lernin-shell-v24';
+const CACHE_VERSION = 'lernin-shell-v25';
 
 // Bump CACHE_VERSION on every deploy that changes any of these files, or
 // returning users will keep serving a stale shell from cache. Wiring this
@@ -20,6 +20,7 @@ const SHELL_ASSETS = [
   '/scheduler.js',
   '/study.js',
   '/sound.js',
+  '/mind-map.js',
   '/spatial-study.js',
   '/api.js',
   '/canvas.js',
