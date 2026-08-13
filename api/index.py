@@ -1,12 +1,15 @@
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional
 import os
 import json
 import base64
 import httpx
 import anthropic
+
+from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
+from motion_engine import expand_script, MotionEngineError
 
 app = FastAPI()
 
@@ -324,6 +327,154 @@ def _call_gemini_vision(base64_data: str, mime_type: str, provider: str, api_key
         batch = CardBatch.model_validate(parsed)
         return batch.cards, batch.summary
 
+# ---------- Motion Studio ----------
+# Same relay shape as card generation above (tool-calling for Claude,
+# responseSchema for Gemini) — the model never writes free-text DSL, it
+# fills in MOTION_SCRIPT_SCHEMA directly. See motion_schema.py for the
+# schema itself and motion_engine.py for what happens to its output
+# after Pydantic validates it. Nothing here is ever sent to the frontend
+# except the fully resolved script that expand_script() returns.
+
+MOTION_SYSTEM_PROMPT = (
+    "You create short, clear motion-graphics scripts that explain a single "
+    "study concept, returned ONLY as a valid instance of the submit_motion_script "
+    "tool schema. Keep scenes tight: 8-45 seconds is typical for one concept. "
+    "Use markers for the beats of your explanation (e.g. 'setup', 'reveal', "
+    "'conclusion') and reference them from keyframe times instead of raw "
+    "numbers, so pacing stays legible and easy to adjust. Use the emphasis "
+    "layer type for the one or two words that should land hardest, not for "
+    "every label -- it animates itself from 'at' and 'style' alone, no "
+    "manual keyframes needed. Set format to 'formula' only for actual "
+    "mathematical notation, valid KaTeX/LaTeX -- never for plain words. "
+    "Do not wrap the JSON in markdown fences. Do not add commentary."
+)
+
+GENERATE_MOTION_TOOL = {
+    "name": "submit_motion_script",
+    "description": "Submit a motion-graphics script for a study explainer.",
+    "input_schema": MOTION_SCRIPT_SCHEMA,
+}
+
+def build_motion_manual_prompt(topic: str) -> str:
+    """The plain-text prompt for manual mode: no tool-calling exists when
+    a person pastes into a generic AI chat tab, so the shape has to be
+    spelled out in the prompt itself. Frontend surfaces this verbatim for
+    copying; kept here as the single source of truth for now."""
+    return (
+        f"Create a short motion-graphics script explaining: {topic}\n\n"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) "
+        "shaped exactly like this:\n\n"
+        '{\n'
+        '  "scene": {"name": "...", "duration": 12, "fps": 30, "background": "#161616", "width": 800, "height": 500},\n'
+        '  "markers": [{"name": "reveal", "time": 1.0}],\n'
+        '  "camera": null,\n'
+        '  "layers": [\n'
+        '    {\n'
+        '      "name": "title", "type": "text", "text": "...", "fontSize": 48, "color": "#ffffff",\n'
+        '      "x": 400, "y": 250, "format": "text",\n'
+        '      "keyframes": [\n'
+        '        {"property": "opacity", "points": [\n'
+        '          {"time": {"offset": 0}, "value": 0},\n'
+        '          {"time": {"marker": "reveal", "offset": 0}, "value": 1, "easing": "easeOut"}\n'
+        '        ]}\n'
+        '      ]\n'
+        '    }\n'
+        '  ]\n'
+        '}\n\n'
+        "Rules:\n"
+        "- layer \"type\" must be one of: rect, circle, text, polygon, arrow, line, group, caption, emphasis\n"
+        "- keyframe \"property\" must be one of: x, y, scale, rotation, opacity, color\n"
+        "- \"time\" is either {\"marker\": \"name\", \"offset\": seconds-after-it} "
+        "or {\"offset\": seconds} for an absolute time (omit marker)\n"
+        "- \"easing\" is one of: linear, easeIn, easeOut, easeInOut, bounce, elastic, back\n"
+        "- an \"emphasis\" layer needs \"at\" (a time object) and \"style\" "
+        "(pop, slideup, fade, or zoom) -- no manual keyframes\n"
+        "- set \"format\": \"formula\" only for real mathematical notation "
+        "(valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words\n"
+        "- keep duration reasonable, 8-45 seconds for one concept\n"
+        "- 1-40 layers, unique names"
+    )
+
+# TEMPORARY: in-memory, same limitation as _rate_limit above -- this dict
+# does not survive a cold start and is not shared across concurrent
+# function instances, so it's a soft speed bump, not an enforced cap.
+# Fine for now while there's no real traffic; needs a real persistent
+# counter (Vercel Marketplace -> Upstash Redis is the natural fit, since
+# Vercel KV itself was sunset) before the server key is trusted with any
+# real volume. Swapping it in only touches the two functions below.
+_motion_quota = defaultdict(int)
+MOTION_FREE_LIMIT = int(os.environ.get("MOTION_FREE_LIMIT", "3"))
+
+def _check_and_increment_motion_quota(client_id: str):
+    if _motion_quota[client_id] >= MOTION_FREE_LIMIT:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"You've used your {MOTION_FREE_LIMIT} free Motion Studio generations. "
+                "Add a Claude or Gemini key in Settings to keep going."
+            ),
+        )
+    _motion_quota[client_id] += 1
+
+def _resolve_motion_credentials(request: Request):
+    """BYOK header present -> use it, no quota touched, costs the server
+    nothing. Otherwise -> fall back to Lernin's own key, gated by the
+    free-generation quota. Returns (provider, api_key, used_server_key)."""
+    provider = request.headers.get("x-llm-provider", "").lower()
+    api_key = request.headers.get("x-llm-api-key", "")
+    if api_key:
+        if provider not in ("claude", "gemini"):
+            raise HTTPException(status_code=400, detail="Unsupported provider. Use 'claude' or 'gemini'.")
+        return provider, api_key, False
+
+    server_key = os.environ.get("MOTION_SERVER_CLAUDE_KEY", "")
+    if not server_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Add a Claude or Gemini key in Settings to use Motion Studio.",
+        )
+    client_id = request.headers.get("x-client-id", "")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Missing X-Client-Id header.")
+    _check_and_increment_motion_quota(client_id)
+    return "claude", server_key, True
+
+def _call_claude_motion(topic: str, api_key: str) -> MotionScript:
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=8192,
+        system=MOTION_SYSTEM_PROMPT,
+        tools=[GENERATE_MOTION_TOOL],
+        tool_choice={"type": "tool", "name": "submit_motion_script"},
+        messages=[{"role": "user", "content": f"Explain: {topic}"}],
+    )
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "submit_motion_script":
+            return MotionScript.model_validate(block.input)
+    raise ValueError("Model did not return a submit_motion_script tool call")
+
+def _call_gemini_motion(topic: str, api_key: str) -> MotionScript:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload = {
+        "system_instruction": {"parts": [{"text": MOTION_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": f"Explain: {topic}"}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": MOTION_SCRIPT_SCHEMA,
+        },
+    }
+    with httpx.Client(timeout=120.0) as http:
+        response = http.post(url, params={"key": api_key}, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(text)
+        return MotionScript.model_validate(parsed)
+
+class GenerateMotionResponse(BaseModel):
+    script: dict
+
 # ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
 async def generate_cards(request: Request):
@@ -465,3 +616,62 @@ async def extract_ppt_text(request: Request, file: UploadFile = File(...)):
 
     text = _extract_ppt_text(content)
     return ExtractTextResponse(text=text)
+
+@app.post("/api/generate-motion", response_model=GenerateMotionResponse)
+async def generate_motion(request: Request):
+    _check_rate_limit(_client_ip(request))
+
+    body = await request.json()
+    topic = body.get("topic", "")
+    if not topic or len(topic.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Topic too short or missing.")
+
+    # Credentials (and any quota spend) resolved only after the topic is
+    # known to be valid — a request that was always going to fail
+    # shouldn't cost someone one of their free generations.
+    provider, api_key, _used_server_key = _resolve_motion_credentials(request)
+
+    try:
+        if provider == "claude":
+            motion_script = _call_claude_motion(topic, api_key)
+        else:
+            motion_script = _call_gemini_motion(topic, api_key)
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
+    except ValidationError:
+        raise HTTPException(status_code=502, detail="The model's script didn't match the expected shape. Try again.")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Motion script generation failed. Please try again.")
+
+    try:
+        resolved = expand_script(motion_script)
+    except MotionEngineError as e:
+        raise HTTPException(status_code=502, detail=f"Generated script has a timing issue: {e}")
+
+    return GenerateMotionResponse(script=resolved)
+
+@app.post("/api/expand-motion-script", response_model=GenerateMotionResponse)
+async def expand_motion_script(request: Request):
+    """Manual mode lands here: no AI call happens in this route at all —
+    the person already ran build_motion_manual_prompt's text in their own
+    AI chat and is pasting the JSON back. Same validation, same
+    expand_script() call generate_motion uses after its own AI call, so
+    both paths converge on identical output from here on."""
+    _check_rate_limit(_client_ip(request))
+    body = await request.json()
+    try:
+        motion_script = MotionScript.model_validate(body)
+    except ValidationError as e:
+        first = e.errors()[0]
+        raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {first['msg']}")
+
+    try:
+        resolved = expand_script(motion_script)
+    except MotionEngineError as e:
+        raise HTTPException(status_code=400, detail=f"Timing issue: {e}")
+
+    return GenerateMotionResponse(script=resolved)
