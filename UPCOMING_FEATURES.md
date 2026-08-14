@@ -18,6 +18,39 @@ These can each be picked up independently, in any order.
 
 ---
 
+### Motion Studio — backend + player built and verified, no UI yet
+
+Manim-style, LLM-driven motion-graphics generator: describe a study
+topic, get a short animated explainer. Scoped as the single most
+valuable feature in the app. Backend (`api/motion_schema.py`,
+`api/motion_engine.py`, plus new routes in `api/index.py`) and the
+canvas player (`public/motion-player.js`) are both built and now both
+actually verified: 18 passing unit tests on the expansion engine, live
+HTTP tests against `/api/generate-motion` and `/api/expand-motion-script`
+(credential resolution across BYOK/server-key/manual-mode, quota,
+error translation), and headless-Chrome screenshot verification of the
+player against a resolved 11-layer test scene — shapes, group/parent
+nesting, camera pan/zoom, an arrow, and a KaTeX-rendered formula
+caption. That screenshot pass caught a real bug: `drawLayer()`'s
+`ctx.restore()` ran before a layer's children were drawn, so any
+layer's children rendered without the parent's translate/rotate/scale
+applied — group nesting was silently broken (confirmed visually: a
+group's child circles rendered off-canvas entirely). Fixed by moving
+the children recursion before `restore()`.
+
+**Not started:** any UI. There's no way for a user to reach this
+feature yet, so per this file's own Help-view convention below, the
+Help view isn't touched until that changes. Still needed before UI
+work: an anonymous client ID (for the server-key quota path, stored in
+the existing `settings` IndexedDB store), a motion-generation
+equivalent of `api.js`'s request-header pattern, an IndexedDB store for
+resolved scripts (bump `DB_VERSION`), and persistent quota storage
+(currently an in-memory dict — same limitation as the pre-existing IP
+rate-limiter — needs a Vercel Marketplace → Upstash Redis integration
+before this is trusted with real traffic).
+
+---
+
 ## Tier 2 — Rich cards and relationships
 
 Fully shipped — every item originally scoped here, including the

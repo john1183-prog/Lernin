@@ -223,6 +223,7 @@ function drawLayer(ctx, layers, l, t, inheritedOpacity, depth, overlay) {
   const isFormula = TEXT_TYPES.has(l.type) && l.format === 'formula';
   if (isFormula) {
     overlay.place(l, lx, ly, rot, scale, op);
+    for (const c of childrenOf(layers, l)) drawLayer(ctx, layers, c, t, op, depth + 1, overlay);
   } else {
     overlay.hide(l);
     ctx.save();
@@ -232,10 +233,13 @@ function drawLayer(ctx, layers, l, t, inheritedOpacity, depth, overlay) {
     ctx.scale(scale, scale);
     ctx.fillStyle = col;
     drawShape(ctx, l, col);
+    // Children must draw BEFORE restore(): group/parent hierarchy relies
+    // on the canvas's cumulative transform still being active for them.
+    // (Previously restore() ran first, so any layer's children were
+    // drawn as if the parent had no transform at all.)
+    for (const c of childrenOf(layers, l)) drawLayer(ctx, layers, c, t, op, depth + 1, overlay);
     ctx.restore();
   }
-
-  for (const c of childrenOf(layers, l)) drawLayer(ctx, layers, c, t, op, depth + 1, overlay);
 }
 
 // ---------- KaTeX overlay ----------
