@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Motion Studio — test harness</title>
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/vendor/katex/katex.min.css" />
+<style>
+  /* Deliberately minimal — this is a bare functional harness for proving
+     the pipeline end to end, not the real Motion Studio UI. That's a
+     separate, later effort. Only what's needed to be usable is here. */
+  body { max-width: 900px; margin: 0 auto; padding: var(--space-md); }
+  .mh-row { display: flex; gap: var(--space-md); align-items: flex-start; margin-bottom: var(--space-md); }
+  .mh-topic-input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--ink-secondary); font-size: 15px; }
+  .mh-stage { width: 100%; max-width: 800px; background: #000; border-radius: 8px; overflow: hidden; position: relative; }
+  .mh-stage canvas { display: block; width: 100%; height: auto; }
+  .mh-controls { display: flex; align-items: center; gap: var(--space-md); margin-top: 8px; }
+  .mh-controls input[type="range"] { flex: 1; }
+  .mh-status { color: var(--ink-secondary); font-size: 14px; margin: 8px 0; }
+  .mh-status.is-error { color: #c0392b; }
+  .mh-scripts { margin-top: var(--space-lg); }
+  .mh-script-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--ink-secondary); }
+  .mh-badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--ink-secondary); color: white; }
+</style>
+</head>
+<body>
+  <div class="app-header" style="margin: 0 -16px var(--space-md);">
+    <div style="width:40px;"></div>
+    <div class="app-header-title">Motion Studio — test harness</div>
+    <div style="width:40px;"></div>
+  </div>
+
+  <p class="mh-status">Bare dev harness, not the real UI. Type a topic, generate, watch it play. Uses your configured API key (Settings → API config) if present, otherwise Lernin's free server-key quota, otherwise falls back to manual paste-in-any-AI mode.</p>
+
+  <div class="mh-row">
+    <input class="mh-topic-input" id="topicInput" type="text" placeholder="e.g. how a capacitor charges" />
+    <button class="btn-primary" id="generateBtn">Generate</button>
+  </div>
+
+  <div id="statusArea"></div>
+  <div id="manualImportArea"></div>
+
+  <div class="mh-stage" id="stage" style="display:none;">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="mh-controls" id="playerControls" style="display:none;">
+    <button class="icon-btn" id="playPauseBtn" aria-label="Play/Pause">▶️</button>
+    <input type="range" id="seekSlider" min="0" max="100" value="0" />
+    <span id="timeLabel" style="font-size:13px;color:var(--ink-secondary);white-space:nowrap;">0.0s</span>
+  </div>
+
+  <div class="mh-scripts">
+    <div class="app-header-title" style="font-size:16px;margin-bottom:8px;">Saved scripts</div>
+    <div id="scriptList"></div>
+  </div>
+
+  <script defer src="/vendor/katex/katex.min.js"></script>
+  <script type="module">
+    import { createPlayer } from './motion-player.js';
+    import { generateMotion } from './motion-api.js';
+    import { renderMotionManualImport } from './motion-manual-import.js';
+    import { getApiConfig, getMotionScripts, getMotionScript } from './db.js';
+
+    const statusArea = document.getElementById('statusArea');
+    const manualImportArea = document.getElementById('manualImportArea');
+    const stage = document.getElementById('stage');
+    const canvas = document.getElementById('canvas');
+    const playerControls = document.getElementById('playerControls');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const seekSlider = document.getElementById('seekSlider');
+    const timeLabel = document.getElementById('timeLabel');
+    const topicInput = document.getElementById('topicInput');
+    const generateBtn = document.getElementById('generateBtn');
+    const scriptList = document.getElementById('scriptList');
+
+    let player = null;
+    let seekRaf = null;
+
+    function setStatus(text, isError = false) {
+      statusArea.innerHTML = text
+        ? `<p class="mh-status${isError ? ' is-error' : ''}">${text}</p>`
+        : '';
+    }
+
+    function waitForKatex() {
+      return new Promise((resolve) => {
+        if (window.katex) return resolve();
+        const check = () => (window.katex ? resolve() : requestAnimationFrame(check));
+        check();
+      });
+    }
+
+    async function playScript(script) {
+      manualImportArea.innerHTML = '';
+      if (player) player.destroy();
+      await waitForKatex();
+
+      stage.style.display = '';
+      playerControls.style.display = '';
+      stage.style.aspectRatio = `${script.scene.width} / ${script.scene.height}`;
+
+      player = createPlayer(canvas, script);
+      seekSlider.max = String(script.scene.duration);
+      seekSlider.value = '0';
+      timeLabel.textContent = `0.0s / ${script.scene.duration.toFixed(1)}s`;
+      playPauseBtn.textContent = '▶️';
+
+      cancelAnimationFrame(seekRaf);
+      function tick() {
+        if (player && player.playing) {
+          seekSlider.value = String(player.currentTime);
+          timeLabel.textContent = `${player.currentTime.toFixed(1)}s / ${script.scene.duration.toFixed(1)}s`;
+        }
+        seekRaf = requestAnimationFrame(tick);
+      }
+      tick();
+    }
+
+    playPauseBtn.addEventListener('click', () => {
+      if (!player) return;
+      if (player.playing) {
+        player.pause();
+        playPauseBtn.textContent = '▶️';
+      } else {
+        player.play();
+        playPauseBtn.textContent = '⏸️';
+      }
+    });
+
+    seekSlider.addEventListener('input', () => {
+      if (!player) return;
+      player.pause();
+      playPauseBtn.textContent = '▶️';
+      player.seek(parseFloat(seekSlider.value));
+      timeLabel.textContent = `${player.currentTime.toFixed(1)}s / ${player.duration.toFixed(1)}s`;
+    });
+
+    async function refreshScriptList() {
+      const scripts = await getMotionScripts();
+      if (!scripts.length) {
+        scriptList.innerHTML = '<p class="mh-status">Nothing saved yet.</p>';
+        return;
+      }
+      scriptList.innerHTML = scripts
+        .map(
+          (s) => `
+        <div class="mh-script-item">
+          <div>
+            <strong>${s.topic}</strong>
+            <span class="mh-badge">${s.script.layers.length} layers</span>
+          </div>
+          <button class="manual-import-copy" data-play-id="${s.id}">Play</button>
+        </div>`
+        )
+        .join('');
+      scriptList.querySelectorAll('[data-play-id]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const rec = await getMotionScript(btn.dataset.playId);
+          if (rec) playScript(rec.script);
+        });
+      });
+    }
+
+    async function handleGenerate() {
+      const topic = topicInput.value.trim();
+      if (!topic) return;
+
+      manualImportArea.innerHTML = '';
+      generateBtn.disabled = true;
+      generateBtn.textContent = 'Generating…';
+      setStatus('Generating — this calls a real AI model, may take a few seconds…');
+
+      const result = await generateMotion(topic);
+
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate';
+
+      if (result.queued) {
+        setStatus('Offline — queued. Will retry automatically once back online.');
+        return;
+      }
+
+      if (result.error) {
+        if (result.status === 401) {
+          setStatus('No API key configured — use manual mode below.');
+          renderMotionManualImport(
+            manualImportArea,
+            topic,
+            async (r) => {
+              manualImportArea.innerHTML = '';
+              setStatus('');
+              await playScript(r.script);
+              await refreshScriptList();
+            },
+            () => { manualImportArea.innerHTML = ''; }
+          );
+        } else {
+          setStatus(result.error, true);
+        }
+        return;
+      }
+
+      setStatus('');
+      await playScript(result.script);
+      await refreshScriptList();
+    }
+
+    generateBtn.addEventListener('click', handleGenerate);
+    topicInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleGenerate();
+    });
+
+    (async () => {
+      const config = await getApiConfig();
+      const hasByok = config && config.apiKey && (config.provider === 'claude' || config.provider === 'gemini');
+      setStatus(
+        hasByok
+          ? `Using your ${config.provider} key from Settings.`
+          : 'No key configured — will try Lernin\u2019s free quota first, then fall back to manual mode.'
+      );
+      await refreshScriptList();
+    })();
+  </script>
+</body>
+</html>

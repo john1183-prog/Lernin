@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'Lernin';
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 
 // Renamed from 'RecallDB' -> 'Lernin' to match the repo/product name.
 // IndexedDB database names can't be renamed in place, so on first load
@@ -168,7 +168,30 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 9) { ... }` etc. Never delete
+      // --- Motion Studio (v9): resolved animation scripts, and an offline
+      // retry queue for topic requests. The queue is a new store rather
+      // than folding motion records into genQueue above — genQueue's own
+      // docstring scopes it to "raw text for /generate-cards", and a
+      // topic string doesn't share that shape; this keeps the same
+      // pattern (a queue table, indexed by queuedAt, drained on 'online'
+      // — see motion-api.js) without mixing two different record shapes
+      // in one store.
+      if (oldVersion < 9) {
+        if (!db.objectStoreNames.contains('motionScripts')) {
+          const scripts = db.createObjectStore('motionScripts', { keyPath: 'id' });
+          scripts.createIndex('by_createdAt', 'createdAt');
+          scripts.createIndex('by_deckId', 'deckId');
+        }
+        if (!db.objectStoreNames.contains('motionGenQueue')) {
+          const mQueue = db.createObjectStore('motionGenQueue', {
+            keyPath: 'id',
+            autoIncrement: true
+          });
+          mQueue.createIndex('by_queuedAt', 'queuedAt');
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 10) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -971,6 +994,88 @@ export async function saveApiConfig({ provider, apiKey }) {
 export async function clearApiConfig() {
   const db = await getDB();
   return db.delete('settings', API_CONFIG_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Motion Studio — anonymous client ID, resolved script storage, offline
+// retry queue. motion-api.js is the only caller of these — mirrors the
+// genQueue / API-config patterns above exactly, kept in their own section
+// since this is a distinct feature, not a variant of card generation.
+// ---------------------------------------------------------------------------
+
+const MOTION_CLIENT_ID_KEY = 'motionClientId';
+
+/**
+ * Returns a stable anonymous ID for this device, generating and
+ * persisting one on first call. Sent as X-Client-Id ONLY on requests
+ * that fall back to Lernin's server key (see motion-api.js) — never on
+ * BYOK requests, which cost Lernin nothing and shouldn't be tracked.
+ */
+export async function getMotionClientId() {
+  const db = await getDB();
+  const existing = await db.get('settings', MOTION_CLIENT_ID_KEY);
+  if (existing?.value) return existing.value;
+  const id = cryptoRandomIdInDb();
+  await db.put('settings', { key: MOTION_CLIENT_ID_KEY, value: id });
+  return id;
+}
+
+/**
+ * Saves a resolved motion script (the JSON expand_script() returns) so
+ * a generated animation only ever needs to be fetched once —
+ * motion-player.js replays it fully offline after that. deckId is
+ * optional; a script isn't required to belong to a deck.
+ */
+export async function saveMotionScript({ id, topic, script, deckId = null }) {
+  const db = await getDB();
+  const record = {
+    id: id || cryptoRandomIdInDb(),
+    topic,
+    script,
+    deckId,
+    createdAt: Date.now()
+  };
+  await db.put('motionScripts', record);
+  return record;
+}
+
+/** @returns {Promise<Array>} newest first, optionally filtered to one deck. */
+export async function getMotionScripts(deckId = null) {
+  const db = await getDB();
+  const all = await db.getAll('motionScripts');
+  const sorted = all.sort((a, b) => b.createdAt - a.createdAt);
+  return deckId ? sorted.filter((s) => s.deckId === deckId) : sorted;
+}
+
+export async function getMotionScript(id) {
+  const db = await getDB();
+  return db.get('motionScripts', id);
+}
+
+export async function deleteMotionScript(id) {
+  const db = await getDB();
+  return db.delete('motionScripts', id);
+}
+
+/**
+ * Queues a topic for retry when /api/generate-motion can't be reached
+ * while offline. Same shape/pattern as queueGeneration() for cards
+ * above (see that section), kept as its own store — see this store's
+ * docstring at the top of this file for why.
+ */
+export async function queueMotionGeneration(topic, deckId = null) {
+  const db = await getDB();
+  return db.add('motionGenQueue', { topic, deckId, queuedAt: Date.now() });
+}
+
+export async function getQueuedMotionGenerations() {
+  const db = await getDB();
+  return db.getAll('motionGenQueue');
+}
+
+export async function clearQueuedMotionGeneration(id) {
+  const db = await getDB();
+  return db.delete('motionGenQueue', id);
 }
 
 // ---------------------------------------------------------------------------

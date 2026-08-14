@@ -18,36 +18,63 @@ These can each be picked up independently, in any order.
 
 ---
 
-### Motion Studio — backend + player built and verified, no UI yet
+### Motion Studio — backend, player, and frontend plumbing built and verified; bare harness works, no real UI yet
 
 Manim-style, LLM-driven motion-graphics generator: describe a study
 topic, get a short animated explainer. Scoped as the single most
-valuable feature in the app. Backend (`api/motion_schema.py`,
-`api/motion_engine.py`, plus new routes in `api/index.py`) and the
-canvas player (`public/motion-player.js`) are both built and now both
-actually verified: 18 passing unit tests on the expansion engine, live
-HTTP tests against `/api/generate-motion` and `/api/expand-motion-script`
-(credential resolution across BYOK/server-key/manual-mode, quota,
-error translation), and headless-Chrome screenshot verification of the
-player against a resolved 11-layer test scene — shapes, group/parent
-nesting, camera pan/zoom, an arrow, and a KaTeX-rendered formula
-caption. That screenshot pass caught a real bug: `drawLayer()`'s
-`ctx.restore()` ran before a layer's children were drawn, so any
-layer's children rendered without the parent's translate/rotate/scale
-applied — group nesting was silently broken (confirmed visually: a
-group's child circles rendered off-canvas entirely). Fixed by moving
-the children recursion before `restore()`.
+valuable feature in the app.
 
-**Not started:** any UI. There's no way for a user to reach this
-feature yet, so per this file's own Help-view convention below, the
-Help view isn't touched until that changes. Still needed before UI
-work: an anonymous client ID (for the server-key quota path, stored in
-the existing `settings` IndexedDB store), a motion-generation
-equivalent of `api.js`'s request-header pattern, an IndexedDB store for
-resolved scripts (bump `DB_VERSION`), and persistent quota storage
-(currently an in-memory dict — same limitation as the pre-existing IP
-rate-limiter — needs a Vercel Marketplace → Upstash Redis integration
-before this is trusted with real traffic).
+**Backend** (`api/motion_schema.py`, `api/motion_engine.py`, routes in
+`api/index.py`) **and the canvas player** (`public/motion-player.js`)
+are built and verified: 18 passing unit tests on the expansion engine,
+live HTTP tests against both routes (BYOK/server-key/manual-mode
+credential resolution, quota, error translation), and headless-Chrome
+screenshot verification against a resolved 11-layer test scene —
+shapes, group/parent nesting, camera pan/zoom, an arrow, a KaTeX
+formula caption. That pass caught and fixed a real bug: `drawLayer()`'s
+`ctx.restore()` ran before a layer's children were drawn, so group
+nesting was silently broken (confirmed visually — a group's children
+rendered off-canvas — then fixed and re-verified pixel-accurate against
+hand-calculated positions).
+
+**Frontend plumbing** is now built too: an anonymous per-device client
+ID (`getMotionClientId()` in `db.js`, `settings` store) sent only on
+server-key-quota requests, never on BYOK ones; two new IndexedDB stores
+(`motionScripts`, `motionGenQueue` — `DB_VERSION` bumped to 9) for
+resolved scripts and an offline retry queue, kept as their own store
+rather than folding into the existing `genQueue` since that store's
+record shape is card-generation-specific; `public/motion-api.js`
+mirroring `api.js`'s BYOK/offline-queue/CustomEvent pattern exactly;
+and a manual-mode paste-back flow (`public/motion-manual-import.js`)
+mirroring `manual-json-import.js`'s UI pattern. Its JSON-repair parser
+was extracted into a new dependency-free `public/json-repair.js` in the
+process — the parser was generic ("pull JSON out of arbitrary AI-pasted
+text") but `manual-json-import.js` also imports `app.js` for
+`renderMath`/`showToast`, and that import was firing `app.js`'s
+top-level SPA routing as a side effect on pages that don't have that
+DOM, which the motion harness below caught as a real console error.
+
+**`public/motion-test.html`** is the bare test harness the roadmap
+called for — deliberately not real UI, just a topic box, a canvas, and
+play/seek controls, verified end-to-end with headless Chrome: topic
+entry → 401 with no key configured → manual-mode fallback renders →
+pasted JSON validates → resolves → plays (KaTeX overlay scaling
+confirmed correct once the canvas got proper responsive CSS, which it
+was missing at first — the overlay's scale math already assumed a
+CSS-stretched canvas, so this was a real gap, not just cosmetic) →
+saves to the scripts list → replayable.
+
+**Not started:** any polished UI integrated into the main app — that's
+still a separate, later effort, so the Help view stays untouched per
+this file's own convention below. **Also not done: end-to-end
+verification with a real Claude/Gemini key** — everything above was
+proven with a bogus/no-key 401 path and the manual-paste path; nobody's
+yet confirmed the model reliably produces a well-formed script via the
+actual tool-calling schema. **Still needed before persistent storage is
+trustworthy:** the free-quota counter is still an in-memory dict (same
+limitation as the pre-existing IP rate-limiter) — needs a Vercel
+Marketplace → Upstash Redis integration before this is trusted with
+real traffic.
 
 ---
 
