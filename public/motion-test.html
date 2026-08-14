@@ -35,6 +35,7 @@
   <div class="mh-row">
     <input class="mh-topic-input" id="topicInput" type="text" placeholder="e.g. how a capacitor charges" />
     <button class="btn-primary" id="generateBtn">Generate</button>
+    <button class="manual-import-copy" id="manualModeBtn">Use manual mode</button>
   </div>
 
   <div id="statusArea"></div>
@@ -71,6 +72,7 @@
     const timeLabel = document.getElementById('timeLabel');
     const topicInput = document.getElementById('topicInput');
     const generateBtn = document.getElementById('generateBtn');
+    const manualModeBtn = document.getElementById('manualModeBtn');
     const scriptList = document.getElementById('scriptList');
 
     let player = null;
@@ -161,6 +163,21 @@
       });
     }
 
+    function showManualMode(topic) {
+      setStatus('Manual mode — paste the AI response below.');
+      renderMotionManualImport(
+        manualImportArea,
+        topic,
+        async (r) => {
+          manualImportArea.innerHTML = '';
+          setStatus('');
+          await playScript(r.script);
+          await refreshScriptList();
+        },
+        () => { manualImportArea.innerHTML = ''; setStatus(''); }
+      );
+    }
+
     async function handleGenerate() {
       const topic = topicInput.value.trim();
       if (!topic) return;
@@ -168,7 +185,7 @@
       manualImportArea.innerHTML = '';
       generateBtn.disabled = true;
       generateBtn.textContent = 'Generating…';
-      setStatus('Generating — this calls a real AI model, may take a few seconds…');
+      setStatus('Generating…');
 
       const result = await generateMotion(topic);
 
@@ -182,18 +199,7 @@
 
       if (result.error) {
         if (result.status === 401) {
-          setStatus('No API key configured — use manual mode below.');
-          renderMotionManualImport(
-            manualImportArea,
-            topic,
-            async (r) => {
-              manualImportArea.innerHTML = '';
-              setStatus('');
-              await playScript(r.script);
-              await refreshScriptList();
-            },
-            () => { manualImportArea.innerHTML = ''; }
-          );
+          showManualMode(topic);
         } else {
           setStatus(result.error, true);
         }
@@ -208,6 +214,11 @@
     generateBtn.addEventListener('click', handleGenerate);
     topicInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleGenerate();
+    });
+    manualModeBtn.addEventListener('click', () => {
+      const topic = topicInput.value.trim() || 'Untitled';
+      manualImportArea.innerHTML = '';
+      showManualMode(topic);
     });
 
     (async () => {

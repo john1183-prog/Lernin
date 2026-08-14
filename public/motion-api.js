@@ -58,6 +58,27 @@ function emit(name, detail) {
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
+/**
+ * Best-effort extraction of a useful message from a failed response.
+ * Tries `{detail: "..."}` (the shape every route here returns) first;
+ * if the body isn't that shape at all — a raw platform error page, for
+ * instance, not something this backend produced — falls back to
+ * whatever text came back, so there's always *something* to go on
+ * instead of a bare status code.
+ */
+async function extractErrorMessage(response) {
+  const text = await response.text().catch(() => '');
+  try {
+    const body = JSON.parse(text);
+    if (body && body.detail) return body.detail;
+  } catch {
+    // not JSON — fall through to raw text below
+  }
+  const trimmed = text.trim();
+  if (trimmed) return trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed;
+  return `Request failed: HTTP ${response.status}`;
+}
+
 // 'lernin:motion-generation-success'    { topic, script, id }
 // 'lernin:motion-generation-error'      { topic, message, status? }
 // 'lernin:motion-generation-queued'     { topic }
@@ -90,8 +111,7 @@ export async function generateMotion(topic, deckId = null) {
     });
 
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const message = body.detail || `Generation failed: ${response.status}`;
+      const message = await extractErrorMessage(response);
       emit('lernin:motion-generation-error', { topic, message, status: response.status });
       return { script: null, id: null, queued: false, error: message, status: response.status };
     }
@@ -162,8 +182,7 @@ export async function expandMotionScriptManual(rawScript, topic, deckId = null) 
       body: JSON.stringify(rawScript)
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      return { script: null, id: null, error: body.detail || `Validation failed: ${response.status}` };
+      return { script: null, id: null, error: await extractErrorMessage(response) };
     }
     const data = await response.json();
     const record = await saveMotionScript({ topic: topic || 'Untitled', script: data.script, deckId });

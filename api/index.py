@@ -5,11 +5,14 @@ from typing import List, Optional
 import os
 import json
 import base64
+import logging
 import httpx
 import anthropic
 
 from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
 from motion_engine import expand_script, MotionEngineError
+
+logger = logging.getLogger("lernin.motion")
 
 app = FastAPI()
 
@@ -619,40 +622,54 @@ async def extract_ppt_text(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/generate-motion", response_model=GenerateMotionResponse)
 async def generate_motion(request: Request):
-    _check_rate_limit(_client_ip(request))
-
-    body = await request.json()
-    topic = body.get("topic", "")
-    if not topic or len(topic.strip()) < 3:
-        raise HTTPException(status_code=400, detail="Topic too short or missing.")
-
-    # Credentials (and any quota spend) resolved only after the topic is
-    # known to be valid — a request that was always going to fail
-    # shouldn't cost someone one of their free generations.
-    provider, api_key, _used_server_key = _resolve_motion_credentials(request)
-
     try:
-        if provider == "claude":
-            motion_script = _call_claude_motion(topic, api_key)
-        else:
-            motion_script = _call_gemini_motion(topic, api_key)
-    except anthropic.AuthenticationError:
-        raise HTTPException(status_code=401, detail="Invalid Claude API key.")
-    except anthropic.RateLimitError:
-        raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
-    except ValidationError:
-        raise HTTPException(status_code=502, detail="The model's script didn't match the expected shape. Try again.")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Motion script generation failed. Please try again.")
+        _check_rate_limit(_client_ip(request))
 
-    try:
-        resolved = expand_script(motion_script)
-    except MotionEngineError as e:
-        raise HTTPException(status_code=502, detail=f"Generated script has a timing issue: {e}")
+        body = await request.json()
+        topic = body.get("topic", "")
+        if not topic or len(topic.strip()) < 3:
+            raise HTTPException(status_code=400, detail="Topic too short or missing.")
 
-    return GenerateMotionResponse(script=resolved)
+        # Credentials (and any quota spend) resolved only after the topic is
+        # known to be valid — a request that was always going to fail
+        # shouldn't cost someone one of their free generations. This used
+        # to sit outside the try/except entirely, so a bug in here would
+        # crash with no detail message at all -- see the outer except below.
+        provider, api_key, _used_server_key = _resolve_motion_credentials(request)
+
+        try:
+            if provider == "claude":
+                motion_script = _call_claude_motion(topic, api_key)
+            else:
+                motion_script = _call_gemini_motion(topic, api_key)
+        except anthropic.AuthenticationError:
+            raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+        except anthropic.RateLimitError:
+            raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
+        except ValidationError as e:
+            raise HTTPException(status_code=502, detail=f"The model's script didn't match the expected shape: {e.errors()[0]['msg'] if e.errors() else e}")
+
+        try:
+            resolved = expand_script(motion_script)
+        except MotionEngineError as e:
+            raise HTTPException(status_code=502, detail=f"Generated script has a timing issue: {e}")
+
+        return GenerateMotionResponse(script=resolved)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Anything not already translated above lands here — including
+        # bugs in credential resolution, which used to be able to crash
+        # uncaught. Logged so it's visible in Vercel's Runtime Logs, and
+        # the exception itself is included in the response for now since
+        # this is still pre-launch/dev-only traffic. TEMPORARY: tighten
+        # this to a generic client-facing message (log-only detail) before
+        # any real public traffic — see UPCOMING_FEATURES.md.
+        logger.exception("generate_motion crashed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 @app.post("/api/expand-motion-script", response_model=GenerateMotionResponse)
 async def expand_motion_script(request: Request):
@@ -661,17 +678,24 @@ async def expand_motion_script(request: Request):
     AI chat and is pasting the JSON back. Same validation, same
     expand_script() call generate_motion uses after its own AI call, so
     both paths converge on identical output from here on."""
-    _check_rate_limit(_client_ip(request))
-    body = await request.json()
     try:
-        motion_script = MotionScript.model_validate(body)
-    except ValidationError as e:
-        first = e.errors()[0]
-        raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {first['msg']}")
+        _check_rate_limit(_client_ip(request))
+        body = await request.json()
+        try:
+            motion_script = MotionScript.model_validate(body)
+        except ValidationError as e:
+            first = e.errors()[0]
+            raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {first['msg']}")
 
-    try:
-        resolved = expand_script(motion_script)
-    except MotionEngineError as e:
-        raise HTTPException(status_code=400, detail=f"Timing issue: {e}")
+        try:
+            resolved = expand_script(motion_script)
+        except MotionEngineError as e:
+            raise HTTPException(status_code=400, detail=f"Timing issue: {e}")
 
-    return GenerateMotionResponse(script=resolved)
+        return GenerateMotionResponse(script=resolved)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("expand_motion_script crashed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
