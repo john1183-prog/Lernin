@@ -64,23 +64,46 @@ was missing at first — the overlay's scale math already assumed a
 CSS-stretched canvas, so this was a real gap, not just cosmetic) →
 saves to the scripts list → replayable.
 
-**Real deployment bug found and fixed after this actually shipped to
-production:** the first attempt at a live generation on the deployed
-site 500'd with no useful detail. Vercel's Runtime Logs (the person had
-to go find these — not something visible from a sandbox) showed the
-real cause: `ModuleNotFoundError: No module named 'motion_schema'`.
-`api/index.py`'s `from motion_schema import ...` / `from motion_engine
-import ...` are the *first* same-directory local-file imports anywhere
-in this project — everything else index.py imports is a pip package —
-so this gap in Vercel's Python bundling had never been hit before.
-Fixed with an explicit `includeFiles` glob in `vercel.json` (Vercel's
-own documented fix for exactly this error). Also hardened both motion
-routes at the same time: credential resolution used to sit outside the
-route's try/except entirely, so a crash there produced no detail
-message at all — now the whole route body is wrapped, logged
-server-side, and (temporarily, while this is pre-launch) the exception
-itself rides along in the response so it's visible without needing
-dashboard access.
+**Real deployment bug found after this actually shipped to production,
+and it took two attempts to actually fix:** the first live generation
+on the deployed site 500'd with no useful detail. Vercel's Runtime Logs
+showed the real error: `ModuleNotFoundError: No module named
+'motion_schema'`. `api/index.py`'s `from motion_schema import ...` /
+`from motion_engine import ...` are the *first* same-directory
+local-file imports anywhere in this project — everything else
+index.py imports is a pip package — so this class of bug had never
+been hit before.
+
+First attempt: an explicit `includeFiles` glob in `vercel.json`. This
+was the wrong fix, confirmed the hard way — same exact error on the
+next deploy. Vercel's own docs say Python functions bundle every
+reachable file by default (no tree-shaking), so the files were
+probably never missing from the bundle in the first place;
+`includeFiles` controls what's *included in the deployment*, not
+what's on Python's `sys.path`, and the second deploy proved those are
+different problems.
+
+Second attempt, the real fix: the traceback shows Vercel's own runtime
+(`vc_init.py`) loads `index.py` via `importlib.import_module()` —
+dynamic loading, not running it as a script. That distinction matters:
+a normally-run script gets its own directory auto-added to
+`sys.path`; a dynamically-loaded module doesn't. So `motion_schema.py`
+could be sitting right next to `index.py` in the deployed bundle and
+still be unimportable, because its directory was simply never on the
+path. Fixed with an explicit `sys.path.insert(0, ...)` for this file's
+own directory before the sibling imports. Verified locally (not just
+theorized) by reproducing Vercel's exact loading mechanism —
+`importlib.util.spec_from_file_location` + `exec_module`, from a clean
+subprocess with the real project layout — which reproduced the
+identical `ModuleNotFoundError` against the unfixed code and resolved
+cleanly against the fixed version.
+
+Also hardened both motion routes in the same pass: credential
+resolution used to sit outside the route's try/except entirely, so a
+crash there produced no detail message at all — now the whole route
+body is wrapped, logged server-side, and (temporarily, while this is
+pre-launch) the exception itself rides along in the response so it's
+visible without needing dashboard access.
 
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per

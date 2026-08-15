@@ -3,11 +3,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional
 import os
+import sys
 import json
 import base64
 import logging
 import httpx
 import anthropic
+
+# Vercel's runtime (_vendor/vercel_runtime/vc_init.py) loads this file
+# dynamically via importlib.import_module() rather than running it as a
+# script -- so unlike a normal `python3 index.py` invocation, this file's
+# own directory is NOT automatically added to sys.path. Sibling local
+# imports (motion_schema, motion_engine) fail to resolve without this,
+# even though the files themselves are present in the deployed bundle.
+# This was the actual cause of the "ModuleNotFoundError: No module named
+# 'motion_schema'" seen in production -- an explicit includeFiles glob in
+# vercel.json (tried first) controls what's *bundled*, not what's on
+# sys.path, so it didn't touch the real problem. Confirmed locally that
+# this doesn't change behavior when run normally (this directory is
+# already on sys.path in that case; insert() with a duplicate is a no-op
+# in practice), so this is safe for both environments.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
 from motion_engine import expand_script, MotionEngineError
