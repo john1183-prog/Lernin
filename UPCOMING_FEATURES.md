@@ -151,6 +151,37 @@ layers and instruct treating a scene as sequential beats that fade out
 old content, not an accumulating pile — aiming for ~2-4 layers visible
 at once rather than everything that's ever appeared.
 
+**First real BYOK attempt (Gemini) found a genuinely different class of
+bug, and it revealed the "type": [x, "null"] pattern was never actually
+verified against a live call at all:** `400 Invalid JSON payload
+received... Proto field is not repeating, cannot start list`. Gemini's
+schema is a scalar-typed subset of OpenAPI 3.0 — its `type` field is a
+protobuf enum, not a repeating field, so it rejects ANY array value for
+`type`, not just JSON-Schema-style nullable unions. The old comment
+above `MOTION_SCRIPT_SCHEMA` claimed this pattern was already proven
+by the existing card-generation schema — it wasn't; that schema had
+the identical bug the whole time, fixed alongside this one (unrelated
+to Motion Studio, found while researching the real fix).
+
+Rewrote the whole schema Gemini-compatible: every nullable field is now
+a single `type` plus a sibling `nullable: true` (Gemini's own
+documented pattern) instead of a type array. One field needed a
+different fix entirely — `KeyframePoint.value` genuinely can be either
+a number or a hex-color string, and Gemini has no way to express a type
+union at all (no array, no oneOf/anyOf). Declared it as a plain string
+uniformly and added a `field_validator` that coerces a numeric-looking
+string back to a real float before it reaches the resolved JSON —
+without this, every Gemini-generated x/y/scale/rotation/opacity
+keyframe would've silently stopped interpolating smoothly (the player
+only lerps between two numbers) and just snapped between values
+instead. Added a permanent structural test that walks the entire schema
+tree checking for array-typed fields, non-string enum values, and
+oneOf/anyOf/allOf — this exact bug class shouldn't be able to come back
+silently. 28 tests total, all passing. Couldn't verify against Gemini's
+actual live endpoint from the sandbox (not in the network allowlist),
+so this is verified as thoroughly as possible short of an actual call —
+the real confirmation is the next live attempt.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end

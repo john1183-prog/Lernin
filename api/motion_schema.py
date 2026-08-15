@@ -46,6 +46,24 @@ class KeyframePoint(BaseModel):
     value: Union[float, str]
     easing: str = "linear"
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def _coerce_numeric_string(cls, v):
+        # The raw schema declares this field as a plain string (Gemini
+        # can't express "number or string" at all -- see the comment
+        # above MOTION_SCRIPT_SCHEMA), so Gemini always sends e.g. "42.5"
+        # for what should be a numeric x/y/scale/rotation/opacity value.
+        # Coerce it back to a real float here; genuinely non-numeric
+        # strings (hex colors like "#ff0000") just fail the float() parse
+        # and pass through unchanged. Claude sending an actual JSON
+        # number skips this entirely (isinstance check below is False).
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return v
+        return v
+
     @field_validator("easing")
     @classmethod
     def _known_easing(cls, v):
@@ -223,16 +241,33 @@ def _time_refs_of(layer: Layer) -> List[TimeRef]:
 
 
 # ---------- Raw schema for the LLM (Claude tool input_schema / Gemini responseSchema) ----------
-# One dict, used for both providers — Gemini's schema dialect is a subset
-# of what Claude's tool-calling accepts, and this project's existing
-# GEMINI_RESPONSE_SCHEMA already relies on the same "type": [x, "null"]
-# union style used here, so a single shared dict covers both without
-# duplicating ~150 lines of near-identical JSON Schema per provider.
+# One dict, used for both providers. Gemini's schema is a scalar-typed
+# subset of OpenAPI 3.0 (see https://ai.google.dev/gemini-api/docs/structured-output)
+# -- "type" is a protobuf enum field, not a repeating one, so it rejects
+# ANY array value for "type", full stop, not just JSON-Schema-style
+# "[x, null]" nullable unions (confirmed against a live Gemini call: a
+# 400 "Proto field is not repeating, cannot start list" on exactly that
+# pattern). The previous version of this schema used that pattern
+# throughout on the (untested) assumption it matched Gemini's card-
+# generation schema elsewhere in this project -- it didn't; that schema
+# had the identical bug, fixed alongside this one.
+#
+# Gemini's documented replacement for a nullable field is a single
+# "type" plus a sibling "nullable": true (not a type array) -- used
+# throughout below. Gemini also has no way to express "this field is
+# either a number or a string" (no oneOf/anyOf, no type arrays) --
+# KeyframePoint.value hits this for real (a keyframe holds either a
+# plain number or a hex color string), so that one field is declared
+# as "string" uniformly and coerced back to float on the Python side
+# when it parses as a plain number (see KeyframePoint's field_validator
+# below) -- transparent to both providers: Claude can still send an
+# actual JSON number and it passes through unchanged, Gemini's
+# string-only output gets normalized before it ever reaches Pydantic.
 _TIME_REF_SCHEMA = {
     "type": "object",
-    "description": "A point in time. Set 'marker' to a name from the markers list and use 'offset' as seconds relative to it, or leave marker null and use 'offset' as the absolute time in seconds.",
+    "description": "A point in time. Set 'marker' to a name from the markers list and use 'offset' as seconds relative to it, or leave marker unset and use 'offset' as the absolute time in seconds.",
     "properties": {
-        "marker": {"type": ["string", "null"]},
+        "marker": {"type": "string", "nullable": True},
         "offset": {"type": "number"},
     },
     "required": ["offset"],
@@ -242,7 +277,7 @@ _KEYFRAME_POINT_SCHEMA = {
     "type": "object",
     "properties": {
         "time": _TIME_REF_SCHEMA,
-        "value": {"type": ["number", "string"], "description": "Number for x/y/scale/rotation/opacity, hex string for color."},
+        "value": {"type": "string", "description": "A plain number as a string for x/y/scale/rotation/opacity (e.g. \"42.5\"), or a hex string for color (e.g. \"#ff0000\")."},
         "easing": {"type": "string", "enum": list(EASINGS)},
     },
     "required": ["time", "value"],
@@ -294,10 +329,11 @@ MOTION_SCRIPT_SCHEMA = {
             },
         },
         "camera": {
-            "type": ["object", "null"],
+            "type": "object",
+            "nullable": True,
             "properties": {
-                "x": {"type": ["number", "null"]},
-                "y": {"type": ["number", "null"]},
+                "x": {"type": "number", "nullable": True},
+                "y": {"type": "number", "nullable": True},
                 "zoom": {"type": "number"},
                 "rotation": {"type": "number"},
                 "keyframes": {"type": "array", "items": _CAMERA_TRACK_SCHEMA},
@@ -311,28 +347,34 @@ MOTION_SCRIPT_SCHEMA = {
                 "properties": {
                     "name": {"type": "string", "description": "Unique within the script."},
                     "type": {"type": "string", "enum": list(LAYER_TYPES)},
-                    "parent": {"type": ["string", "null"], "description": "Another layer's name, for grouped transforms."},
+                    "parent": {"type": "string", "nullable": True, "description": "Another layer's name, for grouped transforms."},
                     "x": {"type": "number"},
                     "y": {"type": "number"},
                     "scale": {"type": "number"},
                     "rotation": {"type": "number"},
                     "opacity": {"type": "number"},
                     "color": {"type": "string"},
-                    "width": {"type": ["number", "null"], "description": "rect only."},
-                    "height": {"type": ["number", "null"], "description": "rect only."},
-                    "radius": {"type": ["number", "null"], "description": "circle/polygon only."},
-                    "sides": {"type": ["integer", "null"], "description": "polygon only, 3-12."},
-                    "x2": {"type": ["number", "null"], "description": "arrow/line endpoint."},
-                    "y2": {"type": ["number", "null"], "description": "arrow/line endpoint."},
-                    "strokeWidth": {"type": ["number", "null"]},
-                    "text": {"type": ["string", "null"], "description": "text/caption/emphasis only. If format is 'formula', valid KaTeX/LaTeX."},
-                    "fontSize": {"type": ["number", "null"]},
+                    "width": {"type": "number", "nullable": True, "description": "rect only."},
+                    "height": {"type": "number", "nullable": True, "description": "rect only."},
+                    "radius": {"type": "number", "nullable": True, "description": "circle/polygon only."},
+                    "sides": {"type": "integer", "nullable": True, "description": "polygon only, 3-12."},
+                    "x2": {"type": "number", "nullable": True, "description": "arrow/line endpoint."},
+                    "y2": {"type": "number", "nullable": True, "description": "arrow/line endpoint."},
+                    "strokeWidth": {"type": "number", "nullable": True},
+                    "text": {"type": "string", "nullable": True, "description": "text/caption/emphasis only. If format is 'formula', valid KaTeX/LaTeX."},
+                    "fontSize": {"type": "number", "nullable": True},
                     "format": {"type": "string", "enum": list(TEXT_FORMATS), "description": "'formula' for KaTeX-rendered math, 'text' otherwise."},
-                    "at": {**_TIME_REF_SCHEMA, "type": ["object", "null"], "description": "emphasis only: when it appears."},
-                    "hold": {"type": ["number", "null"], "description": "emphasis only: seconds fully visible before it exits."},
-                    "style": {"type": ["string", "null"], "enum": list(EMPHASIS_STYLES) + [None]},
-                    "size": {"type": ["string", "null"], "enum": list(EMPHASIS_SIZES) + [None]},
-                    "slot": {"type": ["string", "null"], "enum": list(EMPHASIS_SLOTS) + [None]},
+                    "at": {
+                        "type": "object",
+                        "nullable": True,
+                        "description": "emphasis only: when it appears.",
+                        "properties": _TIME_REF_SCHEMA["properties"],
+                        "required": _TIME_REF_SCHEMA["required"],
+                    },
+                    "hold": {"type": "number", "nullable": True, "description": "emphasis only: seconds fully visible before it exits."},
+                    "style": {"type": "string", "nullable": True, "enum": list(EMPHASIS_STYLES)},
+                    "size": {"type": "string", "nullable": True, "enum": list(EMPHASIS_SIZES)},
+                    "slot": {"type": "string", "nullable": True, "enum": list(EMPHASIS_SLOTS)},
                     "keyframes": {"type": "array", "items": _KEYFRAME_TRACK_SCHEMA},
                 },
                 "required": ["name", "type"],

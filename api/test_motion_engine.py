@@ -11,7 +11,7 @@ than assumed correct because it was carefully ported.
 import unittest
 from pydantic import ValidationError
 
-from motion_schema import MotionScript
+from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
 from motion_engine import expand_script, MotionEngineError
 
 
@@ -74,6 +74,52 @@ class TestMarkersAndTracks(unittest.TestCase):
         }])
         with self.assertRaises(MotionEngineError):
             expand_script(s)
+
+
+class TestGeminiValueCoercion(unittest.TestCase):
+    """KeyframePoint.value is declared as a plain string in the raw schema
+    (Gemini can't express number-or-string), so Gemini always sends
+    numeric values as strings like "42.5". These confirm that gets
+    normalized back to a real float before it ever reaches the resolved
+    JSON the player interpolates -- without this, every Gemini-generated
+    x/y/scale/rotation/opacity keyframe would silently stop interpolating
+    smoothly (the player only lerps when both sides are numbers) and just
+    snap between values instead."""
+
+    def test_numeric_string_from_gemini_coerces_to_float(self):
+        s = script(layers=[{
+            "name": "box", "type": "rect",
+            "keyframes": [{"property": "x", "points": [
+                {"time": {"offset": 0}, "value": "42.5"},
+            ]}],
+        }])
+        out = expand_script(s)
+        v = out["layers"][0]["keyframes"]["x"][0]["value"]
+        self.assertIsInstance(v, float)
+        self.assertAlmostEqual(v, 42.5)
+
+    def test_hex_color_string_is_not_coerced(self):
+        s = script(layers=[{
+            "name": "box", "type": "rect",
+            "keyframes": [{"property": "color", "points": [
+                {"time": {"offset": 0}, "value": "#ff0000"},
+            ]}],
+        }])
+        out = expand_script(s)
+        v = out["layers"][0]["keyframes"]["color"][0]["value"]
+        self.assertEqual(v, "#ff0000")
+
+    def test_actual_json_number_passes_through_unchanged(self):
+        s = script(layers=[{
+            "name": "box", "type": "rect",
+            "keyframes": [{"property": "x", "points": [
+                {"time": {"offset": 0}, "value": 42.5},
+            ]}],
+        }])
+        out = expand_script(s)
+        v = out["layers"][0]["keyframes"]["x"][0]["value"]
+        self.assertIsInstance(v, float)
+        self.assertAlmostEqual(v, 42.5)
 
 
 class TestStructuralValidation(unittest.TestCase):
@@ -222,6 +268,53 @@ class TestFullScene(unittest.TestCase):
         self.assertIn("scale", impact_word["keyframes"])
         self.assertEqual(formula["format"], "formula")
         self.assertEqual(out["camera"]["keyframes"]["zoom"][1]["time"], 1.3)
+
+
+class TestGeminiSchemaCompatibility(unittest.TestCase):
+    """MOTION_SCRIPT_SCHEMA is sent as-is to both Claude's tool input_schema
+    and Gemini's responseSchema. Gemini's 'type' is a protobuf enum field,
+    not a repeating one -- it rejects ANY array value for 'type' (confirmed
+    live: 'Proto field is not repeating, cannot start list'), and its enum
+    values must all be strings (no None/null entries). These tests walk the
+    whole schema tree so this exact bug class can't silently come back."""
+
+    def _walk(self, node, path=""):
+        if isinstance(node, dict):
+            if "type" in node:
+                self.assertNotIsInstance(
+                    node["type"], list,
+                    f"'type' at {path or '<root>'} is a list ({node['type']!r}) -- "
+                    f"Gemini rejects this. Use a single type string plus "
+                    f"'nullable': true instead.",
+                )
+            if "enum" in node:
+                for v in node["enum"]:
+                    self.assertIsInstance(
+                        v, str,
+                        f"enum at {path or '<root>'} contains a non-string value "
+                        f"({v!r}) -- Gemini enum values must all be strings.",
+                    )
+            for key in ("oneOf", "anyOf", "allOf"):
+                self.assertNotIn(
+                    key, node,
+                    f"'{key}' at {path or '<root>'} -- Gemini's schema subset "
+                    f"doesn't support this keyword at all.",
+                )
+            for k, v in node.get("properties", {}).items():
+                self._walk(v, f"{path}.properties.{k}")
+            if "items" in node:
+                self._walk(node["items"], f"{path}.items")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                self._walk(v, f"{path}[{i}]")
+
+    def test_no_array_typed_fields_anywhere_in_the_schema(self):
+        self._walk(MOTION_SCRIPT_SCHEMA)
+
+    def test_no_none_in_any_enum_anywhere_in_the_schema(self):
+        # covered by _walk's enum check above, kept as a named test so a
+        # failure here reads clearly rather than folding into the type test
+        self._walk(MOTION_SCRIPT_SCHEMA)
 
 
 if __name__ == "__main__":
