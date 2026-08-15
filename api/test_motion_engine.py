@@ -96,6 +96,21 @@ class TestStructuralValidation(unittest.TestCase):
         with self.assertRaises(ValidationError):
             script(layers=[{"name": "e", "type": "emphasis", "text": "Hi", "at": {"offset": 1}}])
 
+    def test_emphasis_fields_on_non_emphasis_layer_rejected(self):
+        # Reproduces the real bug found in a live script: a caption using
+        # 'at'/'style' (which only work on type: emphasis) instead of
+        # explicit opacity keyframes. Previously silently ignored, leaving
+        # the layer static and always-visible with no way to tell why.
+        with self.assertRaises(ValidationError):
+            script(layers=[{
+                "name": "subtitle", "type": "caption", "text": "The fundamental science",
+                "at": {"marker": "reveal", "offset": 0.5}, "style": "fade",
+            }])
+
+    def test_hold_on_non_emphasis_layer_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(layers=[{"name": "a", "type": "text", "text": "hi", "hold": 1.0}])
+
     def test_unknown_easing_rejected(self):
         with self.assertRaises(ValidationError):
             script(layers=[{

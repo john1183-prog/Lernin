@@ -116,6 +116,12 @@ class Layer(BaseModel):
 
     @model_validator(mode="after")
     def _emphasis_shape(self):
+        emphasis_fields = {
+            "at": self.at, "hold": self.hold, "style": self.style,
+            "size": self.size, "slot": self.slot,
+        }
+        set_fields = [k for k, v in emphasis_fields.items() if v is not None]
+
         if self.type == "emphasis":
             if self.at is None or self.style is None:
                 raise ValueError(f"emphasis layer '{self.name}' requires 'at' and 'style'.")
@@ -125,6 +131,20 @@ class Layer(BaseModel):
                 raise ValueError(f"Unknown emphasis size '{self.size}'. Use one of {EMPHASIS_SIZES}.")
             if self.slot is not None and self.slot not in EMPHASIS_SLOTS:
                 raise ValueError(f"Unknown emphasis slot '{self.slot}'. Use one of {EMPHASIS_SLOTS}.")
+        elif set_fields:
+            # 'at'/'hold'/'style'/'size'/'slot' only do anything on an
+            # emphasis layer -- expand_script() silently ignores them on
+            # every other type. A layer that sets them almost certainly
+            # meant type: "emphasis" (to get the auto fade/pop-in) and
+            # will otherwise end up static and always-visible with no
+            # opacity keyframes at all, which is a confusing, silent
+            # failure mode rather than a loud, fixable one.
+            raise ValueError(
+                f"layer '{self.name}' sets {set_fields} but type is '{self.type}', not "
+                f"'emphasis' -- these fields only work on emphasis layers and are otherwise "
+                f"ignored. Either change type to 'emphasis', or remove {set_fields} and give "
+                f"this layer explicit 'keyframes' instead (e.g. an opacity track)."
+            )
         return self
 
 

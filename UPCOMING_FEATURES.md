@@ -132,6 +132,25 @@ passing, that patch needs to land in a real file, not just the
 sandbox's state, or it'll pass locally and fail in production every
 time.
 
+**First real end-to-end use, via manual mode, surfaced a genuine script-
+quality bug this schema should have caught:** a physics-overview script
+had three captions using `at`/`style` (emphasis-only fields) instead of
+`type: "emphasis"` — silently ignored rather than rejected, leaving
+those captions with no opacity keyframes at all, so they were visible
+from frame zero for the entire duration. Combined with every other text
+layer fading in but never fading back out, the result was every section
+label piled on screen simultaneously by the end — confirmed against the
+actual screenshots, not just the JSON. Fixed two ways: `motion_schema.py`
+now rejects `at`/`hold`/`style`/`size`/`slot` on any non-`"emphasis"`
+layer with a specific, actionable error instead of silently dropping
+them (new tests cover this, including a direct reproduction of the
+physics script's exact mistake); and both prompts (the Python system
+prompt and the manual-mode prompt — kept re-verified byte-identical,
+same process as before) now explicitly scope those fields to emphasis
+layers and instruct treating a scene as sequential beats that fade out
+old content, not an accumulating pile — aiming for ~2-4 layers visible
+at once rather than everything that's ever appeared.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end

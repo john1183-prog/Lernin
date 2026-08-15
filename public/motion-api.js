@@ -229,7 +229,9 @@ Rules:
 - keyframe "property" must be one of: x, y, scale, rotation, opacity, color
 - "time" is either {"marker": "name", "offset": seconds-after-it} or {"offset": seconds} for an absolute time (omit marker)
 - "easing" is one of: linear, easeIn, easeOut, easeInOut, bounce, elastic, back
-- an "emphasis" layer needs "at" (a time object) and "style" (pop, slideup, fade, or zoom) -- no manual keyframes
+- an "emphasis" layer needs "at" (a time object) and "style" (pop, slideup, fade, or zoom) -- no manual keyframes needed for it
+- "at"/"hold"/"style"/"size"/"slot" ONLY work on an "emphasis" layer -- setting any of them on any other type is rejected, and that other layer needs its own "keyframes" (an opacity track at least) to appear at all
+- treat the scene as a sequence of beats, not a pile: when a new beat starts, fade out the previous beat's layers (an opacity keyframe back to 0) unless something is deliberately meant to persist throughout (e.g. a title). Don't leave everything that's ever appeared still on screen at the end -- aim for roughly 2-4 layers visible at once, not the whole cast
 - set "format": "formula" only for real mathematical notation (valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words
 - keep duration reasonable, 8-45 seconds for one concept
 - 1-40 layers, unique names`;
