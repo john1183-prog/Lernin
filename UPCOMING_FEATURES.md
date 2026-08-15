@@ -105,6 +105,33 @@ body is wrapped, logged server-side, and (temporarily, while this is
 pre-launch) the exception itself rides along in the response so it's
 visible without needing dashboard access.
 
+**Third round, past the import error entirely, a different pre-existing
+bug:** `RuntimeError: Form data requires "python-multipart" to be
+installed`, crashing on `/api/generate-cards-vision` (not a Motion
+Studio route — this predates it) at module-import time, since any
+`File`/`Form`/`UploadFile` route parameter triggers FastAPI's multipart
+check as soon as the route decorator runs. `python-multipart` was
+missing from `requirements.txt` the whole time; local dev sessions
+never caught it because it kept getting `pip install`ed directly into
+whatever sandbox was open at the time, as a "make uvicorn run" fix,
+without ever being added to the one file that actually determines what
+Vercel installs. Same failure mode as the sys.path bug, different
+mechanism: something worked locally for reasons that don't hold in the
+actual deployment environment. Fixed by adding it to `requirements.txt`
+and, this time, verifying the fix in a genuinely clean virtualenv with
+*only* `requirements.txt` installed — no uvicorn, no leftover manual
+installs from earlier in a session — confirming all 5 routes register
+and the two that need multipart parsing actually work.
+
+**Pattern worth remembering across all three of these:** a sandbox
+that's been worked in for a while accumulates fixes that never make it
+into a committed file (a missing pip install, a stale local server).
+Vercel only ever sees `requirements.txt` and the actual repo contents —
+if something needed to be manually patched locally to get a test
+passing, that patch needs to land in a real file, not just the
+sandbox's state, or it'll pass locally and fail in production every
+time.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end
