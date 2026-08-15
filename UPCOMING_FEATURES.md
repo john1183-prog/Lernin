@@ -64,6 +64,24 @@ was missing at first — the overlay's scale math already assumed a
 CSS-stretched canvas, so this was a real gap, not just cosmetic) →
 saves to the scripts list → replayable.
 
+**Real deployment bug found and fixed after this actually shipped to
+production:** the first attempt at a live generation on the deployed
+site 500'd with no useful detail. Vercel's Runtime Logs (the person had
+to go find these — not something visible from a sandbox) showed the
+real cause: `ModuleNotFoundError: No module named 'motion_schema'`.
+`api/index.py`'s `from motion_schema import ...` / `from motion_engine
+import ...` are the *first* same-directory local-file imports anywhere
+in this project — everything else index.py imports is a pip package —
+so this gap in Vercel's Python bundling had never been hit before.
+Fixed with an explicit `includeFiles` glob in `vercel.json` (Vercel's
+own documented fix for exactly this error). Also hardened both motion
+routes at the same time: credential resolution used to sit outside the
+route's try/except entirely, so a crash there produced no detail
+message at all — now the whole route body is wrapped, logged
+server-side, and (temporarily, while this is pre-launch) the exception
+itself rides along in the response so it's visible without needing
+dashboard access.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end
