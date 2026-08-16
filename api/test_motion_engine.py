@@ -76,6 +76,33 @@ class TestMarkersAndTracks(unittest.TestCase):
             expand_script(s)
 
 
+class TestSceneBoundsClamping(unittest.TestCase):
+    """A model picking width=3000 or fps=90 despite prompt guidance is a
+    mundane, harmless mistake -- clamped rather than rejected, since the
+    resulting video is still perfectly valid, just capped. See the
+    _clamp_out_of_range validator on Scene."""
+
+    def test_oversized_width_clamped_not_rejected(self):
+        s = script(scene={"name": "t", "duration": 5, "width": 3000})
+        self.assertEqual(s.scene.width, 1920)
+
+    def test_undersized_height_clamped_up(self):
+        s = script(scene={"name": "t", "duration": 5, "height": 5})
+        self.assertEqual(s.scene.height, 200)
+
+    def test_oversized_fps_clamped(self):
+        s = script(scene={"name": "t", "duration": 5, "fps": 200})
+        self.assertEqual(s.scene.fps, 60)
+
+    def test_oversized_duration_clamped(self):
+        s = script(scene={"name": "t", "duration": 500})
+        self.assertEqual(s.scene.duration, 120)
+
+    def test_in_range_values_untouched(self):
+        s = script(scene={"name": "t", "duration": 12, "width": 640, "height": 480, "fps": 24})
+        self.assertEqual((s.scene.width, s.scene.height, s.scene.fps, s.scene.duration), (640, 480, 24, 12))
+
+
 class TestGeminiValueCoercion(unittest.TestCase):
     """KeyframePoint.value is declared as a plain string in the raw schema
     (Gemini can't express number-or-string), so Gemini always sends

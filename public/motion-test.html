@@ -19,8 +19,12 @@
   .mh-status { color: var(--ink-secondary); font-size: 14px; margin: 8px 0; }
   .mh-status.is-error { color: #c0392b; }
   .mh-scripts { margin-top: var(--space-lg); }
-  .mh-script-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--ink-secondary); }
+  .mh-script-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--ink-secondary); gap: 8px; }
+  .mh-script-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
   .mh-badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--ink-secondary); color: white; }
+  .mh-json-panel { margin-top: 8px; }
+  .mh-json-panel textarea { width: 100%; height: 260px; font-family: monospace; font-size: 12px; padding: 8px; border-radius: 8px; border: 1px solid var(--ink-secondary); resize: vertical; box-sizing: border-box; }
+  .mh-json-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -48,6 +52,14 @@
     <button class="icon-btn" id="playPauseBtn" aria-label="Play/Pause">▶️</button>
     <input type="range" id="seekSlider" min="0" max="100" value="0" />
     <span id="timeLabel" style="font-size:13px;color:var(--ink-secondary);white-space:nowrap;">0.0s</span>
+    <button class="manual-import-copy" id="viewJsonBtn">View JSON</button>
+  </div>
+  <div class="mh-json-panel" id="jsonPanel" style="display:none;">
+    <div class="mh-json-panel-header">
+      <span class="mh-status" style="margin:0;">Resolved script (what the backend actually returned and the player is rendering)</span>
+      <button class="manual-import-copy" id="copyJsonBtn">Copy</button>
+    </div>
+    <textarea id="jsonText" readonly></textarea>
   </div>
 
   <div class="mh-scripts">
@@ -74,6 +86,12 @@
     const generateBtn = document.getElementById('generateBtn');
     const manualModeBtn = document.getElementById('manualModeBtn');
     const scriptList = document.getElementById('scriptList');
+    const viewJsonBtn = document.getElementById('viewJsonBtn');
+    const jsonPanel = document.getElementById('jsonPanel');
+    const jsonText = document.getElementById('jsonText');
+    const copyJsonBtn = document.getElementById('copyJsonBtn');
+
+    let currentScript = null;
 
     let player = null;
     let seekRaf = null;
@@ -96,6 +114,10 @@
       manualImportArea.innerHTML = '';
       if (player) player.destroy();
       await waitForKatex();
+
+      currentScript = script;
+      jsonPanel.style.display = 'none';
+      jsonText.value = JSON.stringify(script, null, 2);
 
       stage.style.display = '';
       playerControls.style.display = '';
@@ -137,6 +159,20 @@
       timeLabel.textContent = `${player.currentTime.toFixed(1)}s / ${player.duration.toFixed(1)}s`;
     });
 
+    viewJsonBtn.addEventListener('click', () => {
+      jsonPanel.style.display = jsonPanel.style.display === 'none' ? '' : 'none';
+    });
+
+    copyJsonBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(jsonText.value);
+        copyJsonBtn.textContent = 'Copied!';
+        setTimeout(() => { copyJsonBtn.textContent = 'Copy'; }, 1500);
+      } catch {
+        jsonText.select();
+      }
+    });
+
     async function refreshScriptList() {
       const scripts = await getMotionScripts();
       if (!scripts.length) {
@@ -151,7 +187,10 @@
             <strong>${s.topic}</strong>
             <span class="mh-badge">${s.script.layers.length} layers</span>
           </div>
-          <button class="manual-import-copy" data-play-id="${s.id}">Play</button>
+          <div class="mh-script-item-actions">
+            <button class="manual-import-copy" data-json-id="${s.id}">JSON</button>
+            <button class="manual-import-copy" data-play-id="${s.id}">Play</button>
+          </div>
         </div>`
         )
         .join('');
@@ -159,6 +198,16 @@
         btn.addEventListener('click', async () => {
           const rec = await getMotionScript(btn.dataset.playId);
           if (rec) playScript(rec.script);
+        });
+      });
+      scriptList.querySelectorAll('[data-json-id]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const rec = await getMotionScript(btn.dataset.jsonId);
+          if (!rec) return;
+          currentScript = rec.script;
+          jsonText.value = JSON.stringify(rec.script, null, 2);
+          jsonPanel.style.display = '';
+          jsonPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         });
       });
     }

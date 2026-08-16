@@ -72,6 +72,9 @@ export function renderMotionManualImport(container, topic, onDone, onBack) {
       <button class="btn-primary" id="mmiImportBtn" style="width:100%;margin-top:var(--space-md);" disabled>
         Create Animation
       </button>
+      <button class="manual-import-copy" id="mmiCopyErrorBtn" style="width:100%;margin-top:8px;display:none;">
+        Copy error to send back to your AI
+      </button>
     </div>
   `;
   container.appendChild(wrap);
@@ -97,13 +100,19 @@ export function renderMotionManualImport(container, topic, onDone, onBack) {
   const jsonInput = wrap.querySelector('#mmiJsonInput');
   const importBtn = wrap.querySelector('#mmiImportBtn');
   const hint = wrap.querySelector('#mmiJsonHint');
+  const copyErrorBtn = wrap.querySelector('#mmiCopyErrorBtn');
   let lastParsed = null;
+  let lastRawInput = '';
 
-  jsonInput.addEventListener('input', validateJSON);
+  jsonInput.addEventListener('input', () => {
+    copyErrorBtn.style.display = 'none';
+    validateJSON();
+  });
 
   function validateJSON() {
     const raw = jsonInput.value.trim();
     lastParsed = null;
+    lastRawInput = raw;
     if (!raw) {
       hint.textContent = 'Waiting for input...';
       hint.className = 'manual-import-hint';
@@ -134,6 +143,7 @@ export function renderMotionManualImport(container, topic, onDone, onBack) {
     if (!lastParsed) return;
     importBtn.disabled = true;
     importBtn.textContent = 'Validating…';
+    copyErrorBtn.style.display = 'none';
 
     const result = await expandMotionScriptManual(lastParsed, topic);
 
@@ -142,6 +152,27 @@ export function renderMotionManualImport(container, topic, onDone, onBack) {
       hint.className = 'manual-import-hint is-error';
       importBtn.disabled = false;
       importBtn.textContent = 'Create Animation';
+
+      // Server-side validation (e.g. an emphasis field used on the wrong
+      // layer type, or a structural issue the shallow JS check above
+      // can't catch) means the AI needs to actually fix the script, not
+      // just retry pasting the same thing. Closing that loop without
+      // retyping anything is the whole point of this button.
+      copyErrorBtn.style.display = '';
+      copyErrorBtn.onclick = async () => {
+        const followUp = `This didn't validate — error: ${result.error}\n\nHere's what I sent you before:\n\n${lastRawInput}\n\nPlease fix the issue and return the complete corrected JSON in the same format, with no markdown fences or commentary.`;
+        try {
+          await navigator.clipboard.writeText(followUp);
+          copyErrorBtn.textContent = 'Copied! Paste it back to your AI';
+          setTimeout(() => { copyErrorBtn.textContent = 'Copy error to send back to your AI'; }, 2000);
+        } catch {
+          // Clipboard API unavailable — fall back to selecting it in the
+          // JSON textarea's place isn't possible here since this text
+          // never lives in a visible field; show it via prompt() instead
+          // so it's still copyable by hand.
+          window.prompt('Copy this and paste it back to your AI:', followUp);
+        }
+      };
       return;
     }
 

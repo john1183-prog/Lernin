@@ -194,6 +194,23 @@ class Scene(BaseModel):
     width: int = Field(default=800, ge=200, le=1920)
     height: int = Field(default=500, ge=200, le=1920)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _clamp_out_of_range(cls, data):
+        # Prompt guidance tells the model these bounds exist, but nothing
+        # guarantees it listens -- and a model picking width=3000 or
+        # fps=90 is a mundane, harmless mistake, not a sign the whole
+        # script is wrong. Clamp rather than reject: the video is still
+        # perfectly valid, just capped. Field(...) above stays as a
+        # backstop in case this ever gets bypassed.
+        if not isinstance(data, dict):
+            return data
+        bounds = {"width": (200, 1920), "height": (200, 1920), "fps": (15, 60), "duration": (0.1, 120)}
+        for key, (lo, hi) in bounds.items():
+            if key in data and isinstance(data[key], (int, float)) and not isinstance(data[key], bool):
+                data[key] = max(lo, min(hi, data[key]))
+        return data
+
 
 class Marker(BaseModel):
     name: str = Field(..., min_length=1)

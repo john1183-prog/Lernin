@@ -182,6 +182,51 @@ actual live endpoint from the sandbox (not in the network allowlist),
 so this is verified as thoroughly as possible short of an actual call —
 the real confirmation is the next live attempt.
 
+**Product concern raised directly: reliability matters a lot more once
+this might be paid, and no prompt is ever going to be 100% reliable.**
+Three concrete responses, none of them "write a better prompt":
+
+- **Debuggability.** There was previously no way to see what a
+  generation actually produced — a blank-screen result was a dead end.
+  `motion-test.html` now has a "View JSON" toggle for the currently-
+  loaded script, and every entry in the saved-scripts list gets its own
+  "JSON" button that retrieves that record directly from IndexedDB
+  without needing to replay it. Since `generateMotion()` already saves
+  to IndexedDB before the player ever touches the result, a script that
+  renders blank is still fully recoverable after the fact — this is
+  exactly the tool needed to diagnose the next one.
+- **Auto-correct what's safe to auto-correct.** `Scene.width` / `height`
+  / `fps` / `duration` are now clamped into range instead of rejected
+  when a model ignores the prompt guidance and picks something out of
+  bounds — a model asking for width=3000 is a mundane, harmless mistake
+  with an obvious correct fallback, not a sign the whole script is
+  wrong. New tests cover the exact bounds. Deliberately did NOT do this
+  for the emphasis-field misuse from before — auto-converting a
+  caption to an emphasis layer would silently change its behavior
+  (auto-positioning kicks in, ignoring any explicit x/y), which could
+  produce a result that's different from, not closer to, what was
+  intended. That one's still a hard reject with a specific error.
+- **Close the loop when something still can't be auto-fixed.** Manual
+  mode's paste-back flow now shows a "Copy error to send back to your
+  AI" button whenever the backend rejects a script, which copies a
+  ready-to-paste follow-up (the exact error plus the original JSON) so
+  fixing a mistake doesn't mean retyping anything.
+
+**Recommended next investment, not yet built, flagging rather than
+building silently since it has real cost implications:** a bounded
+retry-with-feedback loop inside `_call_claude_motion`/
+`_call_gemini_motion` — on a validation failure, send the error back to
+the model in the same conversation and ask it to fix and resubmit,
+instead of failing the whole generation on one bad attempt. This is a
+standard, well-understood pattern for structured-output reliability and
+would directly reduce user-facing failures for the two AI-driven paths
+(doesn't help manual mode, which has no programmatic loop). The real
+tradeoff: up to ~2x the tokens and latency on a generation that would
+otherwise have failed outright — worth it if failures are common enough
+to matter, wasteful if they're now rare enough (post-clamping, post-
+better-prompts) that most generations succeed on the first attempt.
+Ask before building this one.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end
