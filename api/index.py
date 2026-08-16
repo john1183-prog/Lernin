@@ -358,6 +358,8 @@ MOTION_SYSTEM_PROMPT = (
     "You create short, clear motion-graphics scripts that explain a single "
     "study concept, returned ONLY as a valid instance of the submit_motion_script "
     "tool schema. Keep scenes tight: 8-45 seconds is typical for one concept. "
+    "Scene width/height must be 200-1920 pixels (800x500 is a good default); "
+    "fps must be 15-60 (30 is a good default). "
     "Use markers for the beats of your explanation (e.g. 'setup', 'reveal', "
     "'conclusion') and reference them from keyframe times instead of raw "
     "numbers, so pacing stays legible and easy to adjust. Use the emphasis "
@@ -384,6 +386,16 @@ GENERATE_MOTION_TOOL = {
     "description": "Submit a motion-graphics script for a study explainer.",
     "input_schema": MOTION_SCRIPT_SCHEMA,
 }
+
+def _format_validation_error(e: ValidationError) -> str:
+    """Pydantic's bare error message ('Input should be less than or
+    equal to 1920') doesn't say which field -- width and height share
+    that exact bound, so on its own the message is ambiguous. Prefix
+    with the dotted field path from e.errors()[0]['loc']."""
+    first = e.errors()[0]
+    path = ".".join(str(p) for p in first["loc"])
+    return f"{path}: {first['msg']}" if path else first["msg"]
+
 
 def build_motion_manual_prompt(topic: str) -> str:
     """The plain-text prompt for manual mode: no tool-calling exists when
@@ -432,6 +444,8 @@ def build_motion_manual_prompt(topic: str) -> str:
         "- set \"format\": \"formula\" only for real mathematical notation "
         "(valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words\n"
         "- keep duration reasonable, 8-45 seconds for one concept\n"
+        "- scene \"width\"/\"height\" must be 200-1920 pixels (800x500 is a good "
+        "default); \"fps\" must be 15-60 (30 is a good default)\n"
         "- 1-40 layers, unique names"
     )
 
@@ -686,7 +700,7 @@ async def generate_motion(request: Request):
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
         except ValidationError as e:
-            raise HTTPException(status_code=502, detail=f"The model's script didn't match the expected shape: {e.errors()[0]['msg'] if e.errors() else e}")
+            raise HTTPException(status_code=502, detail=f"The model's script didn't match the expected shape: {_format_validation_error(e)}")
 
         try:
             resolved = expand_script(motion_script)
@@ -721,8 +735,7 @@ async def expand_motion_script(request: Request):
         try:
             motion_script = MotionScript.model_validate(body)
         except ValidationError as e:
-            first = e.errors()[0]
-            raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {first['msg']}")
+            raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {_format_validation_error(e)}")
 
         try:
             resolved = expand_script(motion_script)

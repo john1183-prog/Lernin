@@ -309,10 +309,10 @@ MOTION_SCRIPT_SCHEMA = {
             "properties": {
                 "name": {"type": "string"},
                 "duration": {"type": "number", "description": "Seconds. Keep it tight — 8 to 45s is typical for one concept, 120s hard max."},
-                "fps": {"type": "integer"},
+                "fps": {"type": "integer", "description": "15-60. 30 is a good default."},
                 "background": {"type": "string", "description": "Hex color."},
-                "width": {"type": "integer"},
-                "height": {"type": "integer"},
+                "width": {"type": "integer", "description": "Pixels, 200-1920. 800 is a good default."},
+                "height": {"type": "integer", "description": "Pixels, 200-1920. 500 is a good default."},
             },
             "required": ["name", "duration"],
         },
