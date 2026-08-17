@@ -493,41 +493,82 @@ def _resolve_motion_credentials(request: Request):
     _check_and_increment_motion_quota(client_id)
     return "claude", server_key, True
 
-def _call_claude_motion(topic: str, api_key: str) -> MotionScript:
+def _call_claude_motion(topic: str, api_key: str, retry_note: str = None) -> MotionScript:
     client = anthropic.Anthropic(api_key=api_key)
+    user_text = f"Explain: {topic}"
+    if retry_note:
+        user_text += (
+            f"\n\n(A previous attempt at this failed: {retry_note} "
+            f"Please avoid that mistake this time.)"
+        )
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=8192,
         system=MOTION_SYSTEM_PROMPT,
         tools=[GENERATE_MOTION_TOOL],
         tool_choice={"type": "tool", "name": "submit_motion_script"},
-        messages=[{"role": "user", "content": f"Explain: {topic}"}],
+        messages=[{"role": "user", "content": user_text}],
     )
     for block in response.content:
         if block.type == "tool_use" and block.name == "submit_motion_script":
             return MotionScript.model_validate(block.input)
     raise ValueError("Model did not return a submit_motion_script tool call")
 
-def _call_gemini_motion(topic: str, api_key: str) -> MotionScript:
+def _call_gemini_motion(topic: str, api_key: str, retry_note: str = None) -> MotionScript:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    user_text = f"Explain: {topic}"
+    if retry_note:
+        user_text += (
+            f"\n\n(A previous attempt at this failed: {retry_note} "
+            f"Please avoid that mistake this time.)"
+        )
     payload = {
         "system_instruction": {"parts": [{"text": MOTION_SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": f"Explain: {topic}"}]}],
+        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": MOTION_SCRIPT_SCHEMA,
+            # Unset before: Claude gets an explicit max_tokens=8192, Gemini
+            # was silently relying on whatever its own default budget is.
+            # A rich multi-layer script in this schema's fairly verbose
+            # JSON shape can plausibly exceed a smaller default, and when
+            # that happens Gemini's structured-output mode can close the
+            # JSON out gracefully enough to still pass json.loads() and
+            # even schema validation -- while being almost entirely empty
+            # (confirmed: a real response came back as one layer with
+            # every type-specific field null, syntactically valid,
+            # completely useless). Matching Claude's budget here.
+            "maxOutputTokens": 8192,
         },
     }
     with httpx.Client(timeout=120.0) as http:
         response = http.post(url, params={"key": api_key}, json=payload)
         response.raise_for_status()
         data = response.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason")
+        if finish_reason not in ("STOP", None):
+            raise GeminiIncompleteError(finish_reason)
+        text = candidate["content"]["parts"][0]["text"]
         parsed = json.loads(text)
         return MotionScript.model_validate(parsed)
 
+
+class GeminiIncompleteError(Exception):
+    """Gemini's response didn't finish normally -- most commonly
+    MAX_TOKENS (ran out of output budget mid-generation, see the comment
+    above _call_gemini_motion), but also covers SAFETY/RECITATION/OTHER.
+    Distinct from a plain generation failure so the caller can give a
+    specific, honest message instead of a generic parse error."""
+
+    def __init__(self, finish_reason):
+        self.finish_reason = finish_reason
+        super().__init__(f"Gemini response did not finish normally: {finish_reason}")
+
 class GenerateMotionResponse(BaseModel):
-    script: dict
+    script: Optional[dict] = None
+    retryable: bool = False
+    error: Optional[str] = None
 
 # ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
@@ -688,24 +729,51 @@ async def generate_motion(request: Request):
         # crash with no detail message at all -- see the outer except below.
         provider, api_key, _used_server_key = _resolve_motion_credentials(request)
 
+        # A non-empty retry_of_error means the frontend is making a
+        # user-confirmed retry after a previous attempt's model output
+        # failed validation/completion -- see build_motion_manual_prompt's
+        # sibling functions below. Not a loop: one retry per user
+        # confirmation, driven entirely by the frontend re-calling this
+        # same endpoint, not by anything automatic here.
+        retry_note = body.get("retry_of_error") or None
+        if retry_note:
+            logger.info(f"Motion retry attempted: provider={provider} topic={topic!r}")
+
         try:
             if provider == "claude":
-                motion_script = _call_claude_motion(topic, api_key)
+                motion_script = _call_claude_motion(topic, api_key, retry_note)
             else:
-                motion_script = _call_gemini_motion(topic, api_key)
+                motion_script = _call_gemini_motion(topic, api_key, retry_note)
         except anthropic.AuthenticationError:
             raise HTTPException(status_code=401, detail="Invalid Claude API key.")
         except anthropic.RateLimitError:
             raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
+        except GeminiIncompleteError as e:
+            error = (
+                f"Gemini's response didn't finish (reason: {e.finish_reason}) -- "
+                f"likely ran out of output budget mid-script. Ask for something "
+                f"more concise (fewer layers) and try again."
+            )
+            logger.info(f"Motion retry-eligible failure: provider={provider} topic={topic!r} error={error!r}")
+            return GenerateMotionResponse(retryable=True, error=error)
         except ValidationError as e:
-            raise HTTPException(status_code=502, detail=f"The model's script didn't match the expected shape: {_format_validation_error(e)}")
+            error = f"The model's script didn't match the expected shape: {_format_validation_error(e)}"
+            logger.info(f"Motion retry-eligible failure: provider={provider} topic={topic!r} error={error!r}")
+            return GenerateMotionResponse(retryable=True, error=error)
+        except ValueError as e:
+            # Currently only Claude's "didn't return a tool call" case.
+            error = str(e)
+            logger.info(f"Motion retry-eligible failure: provider={provider} topic={topic!r} error={error!r}")
+            return GenerateMotionResponse(retryable=True, error=error)
 
         try:
             resolved = expand_script(motion_script)
         except MotionEngineError as e:
-            raise HTTPException(status_code=502, detail=f"Generated script has a timing issue: {e}")
+            error = f"Generated script has a timing issue: {e}"
+            logger.info(f"Motion retry-eligible failure: provider={provider} topic={topic!r} error={error!r}")
+            return GenerateMotionResponse(retryable=True, error=error)
 
         return GenerateMotionResponse(script=resolved)
 

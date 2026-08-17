@@ -165,6 +165,26 @@ class Layer(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _has_visible_content(self):
+        # All of width/height/radius/text are Optional so the schema can
+        # share one Layer shape across every type -- but "Optional in the
+        # schema" doesn't mean "optional in practice": a rect with no
+        # width/height, or a circle with no radius, has nothing to
+        # actually draw. This is exactly the shape of a real degenerate
+        # response seen in production (a truncated/incomplete generation
+        # produced a single rect layer with every type-specific field
+        # null) -- syntactically valid, semantically empty, and until
+        # this check, silently accepted rather than rejected.
+        t = self.type
+        if t == "rect" and (self.width is None or self.height is None):
+            raise ValueError(f"layer '{self.name}' is type 'rect' but is missing 'width' and/or 'height'.")
+        if t in ("circle", "polygon") and self.radius is None:
+            raise ValueError(f"layer '{self.name}' is type '{t}' but is missing 'radius'.")
+        if t in ("text", "caption", "emphasis") and not (self.text and self.text.strip()):
+            raise ValueError(f"layer '{self.name}' is type '{t}' but is missing non-empty 'text'.")
+        return self
+
 
 class CameraTrack(BaseModel):
     property: str

@@ -227,22 +227,38 @@
       );
     }
 
-    async function handleGenerate() {
+    async function handleGenerate(retryOfError = null) {
       const topic = topicInput.value.trim();
       if (!topic) return;
 
       manualImportArea.innerHTML = '';
       generateBtn.disabled = true;
-      generateBtn.textContent = 'Generating…';
-      setStatus('Generating…');
+      generateBtn.textContent = retryOfError ? 'Retrying…' : 'Generating…';
+      setStatus(retryOfError ? 'Retrying with the error sent back to the model…' : 'Generating…');
 
-      const result = await generateMotion(topic);
+      const result = await generateMotion(topic, null, retryOfError);
 
       generateBtn.disabled = false;
       generateBtn.textContent = 'Generate';
 
       if (result.queued) {
         setStatus('Offline — queued. Will retry automatically once back online.');
+        return;
+      }
+
+      if (result.retryable && !retryOfError) {
+        // Model mistake, not a request failure — one confirmed retry
+        // offered, not an automatic loop. A second API call costs real
+        // money/quota, so this is the user's call, not ours.
+        const wantsRetry = window.confirm(
+          `The AI's script didn't come out right:\n\n${result.error}\n\n` +
+          `Ask it to try again with that error as feedback? This uses a second generation.`
+        );
+        if (wantsRetry) {
+          await handleGenerate(result.error);
+          return;
+        }
+        setStatus(result.error, true);
         return;
       }
 
@@ -260,7 +276,7 @@
       await refreshScriptList();
     }
 
-    generateBtn.addEventListener('click', handleGenerate);
+    generateBtn.addEventListener('click', () => handleGenerate());
     topicInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleGenerate();
     });

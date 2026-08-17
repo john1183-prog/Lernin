@@ -212,20 +212,59 @@ Three concrete responses, none of them "write a better prompt":
   ready-to-paste follow-up (the exact error plus the original JSON) so
   fixing a mistake doesn't mean retyping anything.
 
-**Recommended next investment, not yet built, flagging rather than
-building silently since it has real cost implications:** a bounded
-retry-with-feedback loop inside `_call_claude_motion`/
-`_call_gemini_motion` — on a validation failure, send the error back to
-the model in the same conversation and ask it to fix and resubmit,
-instead of failing the whole generation on one bad attempt. This is a
-standard, well-understood pattern for structured-output reliability and
-would directly reduce user-facing failures for the two AI-driven paths
-(doesn't help manual mode, which has no programmatic loop). The real
-tradeoff: up to ~2x the tokens and latency on a generation that would
-otherwise have failed outright — worth it if failures are common enough
-to matter, wasteful if they're now rare enough (post-clamping, post-
-better-prompts) that most generations succeed on the first attempt.
-Ask before building this one.
+**Built, per explicit direction: user-confirmed retry-with-feedback,
+logged.** Not automatic — a model mistake gets one confirmed retry via
+`window.confirm()` in the harness before a second API call happens,
+since that's real money/quota either way. Kept deliberately stateless
+rather than round-tripping full conversation context: a retry doesn't
+reconstruct the exact prior turn, it just tells the model what went
+wrong (`retry_note`, appended to a fresh user message) and asks for a
+better attempt — simpler and more robust than trying to replay a tool-
+use block or partial Gemini response across two independent HTTP
+requests, and works identically for both providers. `/api/generate-
+motion` now distinguishes hard failures (auth, rate limit, missing
+credentials — retrying won't fix these, stays a normal HTTP error) from
+retryable ones (validation failure, incomplete generation, a timing
+issue in `expand_script`) — those return 200 with `retryable: true` and
+a specific error instead of a hard error, so the frontend can offer the
+retry rather than just failing. Every retryable failure and every
+confirmed retry attempt is logged (`logger.info`, visible in Vercel's
+Runtime Logs) — "reported in the repo" beyond that is a natural
+extension once the Redis quota migration happens (same infra, same
+motivation: persistent counters instead of an in-memory dict that
+resets on every cold start), not a separate bespoke mechanism.
+
+**A live Gemini generation surfaced a second real production bug in
+the same session, found from a single pasted example:** a script for
+"How Small is Small?" came back with a well-formed scene (name,
+duration) but exactly one layer — a rect with literally every type-
+specific field null. Root cause: `_call_claude_motion` sets an explicit
+`max_tokens=8192`; `_call_gemini_motion` set no token budget at all,
+silently relying on Gemini's own default. A rich multi-layer script in
+this schema's fairly verbose JSON shape can plausibly exceed a smaller
+default, and Gemini's structured-output mode can close the JSON out
+gracefully enough when that happens to still pass `json.loads()` and
+even schema validation — while being almost entirely empty. Fixed two
+ways: matched Claude's `max_tokens=8192` as an explicit
+`maxOutputTokens`, and added a `finishReason` check that fails loudly
+(as a retryable error, not a silent pass-through) on anything other
+than `STOP`.
+
+Also added, since it directly targets the exact defect in that pasted
+script and is cheap insurance regardless of the token-budget theory
+being the whole story: every field on `Layer` is `Optional` so one
+model can describe every layer type, but that doesn't mean every field
+is optional *in practice* — a `rect` with no width/height or a `circle`
+with no radius has nothing to draw. `Layer` now has a
+`_has_visible_content` validator requiring the fields each type
+actually needs (dimensions for rect, radius for circle/polygon,
+non-empty text for text/caption/emphasis) — the exact production script
+would now be rejected outright rather than silently accepted as a
+content-empty layer. 34 tests total (8 new across this and the retry
+work), all passing, plus a live Playwright pass (mocking the network
+response, since triggering a real retryable failure needs an actual
+live model call) confirming the full confirm-dialog-to-retry-to-success
+flow works end to end.
 
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per

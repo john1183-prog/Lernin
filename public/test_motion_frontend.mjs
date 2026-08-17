@@ -103,5 +103,32 @@ check('BYOK never sets X-Client-Id', !('X-Client-Id' in capturedHeaders), JSON.s
 await clearApiConfig();
 globalThis.fetch = spyFetch;
 
+console.log('=== retryable response shape (mocked — real one only comes from an actual model mistake) ===');
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ script: null, retryable: true, error: "layer 'x' is type 'rect' but is missing 'width'." }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+  const result = await generateMotion('a topic');
+  check('retryable flag surfaces', result.retryable === true, JSON.stringify(result));
+  check('error message surfaces', result.error.includes('missing'), result.error);
+  check('no script saved on a retryable failure', result.id === null);
+  globalThis.fetch = realFetch;
+}
+
+console.log('=== retry_of_error is actually sent in the request body ===');
+{
+  const realFetch = globalThis.fetch;
+  let capturedBody = null;
+  globalThis.fetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return realFetch('http://localhost:8123/api/generate-motion', opts);
+  };
+  await generateMotion('a topic', null, 'a previous error message');
+  check('retry_of_error included in request body', capturedBody.retry_of_error === 'a previous error message', JSON.stringify(capturedBody));
+  globalThis.fetch = realFetch;
+}
+
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -28,7 +28,7 @@ def script(**overrides):
 class TestMarkersAndTracks(unittest.TestCase):
     def test_marker_plus_offset_resolves(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "x", "points": [
                 {"time": {"marker": "reveal", "offset": 0.5}, "value": 200, "easing": "easeOut"},
             ]}],
@@ -38,7 +38,7 @@ class TestMarkersAndTracks(unittest.TestCase):
 
     def test_null_marker_is_absolute_time(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "opacity", "points": [
                 {"time": {"offset": 2.25}, "value": 1},
             ]}],
@@ -48,7 +48,7 @@ class TestMarkersAndTracks(unittest.TestCase):
 
     def test_keyframes_sorted_by_time_even_if_given_out_of_order(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "x", "points": [
                 {"time": {"offset": 3.0}, "value": 300},
                 {"time": {"offset": 0.0}, "value": 0},
@@ -61,7 +61,7 @@ class TestMarkersAndTracks(unittest.TestCase):
     def test_unknown_marker_rejected_at_validation_not_expansion(self):
         with self.assertRaises(ValidationError):
             script(layers=[{
-                "name": "box", "type": "rect",
+                "name": "box", "type": "rect", "width": 100, "height": 100,
                 "keyframes": [{"property": "x", "points": [
                     {"time": {"marker": "nope", "offset": 0}, "value": 1},
                 ]}],
@@ -69,7 +69,7 @@ class TestMarkersAndTracks(unittest.TestCase):
 
     def test_time_beyond_duration_raises_at_expansion(self):
         s = script(scene={"name": "Test", "duration": 5, "fps": 30}, layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "x", "points": [{"time": {"offset": 9.0}, "value": 1}]}],
         }])
         with self.assertRaises(MotionEngineError):
@@ -115,7 +115,7 @@ class TestGeminiValueCoercion(unittest.TestCase):
 
     def test_numeric_string_from_gemini_coerces_to_float(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "x", "points": [
                 {"time": {"offset": 0}, "value": "42.5"},
             ]}],
@@ -127,7 +127,7 @@ class TestGeminiValueCoercion(unittest.TestCase):
 
     def test_hex_color_string_is_not_coerced(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "color", "points": [
                 {"time": {"offset": 0}, "value": "#ff0000"},
             ]}],
@@ -138,7 +138,7 @@ class TestGeminiValueCoercion(unittest.TestCase):
 
     def test_actual_json_number_passes_through_unchanged(self):
         s = script(layers=[{
-            "name": "box", "type": "rect",
+            "name": "box", "type": "rect", "width": 100, "height": 100,
             "keyframes": [{"property": "x", "points": [
                 {"time": {"offset": 0}, "value": 42.5},
             ]}],
@@ -183,6 +183,27 @@ class TestStructuralValidation(unittest.TestCase):
     def test_hold_on_non_emphasis_layer_rejected(self):
         with self.assertRaises(ValidationError):
             script(layers=[{"name": "a", "type": "text", "text": "hi", "hold": 1.0}])
+
+    def test_rect_without_dimensions_rejected(self):
+        # Reproduces the real bug in raw (pre-expansion) form: a live
+        # Gemini generation that got cut off mid-script produced exactly
+        # this shape once resolved -- a rect with every type-specific
+        # field null. The resolved JSON isn't what Pydantic validates
+        # (that's post-expansion), but this is its raw equivalent.
+        with self.assertRaises(ValidationError):
+            script(layers=[{"name": "bg_rect", "type": "rect"}])
+
+    def test_circle_without_radius_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(layers=[{"name": "a", "type": "circle"}])
+
+    def test_text_layer_without_text_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(layers=[{"name": "a", "type": "text", "width": 100, "height": 100}])
+
+    def test_text_layer_with_blank_text_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(layers=[{"name": "a", "type": "caption", "text": "   "}])
 
     def test_unknown_easing_rejected(self):
         with self.assertRaises(ValidationError):

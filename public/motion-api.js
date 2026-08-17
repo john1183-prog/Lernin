@@ -95,40 +95,59 @@ async function extractErrorMessage(response) {
  * script to IndexedDB on success. Does NOT attempt manual mode itself —
  * a 401 with no BYOK configured means the caller should route to
  * expandMotionScriptManual() instead.
+ *
+ * @param {string} retryOfError — pass the error from a previous attempt
+ *   to make this a retry: the backend tells the model what went wrong
+ *   last time and asks it to avoid that mistake, rather than starting
+ *   over blind. Intended to be used only after explicit user
+ *   confirmation (see motion-test.html) — never call this automatically
+ *   in a loop, since each retry is a full second model call.
  */
-export async function generateMotion(topic, deckId = null) {
+export async function generateMotion(topic, deckId = null, retryOfError = null) {
   if (!navigator.onLine) {
     await queueMotionGeneration(topic, deckId);
     emit('lernin:motion-generation-queued', { topic });
-    return { script: null, id: null, queued: true, error: null };
+    return { script: null, id: null, queued: true, retryable: false, error: null };
   }
 
   try {
+    const body = { topic };
+    if (retryOfError) body.retry_of_error = retryOfError;
+
     const response = await fetch(GENERATE_ENDPOINT, {
       method: 'POST',
       headers: await motionRequestHeaders(),
-      body: JSON.stringify({ topic })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
       const message = await extractErrorMessage(response);
       emit('lernin:motion-generation-error', { topic, message, status: response.status });
-      return { script: null, id: null, queued: false, error: message, status: response.status };
+      return { script: null, id: null, queued: false, retryable: false, error: message, status: response.status };
     }
 
     const data = await response.json();
+
+    if (data.retryable) {
+      // Not a request failure — the model's output didn't pass
+      // validation or didn't finish. response.ok is true; the caller
+      // decides whether to offer a retry (see motion-test.html).
+      emit('lernin:motion-generation-error', { topic, message: data.error, retryable: true });
+      return { script: null, id: null, queued: false, retryable: true, error: data.error };
+    }
+
     const record = await saveMotionScript({ topic, script: data.script, deckId });
     emit('lernin:motion-generation-success', { topic, script: data.script, id: record.id });
-    return { script: data.script, id: record.id, queued: false, error: null };
+    return { script: data.script, id: record.id, queued: false, retryable: false, error: null };
   } catch (err) {
     // Network failure — queue for retry rather than a dead end.
     if (err instanceof TypeError) {
       await queueMotionGeneration(topic, deckId);
       emit('lernin:motion-generation-queued', { topic });
-      return { script: null, id: null, queued: true, error: null };
+      return { script: null, id: null, queued: true, retryable: false, error: null };
     }
     emit('lernin:motion-generation-error', { topic, message: err.message });
-    return { script: null, id: null, queued: false, error: err.message };
+    return { script: null, id: null, queued: false, retryable: false, error: err.message };
   }
 }
 
