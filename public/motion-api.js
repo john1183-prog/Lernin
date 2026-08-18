@@ -223,20 +223,88 @@ export async function expandMotionScriptManual(rawScript, topic, deckId = null) 
 export function buildMotionManualPrompt(topic) {
   return `Create a short motion-graphics script explaining: ${topic}
 
-Respond with ONLY a JSON object (no markdown fences, no commentary) shaped exactly like this:
+Respond with ONLY a JSON object (no markdown fences, no commentary) shaped like this fully worked example. The topic below (Newton's Second Law) is unrelated to yours -- match its PACING and MECHANICS, not its subject matter:
 
 {
-  "scene": {"name": "...", "duration": 12, "fps": 30, "background": "#161616", "width": 800, "height": 500},
-  "markers": [{"name": "reveal", "time": 1.0}],
-  "camera": null,
+  "scene": {"name": "Newton's Second Law", "duration": 16, "fps": 30, "background": "#161616", "width": 800, "height": 500},
+  "markers": [
+    {"name": "setup", "time": 2.5},
+    {"name": "reveal", "time": 8.0},
+    {"name": "conclusion", "time": 13.0}
+  ],
+  "camera": {
+    "keyframes": [
+      {"property": "zoom", "points": [
+        {"time": {"marker": "setup", "offset": 0}, "value": 1.0, "easing": "easeInOut"},
+        {"time": {"marker": "reveal", "offset": 0}, "value": 1.25, "easing": "easeInOut"},
+        {"time": {"marker": "conclusion", "offset": 0}, "value": 1.0, "easing": "easeInOut"}
+      ]}
+    ]
+  },
   "layers": [
     {
-      "name": "title", "type": "text", "text": "...", "fontSize": 48, "color": "#ffffff",
-      "x": 400, "y": 250, "format": "text",
+      "name": "header", "type": "text", "text": "Newton's Second Law",
+      "x": 90, "y": 36, "fontSize": 20, "color": "#8b95a5",
       "keyframes": [
         {"property": "opacity", "points": [
           {"time": {"offset": 0}, "value": 0},
-          {"time": {"marker": "reveal", "offset": 0}, "value": 1, "easing": "easeOut"}
+          {"time": {"offset": 0.6}, "value": 1, "easing": "easeOut"}
+        ]}
+      ]
+    },
+    {
+      "name": "force_arrow", "type": "arrow",
+      "x": 190, "y": 250, "x2": 310, "y2": 250, "color": "#e8a33d", "strokeWidth": 5,
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "setup", "offset": 0}, "value": 0},
+          {"time": {"marker": "setup", "offset": 0.4}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "reveal", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]}
+      ]
+    },
+    {
+      "name": "setup_caption", "type": "caption", "text": "A force acts on an object with mass",
+      "x": 400, "y": 310, "fontSize": 22, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "setup", "offset": 0}, "value": 0},
+          {"time": {"marker": "setup", "offset": 0.4}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "reveal", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]}
+      ]
+    },
+    {
+      "name": "formula", "type": "text", "text": "F = ma", "format": "formula",
+      "x": 400, "y": 260, "fontSize": 64, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0},
+          {"time": {"marker": "reveal", "offset": 0.5}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "conclusion", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "conclusion", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]},
+        {"property": "scale", "points": [
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0.85},
+          {"time": {"marker": "reveal", "offset": 0.5}, "value": 1, "easing": "easeOut"}
+        ]}
+      ]
+    },
+    {
+      "name": "formula_emphasis", "type": "emphasis", "text": "Directly proportional!",
+      "at": {"marker": "reveal", "offset": 1.2}, "hold": 2.5,
+      "style": "pop", "size": "medium", "slot": "lower", "color": "#f2c14e"
+    },
+    {
+      "name": "closing_caption", "type": "caption",
+      "text": "Double the force means double the acceleration, for the same mass.",
+      "x": 400, "y": 420, "fontSize": 26, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "conclusion", "offset": 0}, "value": 0},
+          {"time": {"marker": "conclusion", "offset": 0.5}, "value": 1, "easing": "easeOut"}
         ]}
       ]
     }
@@ -247,10 +315,12 @@ Rules:
 - layer "type" must be one of: rect, circle, text, polygon, arrow, line, group, caption, emphasis
 - keyframe "property" must be one of: x, y, scale, rotation, opacity, color
 - "time" is either {"marker": "name", "offset": seconds-after-it} or {"offset": seconds} for an absolute time (omit marker)
+- "offset" can be negative to land a moment BEFORE a marker, e.g. {"marker": "reveal", "offset": -0.4} -- handy for timing a fade-out to finish exactly as the next beat begins (see "force_arrow" and "setup_caption" above)
 - "easing" is one of: linear, easeIn, easeOut, easeInOut, bounce, elastic, back
-- an "emphasis" layer needs "at" (a time object) and "style" (pop, slideup, fade, or zoom) -- no manual keyframes needed for it
+- an "emphasis" layer needs "at" (a time object) and "style" (pop, slideup, fade, or zoom) -- no manual keyframes needed for it, and no manual "x"/"y"/"fontSize" either (see "formula_emphasis" above) -- it positions and sizes itself from "size"/"slot"
 - "at"/"hold"/"style"/"size"/"slot" ONLY work on an "emphasis" layer -- setting any of them on any other type is rejected, and that other layer needs its own "keyframes" (an opacity track at least) to appear at all
-- treat the scene as a sequence of beats, not a pile: when a new beat starts, fade out the previous beat's layers (an opacity keyframe back to 0) unless something is deliberately meant to persist throughout (e.g. a title). Don't leave everything that's ever appeared still on screen at the end -- aim for roughly 2-4 layers visible at once, not the whole cast
+- a layer can carry more than one keyframe track at once (see "formula" above, which animates both "opacity" and "scale") for a richer entrance or exit
+- treat the scene as a sequence of beats, not a pile: when a new beat starts, fade out the previous beat's layers (an opacity keyframe back to 0) unless something is deliberately meant to persist throughout (e.g. "header" above, which fades in once and is simply never given a second opacity point). Don't leave everything that's ever appeared still on screen at the end -- aim for roughly 2-4 layers visible at once, not the whole cast
 - set "format": "formula" only for real mathematical notation (valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words
 - keep duration reasonable, 8-45 seconds for one concept
 - scene "width"/"height" must be 200-1920 pixels (800x500 is a good default); "fps" must be 15-60 (30 is a good default)

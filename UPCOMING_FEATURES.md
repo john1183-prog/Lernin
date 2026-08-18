@@ -266,17 +266,54 @@ response, since triggering a real retryable failure needs an actual
 live model call) confirming the full confirm-dialog-to-retry-to-success
 flow works end to end.
 
+**Richer few-shot example added to both prompts.** `MOTION_SYSTEM_PROMPT`
+(shared by both providers' API calls) previously described the schema in
+prose only, no worked example at all; `build_motion_manual_prompt()`'s
+example was a single text layer with a fade-in and nothing else — neither
+showed markers referenced from more than one beat, an emphasis layer, a
+camera move, or a layer fading back out. Both now share a single six-layer
+worked example (`_MOTION_EXAMPLE_JSON`, defined once in `index.py`, on an
+unrelated physics topic so it can't be mistaken for a template to copy)
+demonstrating: marker-driven pacing across three beats (`setup`, `reveal`,
+`conclusion`); a layer meant to persist getting a fade-in and no second
+opacity point (`header`) — no special flag, that's the entire mechanism;
+two layers timing their fade-out to a NEGATIVE offset from the next marker
+so it finishes exactly as the next beat starts (`force_arrow`,
+`setup_caption`) — a technique neither prompt mentioned before; a layer
+with two independent keyframe tracks at once (`formula`, animating opacity
+and scale together); the emphasis shorthand needing no manual keyframes or
+x/y/fontSize (`formula_emphasis`); and a camera zoom track synced to the
+same markers as the content instead of running on its own clock.
+
+Verified before being embedded anywhere, in this order: `MotionScript.
+model_validate()` + `expand_script()` on the example standalone; re-run
+against the actual live `build_motion_manual_prompt()` /
+`MOTION_SYSTEM_PROMPT` output after editing (catches any transcription
+slip the edit itself introduced, not just the original draft); then a real
+HTTP round trip through a locally running server — `POST /api/expand-
+motion-script` with the example body, 200 OK, correctly resolved camera
+and layer keyframes. The manual-mode JS mirror (`buildMotionManualPrompt()`
+in `motion-api.js`) was re-synced using this file's own established
+byte-comparison process: extracted the Python function's exact output with
+a placeholder topic, spliced it into the JS template literal, then ran the
+actual JS function through Node and diffed the two outputs — byte-for-byte
+identical, no backticks or stray `${` sequences in the spliced text either.
+All 34 existing unit tests still pass unmodified. Pure prompt content, no
+schema or engine changes, so nothing else needed touching.
+
 **Not started:** any polished UI integrated into the main app — that's
 still a separate, later effort, so the Help view stays untouched per
 this file's own convention below. **Also not done: end-to-end
 verification with a real Claude/Gemini key** — everything above was
 proven with a bogus/no-key 401 path and the manual-paste path; nobody's
 yet confirmed the model reliably produces a well-formed script via the
-actual tool-calling schema. **Still needed before persistent storage is
-trustworthy:** the free-quota counter is still an in-memory dict (same
-limitation as the pre-existing IP rate-limiter) — needs a Vercel
-Marketplace → Upstash Redis integration before this is trusted with
-real traffic.
+actual tool-calling schema, and the richer example's actual effect on
+real generation quality is still unmeasured — that's the natural next
+real-key test now that the prompt itself has changed. **Still needed
+before persistent storage is trustworthy:** the free-quota counter is
+still an in-memory dict (same limitation as the pre-existing IP
+rate-limiter) — needs a Vercel Marketplace → Upstash Redis integration
+before this is trusted with real traffic.
 
 ---
 

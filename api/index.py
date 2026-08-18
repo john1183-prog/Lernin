@@ -354,6 +354,104 @@ def _call_gemini_vision(base64_data: str, mime_type: str, provider: str, api_key
 # after Pydantic validates it. Nothing here is ever sent to the frontend
 # except the fully resolved script that expand_script() returns.
 
+# Fully worked example on an unrelated topic, shared between the API system
+# prompt below and the manual-mode prompt in build_motion_manual_prompt() --
+# deliberately demonstrates the non-obvious mechanics in one place:
+# marker-driven pacing, a layer that persists with no second opacity point,
+# two layers timing their exit to a NEGATIVE offset from the next marker (so
+# the fade finishes exactly as the next beat starts), a layer with two
+# independent keyframe tracks at once, the emphasis shorthand needing no
+# manual keyframes/x/y/fontSize, and a camera move synced to the same
+# markers as the content. Content validated end to end
+# (MotionScript.model_validate + expand_script) before landing here -- an
+# example that doesn't itself pass the schema it's demonstrating would be
+# worse than no example at all.
+_MOTION_EXAMPLE_JSON = """{
+  "scene": {"name": "Newton's Second Law", "duration": 16, "fps": 30, "background": "#161616", "width": 800, "height": 500},
+  "markers": [
+    {"name": "setup", "time": 2.5},
+    {"name": "reveal", "time": 8.0},
+    {"name": "conclusion", "time": 13.0}
+  ],
+  "camera": {
+    "keyframes": [
+      {"property": "zoom", "points": [
+        {"time": {"marker": "setup", "offset": 0}, "value": 1.0, "easing": "easeInOut"},
+        {"time": {"marker": "reveal", "offset": 0}, "value": 1.25, "easing": "easeInOut"},
+        {"time": {"marker": "conclusion", "offset": 0}, "value": 1.0, "easing": "easeInOut"}
+      ]}
+    ]
+  },
+  "layers": [
+    {
+      "name": "header", "type": "text", "text": "Newton's Second Law",
+      "x": 90, "y": 36, "fontSize": 20, "color": "#8b95a5",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"offset": 0}, "value": 0},
+          {"time": {"offset": 0.6}, "value": 1, "easing": "easeOut"}
+        ]}
+      ]
+    },
+    {
+      "name": "force_arrow", "type": "arrow",
+      "x": 190, "y": 250, "x2": 310, "y2": 250, "color": "#e8a33d", "strokeWidth": 5,
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "setup", "offset": 0}, "value": 0},
+          {"time": {"marker": "setup", "offset": 0.4}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "reveal", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]}
+      ]
+    },
+    {
+      "name": "setup_caption", "type": "caption", "text": "A force acts on an object with mass",
+      "x": 400, "y": 310, "fontSize": 22, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "setup", "offset": 0}, "value": 0},
+          {"time": {"marker": "setup", "offset": 0.4}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "reveal", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]}
+      ]
+    },
+    {
+      "name": "formula", "type": "text", "text": "F = ma", "format": "formula",
+      "x": 400, "y": 260, "fontSize": 64, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0},
+          {"time": {"marker": "reveal", "offset": 0.5}, "value": 1, "easing": "easeOut"},
+          {"time": {"marker": "conclusion", "offset": -0.4}, "value": 1},
+          {"time": {"marker": "conclusion", "offset": 0}, "value": 0, "easing": "easeIn"}
+        ]},
+        {"property": "scale", "points": [
+          {"time": {"marker": "reveal", "offset": 0}, "value": 0.85},
+          {"time": {"marker": "reveal", "offset": 0.5}, "value": 1, "easing": "easeOut"}
+        ]}
+      ]
+    },
+    {
+      "name": "formula_emphasis", "type": "emphasis", "text": "Directly proportional!",
+      "at": {"marker": "reveal", "offset": 1.2}, "hold": 2.5,
+      "style": "pop", "size": "medium", "slot": "lower", "color": "#f2c14e"
+    },
+    {
+      "name": "closing_caption", "type": "caption",
+      "text": "Double the force means double the acceleration, for the same mass.",
+      "x": 400, "y": 420, "fontSize": 26, "color": "#ffffff",
+      "keyframes": [
+        {"property": "opacity", "points": [
+          {"time": {"marker": "conclusion", "offset": 0}, "value": 0},
+          {"time": {"marker": "conclusion", "offset": 0.5}, "value": 1, "easing": "easeOut"}
+        ]}
+      ]
+    }
+  ]
+}"""
+
 MOTION_SYSTEM_PROMPT = (
     "You create short, clear motion-graphics scripts that explain a single "
     "study concept, returned ONLY as a valid instance of the submit_motion_script "
@@ -377,8 +475,31 @@ MOTION_SYSTEM_PROMPT = (
     "appeared is still on screen at the end is a bug, not a feature -- aim "
     "for roughly 2-4 layers visible at any single moment, not the whole cast. "
     "Set format to 'formula' only for actual mathematical notation, valid "
-    "KaTeX/LaTeX -- never for plain words. Do not wrap the JSON in markdown "
-    "fences. Do not add commentary."
+    "KaTeX/LaTeX -- never for plain words.\n\n"
+    "Below is a fully worked example on an unrelated topic (Newton's Second "
+    "Law) -- study it for the PACING and MECHANICS, not the subject matter, "
+    "which has nothing to do with whatever concept you're actually asked to "
+    "explain. The fences below are for readability in this instruction "
+    "only; your own output must not use them.\n\n"
+    "```\n" + _MOTION_EXAMPLE_JSON + "\n```\n\n"
+    "A few things worth noticing there: 'header' gets a fade-in and no "
+    "second opacity point, so it just holds at full opacity for the rest of "
+    "the scene -- that's the entire mechanism for a deliberately persistent "
+    "layer, no special flag needed. 'force_arrow' and 'setup_caption' both "
+    "time their fade-out to a NEGATIVE offset from the 'reveal' marker "
+    "({\"marker\": \"reveal\", \"offset\": -0.4}), so they finish "
+    "disappearing exactly as the next beat starts instead of guessing an "
+    "absolute time. 'formula' carries two independent keyframe tracks at "
+    "once (opacity and scale) for a slightly more dynamic entrance -- a "
+    "layer isn't limited to one track. 'formula_emphasis' sets only "
+    "text/at/hold/style/size/slot/color -- no 'keyframes', no manual "
+    "x/y/fontSize -- because the emphasis shorthand computes all of that "
+    "itself. The camera's 'zoom' track ramps in on the same 'reveal' "
+    "marker the formula appears on and eases back out on 'conclusion', so "
+    "the camera move reinforces the beat structure rather than running on "
+    "its own timeline. At no point are more than 3-4 of the 6 total layers "
+    "visible together.\n\n"
+    "Do not wrap your own output in markdown fences. Do not add commentary."
 )
 
 GENERATE_MOTION_TOOL = {
@@ -401,46 +522,46 @@ def build_motion_manual_prompt(topic: str) -> str:
     """The plain-text prompt for manual mode: no tool-calling exists when
     a person pastes into a generic AI chat tab, so the shape has to be
     spelled out in the prompt itself. Frontend surfaces this verbatim for
-    copying; kept here as the single source of truth for now."""
+    copying; kept here as the single source of truth for now. Shares
+    _MOTION_EXAMPLE_JSON with MOTION_SYSTEM_PROMPT above rather than
+    keeping a second, separately-maintained example -- see that constant's
+    comment for what it deliberately demonstrates."""
     return (
         f"Create a short motion-graphics script explaining: {topic}\n\n"
         "Respond with ONLY a JSON object (no markdown fences, no commentary) "
-        "shaped exactly like this:\n\n"
-        '{\n'
-        '  "scene": {"name": "...", "duration": 12, "fps": 30, "background": "#161616", "width": 800, "height": 500},\n'
-        '  "markers": [{"name": "reveal", "time": 1.0}],\n'
-        '  "camera": null,\n'
-        '  "layers": [\n'
-        '    {\n'
-        '      "name": "title", "type": "text", "text": "...", "fontSize": 48, "color": "#ffffff",\n'
-        '      "x": 400, "y": 250, "format": "text",\n'
-        '      "keyframes": [\n'
-        '        {"property": "opacity", "points": [\n'
-        '          {"time": {"offset": 0}, "value": 0},\n'
-        '          {"time": {"marker": "reveal", "offset": 0}, "value": 1, "easing": "easeOut"}\n'
-        '        ]}\n'
-        '      ]\n'
-        '    }\n'
-        '  ]\n'
-        '}\n\n'
+        "shaped like this fully worked example. The topic below (Newton's "
+        "Second Law) is unrelated to yours -- match its PACING and "
+        "MECHANICS, not its subject matter:\n\n"
+        + _MOTION_EXAMPLE_JSON +
+        "\n\n"
         "Rules:\n"
         "- layer \"type\" must be one of: rect, circle, text, polygon, arrow, line, group, caption, emphasis\n"
         "- keyframe \"property\" must be one of: x, y, scale, rotation, opacity, color\n"
         "- \"time\" is either {\"marker\": \"name\", \"offset\": seconds-after-it} "
         "or {\"offset\": seconds} for an absolute time (omit marker)\n"
+        "- \"offset\" can be negative to land a moment BEFORE a marker, e.g. "
+        "{\"marker\": \"reveal\", \"offset\": -0.4} -- handy for timing a "
+        "fade-out to finish exactly as the next beat begins (see "
+        "\"force_arrow\" and \"setup_caption\" above)\n"
         "- \"easing\" is one of: linear, easeIn, easeOut, easeInOut, bounce, elastic, back\n"
         "- an \"emphasis\" layer needs \"at\" (a time object) and \"style\" "
-        "(pop, slideup, fade, or zoom) -- no manual keyframes needed for it\n"
+        "(pop, slideup, fade, or zoom) -- no manual keyframes needed for it, "
+        "and no manual \"x\"/\"y\"/\"fontSize\" either (see \"formula_emphasis\" "
+        "above) -- it positions and sizes itself from \"size\"/\"slot\"\n"
         "- \"at\"/\"hold\"/\"style\"/\"size\"/\"slot\" ONLY work on an \"emphasis\" "
         "layer -- setting any of them on any other type is rejected, and that "
         "other layer needs its own \"keyframes\" (an opacity track at least) "
         "to appear at all\n"
+        "- a layer can carry more than one keyframe track at once (see "
+        "\"formula\" above, which animates both \"opacity\" and \"scale\") "
+        "for a richer entrance or exit\n"
         "- treat the scene as a sequence of beats, not a pile: when a new "
         "beat starts, fade out the previous beat's layers (an opacity "
         "keyframe back to 0) unless something is deliberately meant to "
-        "persist throughout (e.g. a title). Don't leave everything that's "
-        "ever appeared still on screen at the end -- aim for roughly 2-4 "
-        "layers visible at once, not the whole cast\n"
+        "persist throughout (e.g. \"header\" above, which fades in once and "
+        "is simply never given a second opacity point). Don't leave "
+        "everything that's ever appeared still on screen at the end -- aim "
+        "for roughly 2-4 layers visible at once, not the whole cast\n"
         "- set \"format\": \"formula\" only for real mathematical notation "
         "(valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words\n"
         "- keep duration reasonable, 8-45 seconds for one concept\n"
