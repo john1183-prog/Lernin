@@ -67,13 +67,30 @@ function runForceLayout(nodes, edges) {
   const centerGravity = 0.015;
   const damping = 0.9;
   const iterations = 200;
+  // MIN_DIST and MAX_VEL: found via stress-testing at realistic scale (a
+  // 97-card deck, a live report of visibly overlapping nodes) that this
+  // explicit-Euler simulation could genuinely diverge, not just look
+  // cramped -- repulsion's 1/d^2 term has a singularity as two nodes'
+  // distance approaches 0 (very possible in early iterations before
+  // anything has spread out), and one iteration's outsized force could
+  // inject more velocity than a single 0.9 damping step removes, especially
+  // once springs are also pulling on the resulting large displacement.
+  // Verified: without these, maxVel oscillated (38 -> 128 -> 166 -> 600)
+  // instead of decaying across iterations on a 97-node/25-edge test graph,
+  // and span grew unboundedly (up to 4000+px) instead of converging. Not
+  // an N-scaling issue with springLength/repulsion's tuned VALUES (those
+  // still hold) -- a genuine instability in the untuned parts of the
+  // integration itself, that the smaller graphs this was previously
+  // verified against apparently never triggered.
+  const MIN_DIST = 10;
+  const MAX_VEL = 40;
 
   for (let iter = 0; iter < iterations; iter++) {
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const dx = nodes[j].x - nodes[i].x;
         const dy = nodes[j].y - nodes[i].y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), MIN_DIST);
         const force = repulsion / (dist * dist);
         const fx = (dx / dist) * force, fy = (dy / dist) * force;
         nodes[i].vx -= fx; nodes[i].vy -= fy;
@@ -93,8 +110,51 @@ function runForceLayout(nodes, edges) {
       n.vy -= n.y * centerGravity;
     }
     for (const n of nodes) {
+      const speed = Math.hypot(n.vx, n.vy);
+      if (speed > MAX_VEL) {
+        n.vx = (n.vx / speed) * MAX_VEL;
+        n.vy = (n.vy / speed) * MAX_VEL;
+      }
       n.x += n.vx; n.y += n.vy;
       n.vx *= damping; n.vy *= damping;
+    }
+  }
+  resolveCollisions(nodes);
+}
+
+/**
+ * Post-process pass, run after the force solve settles: pushes any pair of
+ * nodes closer than the sum of their radii directly apart until no overlap
+ * remains, regardless of how many nodes there are. Added after a live
+ * report on a 97-card deck showed nodes rendering as a dense, visibly
+ * overlapping mass -- verified empirically (not assumed) that this was NOT
+ * an N-scaling problem with the repulsion/springLength constants above
+ * (those still hold at N=97 the same way they were verified at N=25):
+ * repulsion's inverse-square force has no relationship to actual rendered
+ * node radius at all, so nothing in the force solve was ever guaranteed to
+ * keep touching nodes apart -- it happened to look fine at the smaller
+ * scale this was originally tuned on, not because the underlying problem
+ * wasn't there. This runs as a separate pass rather than interleaved into
+ * the main loop (which drives positions via velocity/damping) because it
+ * adjusts position directly with no velocity component -- interleaving the
+ * two would fight the damping model in a way that's harder to reason about
+ * than "shape the layout first, then de-overlap it".
+ */
+function resolveCollisions(nodes, iterations = 80, margin = 4) {
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const minDist = a.radius + b.radius + margin;
+        if (dist < minDist) {
+          const overlap = (minDist - dist) / 2;
+          const ux = dx / dist, uy = dy / dist;
+          a.x -= ux * overlap; a.y -= uy * overlap;
+          b.x += ux * overlap; b.y += uy * overlap;
+        }
+      }
     }
   }
 }

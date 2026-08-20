@@ -190,7 +190,7 @@ body {
   font-weight: 700;
   letter-spacing: -0.5px;
   color: var(--ink);
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -202,6 +202,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex-shrink: 0;
 }
 
 .icon-btn {
