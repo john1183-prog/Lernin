@@ -26,6 +26,8 @@ import anthropic
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
+from mind_map_schema import MindMapScript, MIND_MAP_SCRIPT_SCHEMA
+from mind_map_engine import expand_mind_map, MindMapEngineError
 from motion_engine import expand_script, MotionEngineError
 
 logger = logging.getLogger("lernin.motion")
@@ -691,6 +693,235 @@ class GenerateMotionResponse(BaseModel):
     retryable: bool = False
     error: Optional[str] = None
 
+# ---------- Mind Map ----------
+# Static, per-document topic tree generated from the document's actual
+# text -- not derived from flashcards, which are already a lossy,
+# study-optimized transformation of the source. See mind_map_schema.py's
+# module docstring for why the wire schema is four explicit non-recursive
+# levels rather than a genuinely recursive type, and mind_map_engine.py's
+# for the deterministic radial layout that turns semantic structure into
+# concrete (x, y) coordinates. Credential/quota pattern below is a direct
+# copy of Motion Studio's three-path model (BYOK / server-key-with-quota /
+# manual-mode) -- same separation of concerns, own independent quota pool
+# so a person's free Motion Studio and Mind Map generations don't share
+# one counter.
+
+_MIND_MAP_EXAMPLE_JSON = """{
+  "root": {
+    "title": "Photosynthesis",
+    "detail": "How plants convert light energy into chemical energy stored in sugar",
+    "children": [
+      {
+        "title": "Light-Dependent Reactions", "detail": "Convert light energy into ATP and NADPH",
+        "children": [
+          {
+            "title": "Photosystem II", "detail": "Absorbs light and splits water molecules",
+            "children": [
+              {"title": "Releases oxygen as a byproduct"},
+              {"title": "Passes electrons down the transport chain"}
+            ]
+          },
+          {"title": "Photosystem I", "detail": "Re-energizes electrons to produce NADPH"}
+        ]
+      },
+      {
+        "title": "Light-Independent Reactions", "detail": "The Calvin cycle -- builds sugar from CO2 using the ATP and NADPH made above",
+        "children": [
+          {"title": "Carbon fixation", "detail": "CO2 attaches to a 5-carbon molecule"},
+          {"title": "Sugar production", "detail": "Produces G3P, which becomes glucose"}
+        ]
+      },
+      {
+        "title": "Requirements", "detail": "What the whole process depends on",
+        "children": [
+          {"title": "Sunlight"},
+          {"title": "Water"},
+          {"title": "Carbon dioxide"}
+        ]
+      }
+    ]
+  }
+}"""
+
+MIND_MAP_SYSTEM_PROMPT = (
+    "You read study material and produce a topic-tree mind map of it, "
+    "returned ONLY as a valid instance of the submit_mind_map tool schema. "
+    "Base the tree on what the document actually says and how it's "
+    "actually organized -- not on what you already know about the "
+    "subject, and not padded out with generic background the document "
+    "itself doesn't cover. Every 'detail' you include should say what "
+    "that node's content actually is, not just restate its title in "
+    "other words.\n\n"
+    "The tree has exactly four possible levels: the root (the document's "
+    "one central subject), then up to three more levels of children "
+    "nested under it. Not every branch needs to go four levels deep -- "
+    "a branch that's genuinely simple should just stop being simple, "
+    "not be padded with invented sub-detail to look as deep as its "
+    "neighbors. 'detail' is optional at every level: a self-explanatory "
+    "leaf like a single term or short fact doesn't need one, but a "
+    "branch covering real content should almost always have one, since "
+    "a bare outline of titles with no explanation defeats the point of "
+    "a document-derived map. Total nodes across the whole tree must be "
+    "3-40.\n\n"
+    "Below is a fully worked example on an unrelated topic "
+    "(photosynthesis) -- study it for the SHAPE, not the subject "
+    "matter, which has nothing to do with whatever document you're "
+    "actually given. The fences below are for readability in this "
+    "instruction only; your own output must not use them.\n\n"
+    "```\n" + _MIND_MAP_EXAMPLE_JSON + "\n```\n\n"
+    "Notice the uneven depth: 'Photosystem II' goes a full four levels "
+    "deep because the source material had two distinct sub-points worth "
+    "naming individually, while 'Photosystem I' and everything under "
+    "'Requirements' stop at three or even two levels because there was "
+    "nothing more specific to say -- depth follows what the material "
+    "actually supports, not a fixed pattern repeated at every branch. "
+    "Leaf nodes that are simple, self-evident facts ('Sunlight', "
+    "'Water') skip 'detail' entirely rather than restating their own "
+    "title as a fake sentence.\n\n"
+    "Do not wrap your own output in markdown fences. Do not add commentary."
+)
+
+def build_mind_map_manual_prompt(text: str) -> str:
+    """The plain-text prompt for manual mode: no tool-calling exists when
+    a person pastes into a generic AI chat tab, so the shape has to be
+    spelled out in the prompt itself, same as Motion Studio's
+    build_motion_manual_prompt(). Frontend surfaces this verbatim for
+    copying; kept here as the single source of truth for now."""
+    return (
+        "Read the following document and produce a topic-tree mind map "
+        "of it. Respond with ONLY a JSON object (no markdown fences, no "
+        "commentary) shaped like this fully worked example. The subject "
+        "below (photosynthesis) is unrelated to the document -- match "
+        "its SHAPE, not its subject matter:\n\n"
+        + _MIND_MAP_EXAMPLE_JSON +
+        "\n\n"
+        "Rules:\n"
+        "- exactly four possible levels: root, then up to three more "
+        "nested levels of \"children\" -- a leaf simply has no "
+        "\"children\" key (or an empty list)\n"
+        "- \"detail\" is optional at every level -- include it whenever "
+        "a node covers real content worth explaining (see "
+        "\"Photosystem II\" above), skip it for simple self-evident "
+        "leaves (see \"Sunlight\" above) rather than restating the "
+        "title as a fake sentence\n"
+        "- depth doesn't have to be even across branches -- go four "
+        "levels deep only where the material actually has that much to "
+        "say (see \"Photosystem II\" vs. \"Photosystem I\" above), not "
+        "as a pattern repeated everywhere\n"
+        "- base every node on what the document actually says, not on "
+        "outside knowledge of the subject or generic padding\n"
+        "- total nodes across the whole tree: 3-40\n"
+        "- title up to 80 characters, detail up to 240 characters\n\n"
+        "Document:\n\n" + text
+    )
+
+# TEMPORARY: in-memory, same limitation as _motion_quota above -- see that
+# comment for the real fix (Vercel Marketplace -> Upstash Redis). Own
+# independent pool from Motion Studio's, not shared.
+_mind_map_quota = defaultdict(int)
+MIND_MAP_FREE_LIMIT = int(os.environ.get("MIND_MAP_FREE_LIMIT", "3"))
+
+def _check_and_increment_mind_map_quota(client_id: str):
+    if _mind_map_quota[client_id] >= MIND_MAP_FREE_LIMIT:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"You've used your {MIND_MAP_FREE_LIMIT} free Mind Map generations. "
+                "Add a Claude or Gemini key in Settings to keep going."
+            ),
+        )
+    _mind_map_quota[client_id] += 1
+
+def _resolve_mind_map_credentials(request: Request):
+    """Identical shape to _resolve_motion_credentials above -- BYOK header
+    present -> use it, no quota touched. Otherwise -> Lernin's own key,
+    gated by Mind Map's own free-generation quota. Returns
+    (provider, api_key, used_server_key)."""
+    provider = request.headers.get("x-llm-provider", "").lower()
+    api_key = request.headers.get("x-llm-api-key", "")
+    if api_key:
+        if provider not in ("claude", "gemini"):
+            raise HTTPException(status_code=400, detail="Unsupported provider. Use 'claude' or 'gemini'.")
+        return provider, api_key, False
+
+    server_key = os.environ.get("MOTION_SERVER_CLAUDE_KEY", "")
+    if not server_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Add a Claude or Gemini key in Settings to use Mind Map.",
+        )
+    client_id = request.headers.get("x-client-id", "")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Missing X-Client-Id header.")
+    _check_and_increment_mind_map_quota(client_id)
+    return "claude", server_key, True
+
+GENERATE_MIND_MAP_TOOL = {
+    "name": "submit_mind_map",
+    "description": "Submit a topic-tree mind map for a study document.",
+    "input_schema": MIND_MAP_SCRIPT_SCHEMA,
+}
+
+class GenerateMindMapResponse(BaseModel):
+    mind_map: Optional[dict] = None
+    retryable: bool = False
+    error: Optional[str] = None
+
+def _call_claude_mind_map(text: str, api_key: str, retry_note: str = None) -> MindMapScript:
+    client = anthropic.Anthropic(api_key=api_key)
+    user_text = f"Document:\n\n{text}"
+    if retry_note:
+        user_text += (
+            f"\n\n(A previous attempt at this failed: {retry_note} "
+            f"Please avoid that mistake this time.)"
+        )
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=8192,
+        system=MIND_MAP_SYSTEM_PROMPT,
+        tools=[GENERATE_MIND_MAP_TOOL],
+        tool_choice={"type": "tool", "name": "submit_mind_map"},
+        messages=[{"role": "user", "content": user_text}],
+    )
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "submit_mind_map":
+            return MindMapScript.model_validate(block.input)
+    raise ValueError("Model did not return a submit_mind_map tool call")
+
+def _call_gemini_mind_map(text: str, api_key: str, retry_note: str = None) -> MindMapScript:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    user_text = f"Document:\n\n{text}"
+    if retry_note:
+        user_text += (
+            f"\n\n(A previous attempt at this failed: {retry_note} "
+            f"Please avoid that mistake this time.)"
+        )
+    payload = {
+        "system_instruction": {"parts": [{"text": MIND_MAP_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": MIND_MAP_SCRIPT_SCHEMA,
+            # Same reasoning as _call_gemini_motion's identical field:
+            # matching Claude's explicit budget rather than trusting
+            # Gemini's own default, which motion's history shows can
+            # silently truncate a verbose response into something that
+            # still parses but is nearly empty.
+            "maxOutputTokens": 8192,
+        },
+    }
+    with httpx.Client(timeout=120.0) as http:
+        response = http.post(url, params={"key": api_key}, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason")
+        if finish_reason not in ("STOP", None):
+            raise GeminiIncompleteError(finish_reason)
+        text_out = candidate["content"]["parts"][0]["text"]
+        parsed = json.loads(text_out)
+        return MindMapScript.model_validate(parsed)
+
 # ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
 async def generate_cards(request: Request):
@@ -937,4 +1168,96 @@ async def expand_motion_script(request: Request):
         raise
     except Exception as e:
         logger.exception("expand_motion_script crashed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+@app.post("/api/generate-mind-map", response_model=GenerateMindMapResponse)
+async def generate_mind_map(request: Request):
+    """Same structure as generate_motion above -- see that route's
+    comments for why credentials are resolved (and quota spent) only
+    after the input is known to be valid, and why the whole body is
+    wrapped in a try/except rather than leaving credential resolution
+    exposed to an uncaught crash."""
+    try:
+        _check_rate_limit(_client_ip(request))
+
+        body = await request.json()
+        text = body.get("text", "")
+        if not text or len(text.strip()) < 50:
+            raise HTTPException(status_code=400, detail="Document text too short or missing.")
+
+        provider, api_key, _used_server_key = _resolve_mind_map_credentials(request)
+
+        retry_note = body.get("retry_of_error") or None
+        if retry_note:
+            logger.info(f"Mind map retry attempted: provider={provider}")
+
+        try:
+            if provider == "claude":
+                tree = _call_claude_mind_map(text, api_key, retry_note)
+            else:
+                tree = _call_gemini_mind_map(text, api_key, retry_note)
+        except anthropic.AuthenticationError:
+            raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+        except anthropic.RateLimitError:
+            raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
+        except GeminiIncompleteError as e:
+            error = (
+                f"Gemini's response didn't finish (reason: {e.finish_reason}) -- "
+                f"likely ran out of output budget mid-tree. Try again."
+            )
+            logger.info(f"Mind map retry-eligible failure: provider={provider} error={error!r}")
+            return GenerateMindMapResponse(retryable=True, error=error)
+        except ValidationError as e:
+            error = f"The model's mind map didn't match the expected shape: {_format_validation_error(e)}"
+            logger.info(f"Mind map retry-eligible failure: provider={provider} error={error!r}")
+            return GenerateMindMapResponse(retryable=True, error=error)
+        except ValueError as e:
+            error = str(e)
+            logger.info(f"Mind map retry-eligible failure: provider={provider} error={error!r}")
+            return GenerateMindMapResponse(retryable=True, error=error)
+
+        try:
+            resolved = expand_mind_map(tree)
+        except MindMapEngineError as e:
+            error = f"Generated mind map has a layout issue: {e}"
+            logger.info(f"Mind map retry-eligible failure: provider={provider} error={error!r}")
+            return GenerateMindMapResponse(retryable=True, error=error)
+
+        return GenerateMindMapResponse(mind_map=resolved)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # TEMPORARY, same as generate_motion above: tighten before real
+        # public traffic, see UPCOMING_FEATURES.md.
+        logger.exception("generate_mind_map crashed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+@app.post("/api/expand-mind-map", response_model=GenerateMindMapResponse)
+async def expand_mind_map_endpoint(request: Request):
+    """Manual mode: no AI call in this route at all -- the person already
+    ran build_mind_map_manual_prompt's text in their own AI chat and is
+    pasting the JSON back. Same validation, same expand_mind_map() call
+    generate_mind_map uses after its own AI call."""
+    try:
+        _check_rate_limit(_client_ip(request))
+        body = await request.json()
+        try:
+            tree = MindMapScript.model_validate(body)
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=f"That doesn't match the expected shape: {_format_validation_error(e)}")
+
+        try:
+            resolved = expand_mind_map(tree)
+        except MindMapEngineError as e:
+            raise HTTPException(status_code=400, detail=f"Layout issue: {e}")
+
+        return GenerateMindMapResponse(mind_map=resolved)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("expand_mind_map crashed unexpectedly")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")

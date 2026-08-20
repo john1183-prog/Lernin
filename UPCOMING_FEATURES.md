@@ -317,6 +317,188 @@ before this is trusted with real traffic.
 
 ---
 
+### Mind Map v2 — backend and frontend built, verified, wired end to end
+
+A static, per-document topic-tree mind map generated from a document's
+*actual text*, not derived from flashcards — cards are already a lossy,
+study-optimized transformation of the source, so going through them as
+an intermediate step produces something less faithful to the document's
+real structure than working from the document directly. Distinct from
+the existing card-based `mind-map.js` (deck-scoped, force-directed,
+relationship-driven — see "Already shipped" below), which stays as-is.
+
+Placement: a new 🧠 action on each row in the Documents view, next to
+the existing delete button — that view is already the per-document
+list, so this needed no new nav entry and no change to the existing
+force-directed Mind Map's menu item. Interactive (pan/zoom/tap-for-
+detail), not animated — no keyframes/playback, unlike Motion Studio,
+and deliberately no node dragging either: the layout is structural and
+deterministic, so dragging a node would just be visual noise with
+nothing to persist it against, unlike the card graph's physics-based
+one where dragging still respects the springs.
+
+**Schema** (`api/mind_map_schema.py`) is deliberately non-recursive —
+`root` → up to 3 more nested levels of `children`, four fixed levels
+total, no self-referencing type — even though a topic hierarchy is
+conceptually recursive. Gemini's older `responseSchema` path (the same
+OpenAPI-3.0-subset style this project already uses for card generation
+and Motion Studio) has a well-documented history of failing on
+recursive/self-referencing schemas (multiple open
+`googleapis/python-genai` issues, `pydantic-ai`'s own "Recursive $refs
+... are not supported by Gemini" report); a newer `responseJsonSchema`
+path reportedly added `$ref`/recursion support more recently, but which
+path this project's actual Gemini integration would land on couldn't be
+verified live (`generativelanguage.googleapis.com` isn't reachable from
+this sandbox) — so rather than risk repeating the exact class of bug
+Motion Studio's `type` field hit in production, the schema sidesteps
+the question with a bounded depth instead. The internal Pydantic model
+is still genuinely recursive (Python has no such restriction) and
+independently re-validates the same depth/count bounds via a tree walk,
+so a manually-pasted script that's deeper than the generation schema
+structurally allows is still caught, not silently accepted by one path
+and rejected by the other. All fields required except `detail`
+(optional at every level, so a self-evident leaf doesn't need invented
+padding) — no other nullable fields anywhere, sidestepping that whole
+category of the Motion Studio lesson too.
+
+**Layout** (`api/mind_map_engine.py`) mirrors `motion_engine.py`'s
+split deliberately: the model generates semantic structure only
+(titles, details, parent/child relationships), a pure deterministic
+function turns that into concrete non-overlapping (x, y) coordinates —
+so a bad layout is a reproducible geometry bug in this file, and a bad
+topic breakdown is a prompt-quality problem, and the two can never be
+tangled together the way AI-authored positions would tangle them.
+Radial layout: root at canvas center, each ring's radius grows with how
+crowded that ring actually is (not a flat step), each node's angular
+slice weighted by its own subtree size so a branch with many
+descendants gets proportionally more room. 24 unit tests
+(`api/test_mind_map_engine.py`) covering schema bounds (depth, node
+count, blank/oversized fields), the Gemini-safety structural walk (no
+list-valued `type`, no `$ref`/`$defs` anywhere), and the layout engine
+itself (no coincident positions, no NaN/infinite coordinates, parent
+IDs correct, crowded rings get larger radii than sparse ones, exactly-
+at-boundary cases for both node count and depth). Beyond the numeric
+tests, the layout was also rendered to an actual image (PIL, then
+separately via the real running renderer through Playwright) and
+inspected — a radial layout can pass every numeric property (unique
+positions, monotonic radius, correct parent IDs) and still look wrong
+in a way none of those properties would catch.
+
+**Prompt** (`MIND_MAP_SYSTEM_PROMPT` / `build_mind_map_manual_prompt()`
+in `index.py`) includes a fully worked example from the start —
+applying Motion Studio's "richer few-shot example" lesson immediately
+rather than shipping bare rules and retrofitting an example later.
+Deliberately demonstrates uneven depth across branches (one branch goes
+the full four levels because the source material had two distinct
+sub-points worth naming, sibling branches stop at two or three because
+there was nothing more specific to say) and optional `detail` being
+skipped for self-evident leaves rather than restated as a fake
+sentence. Validated end to end (`MindMapScript.model_validate()` +
+`expand_mind_map()`) before landing in either prompt.
+
+**Routes** (`/api/generate-mind-map`, `/api/expand-mind-map`) mirror
+Motion Studio's `/api/generate-motion` / `/api/expand-motion-script`
+exactly — same three-path credential model (BYOK / server-key-with-
+quota / manual-mode), same retryable-vs-hard-error taxonomy, own
+independent quota pool (`MIND_MAP_FREE_LIMIT`, separate from Motion
+Studio's) so the two features' free generations don't share one
+counter. Verified live against a real locally-running server: manual
+mode with a valid tree (200, correctly resolved 13-node/1080×1080
+layout), a genuinely malformed tree — too few nodes — (clean 400 with a
+specific message, not a crash), missing credentials (clean 400/401,
+not a crash), text too short (clean 400), and a bogus server-key
+Claude request against the actual live Claude API (167ms round trip,
+`"Invalid Claude API key."` — the real translated Anthropic auth
+error, not a local short-circuit, confirming the full credential→
+provider-call→error-translation pipeline end to end).
+
+**Frontend** (`mind-map-doc-api.js`, `mind-map-doc-manual-import.js`,
+`mind-map-doc.js`) mirrors Motion Studio's file split. One deliberate
+difference: no offline retry queue the way `motionGenQueue` exists for
+Motion Studio — mind-map generation is a best-effort side-call fired
+after cards generate successfully, not something the person explicitly
+asked for right now, so a failure or an offline device loses nothing;
+the Documents-view action generates on demand later instead (see
+Option A/B below). `mind-map-doc-api.js`'s manual prompt was byte-
+verified against the live Python output the same way Motion Studio's
+is — extracted with a placeholder, spliced into the JS template
+literal, diffed against a live Node run of the actual JS function:
+identical. Storage: `db.js` DB_VERSION bumped to 10, new
+`documentMindMaps` store keyed directly by `documentId` (1:1 —
+regenerating overwrites, unlike `motionScripts`' 1:many-per-deck),
+`deleteDocument()` now cascades to remove the associated mind map.
+Verified with a real `fake-indexeddb` test: save/get round-trip,
+regenerate-overwrites-not-duplicates, explicit delete, cascade delete
+via `deleteDocument()`, and deleting a document with no mind map
+doesn't throw.
+
+**Option A/B, both built.** Option A (the faithful path): generation
+now fires from `handleExtractedText()` in `app.js` immediately after
+`saveDocument()` succeeds on the BYOK auto-generate path, using the
+full extracted `text` while it's still in memory — fire-and-forget,
+can't block the person from seeing their cards. Option B (the
+fallback): the Documents-view action's "no mind map yet" state offers
+to generate on demand from the document's saved `summary` instead,
+for documents where Option A wasn't attempted, failed, or predates
+this feature entirely (raw text is never persisted anywhere — see
+`mind_map_schema.py`'s module docstring for why that's structural, not
+an oversight). Mind maps generated either way are labeled by their
+`source` field; a summary-sourced one shows a small "lower detail than
+a fresh upload" badge rather than presenting both the same way.
+
+**End-to-end UI verification, not just backend HTTP calls this time.**
+Built an isolated seeding harness (real `db.js` functions + the real
+running renderer, served through a small static+API proxy, driven by
+Playwright) and screenshotted every state: an already-generated map
+rendering correctly, the summary-fallback badge, the "no mind map yet"
+CTA, the manual-import fallback triggering correctly on a real 401 from
+a bogus key, and a full paste-JSON-and-submit round trip actually
+producing a rendered tree. This caught two real bugs neither the unit
+tests nor a code read surfaced:
+- `.app-header-title` had no overflow handling at all — any header
+  using the shared `.app-header` pattern with a long enough title (a
+  document filename, here) would wrap to a second line and overlap the
+  fixed 56px header height. General bug in shared CSS, not mind-map-
+  specific, just the first view with text long enough to expose it.
+  Fixed at the shared class level (`flex:1; min-width:0; overflow:
+  hidden; text-overflow:ellipsis; white-space:nowrap; text-align:
+  center`) so every view using `.app-header` benefits, not just this one.
+- `setupCanvasView()` appended a canvas without clearing its container
+  first. Every call site assumed the container was already empty, but
+  none of them actually were (a loading message, the manual-import
+  form) — so after a successful generation the canvas rendered
+  correctly but sat *underneath* the still-mounted previous UI, and a
+  button like "Validating…" would appear stuck forever even though the
+  map had actually resolved. Fixed by having `setupCanvasView()` clear
+  its container itself, since it's the one taking full ownership of
+  that element — safer than trusting every current and future call
+  site to remember to clear first.
+
+**Also fixed in this pass, found while building this:** the BYOK
+auto-generate path's `summary` return value was silently discarded —
+`handleExtractedText()` called `generateCards()`, got back
+`{ cards, summary }`, and only ever passed `cards` on, so
+`saveDocument()` was never invoked for the most common generation path
+and the Documents/Course Recap views were effectively empty for
+anyone using it. Fixed: `saveDocument()` is now called (fire-and-forget,
+non-blocking, so a save failure can't block someone from seeing their
+cards) whenever a summary comes back. This was a real, pre-existing bug
+independent of Mind Map v2, but directly relevant to it — the new
+Documents-view action needed a document list that was actually
+populated to have anything to attach to.
+
+**Not started:** no real-key end-to-end generation test yet — same gap
+as Motion Studio's, proven so far only with a bogus-key 401 path and
+the manual-paste path; the richer few-shot example's actual effect on
+real generation quality is unmeasured, same as Motion Studio's. The
+isolated test harness used for the screenshot verification above was a
+throwaway (`public/test-mindmap-harness.html`, deleted before this
+commit) — not shipped, unlike Motion Studio's `motion-test.html` which
+is a deliberate permanent dev tool; this one was pure automation
+scaffolding, not something a person would want to open by hand.
+
+---
+
 ## Tier 2 — Rich cards and relationships
 
 Fully shipped — every item originally scoped here, including the

@@ -8,7 +8,7 @@ import {
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
   getReminderSettings, setReminderEnabled, markReminderShownToday, wipeAllData, saveDeck,
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
-  exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument,
+  exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument, saveDocument,
   getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
   localDayKey
 } from './db.js';
@@ -16,6 +16,8 @@ import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate } from './sound.js';
 import { renderMindMap } from './mind-map.js';
+import { renderDocumentMindMap } from './mind-map-doc.js';
+import { generateMindMap } from './mind-map-doc-api.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -214,6 +216,9 @@ async function handleRoute() {
       break;
     case 'mind-map':
       activeViewCleanup = await enterMindMap(id);
+      break;
+    case 'document-mind-map':
+      activeViewCleanup = await enterDocumentMindMap(id);
       break;
     case 'documents': await renderDocuments(id); break;
     case 'new-card': await renderNewCardForm(id); break;
@@ -531,6 +536,16 @@ async function enterMindMap(deckId) {
   root.innerHTML = '';
   if (!deckId) { navigate('/'); return null; }
   return renderMindMap(root, deckId, { onExit: () => navigate('/') });
+}
+
+async function enterDocumentMindMap(documentId) {
+  root.innerHTML = '';
+  if (!documentId) { navigate('/'); return null; }
+  // No onExit passed — the back button falls back to history.back(),
+  // which correctly returns to whichever Documents view sent the person
+  // here, unlike the card-based mind map which always exits to the deck
+  // list regardless of entry point.
+  return renderDocumentMindMap(root, documentId, {});
 }
 
 async function renderSettings() {
@@ -1157,6 +1172,13 @@ function renderHelp() {
       body: `
         <p>Deck sheet → <strong>Mind Map</strong>. A force-directed graph of that deck's cards and their "Depends on"/"Related" links — cards that connect end up clustered near each other, unrelated ones drift apart, so the shape of the material is visible at a glance.</p>
         <p>Different from the territory <strong>Map</strong>: no landmarks, paths, or exploration tooling, just the graph. Drag nodes to explore during a session — nothing is saved, so it's always a fresh read of the current relationships next time you open it. Tap a node for a quick front/back peek. ↺ re-runs the layout if you've dragged things into a mess.</p>
+      `
+    },
+    {
+      title: 'Mind Map (per document)',
+      body: `
+        <p>Documents view → 🧠 on any document. A topic tree built from that <em>document's own structure</em> — not from its flashcards, which are already a study-optimized simplification of the source. Pan and zoom to explore, tap a node for its detail. Nothing animates and nothing can be dragged; the layout is fixed each time it's generated.</p>
+        <p>Best result comes from a document generated while you had an AI key configured, since that's the only point your full text is available to build from — after that, only the saved summary remains, so regenerating later produces a shorter, less detailed map (labeled as such). No key configured at all? You'll get a copyable prompt to run in any AI chat and paste the answer back in, same as elsewhere in Lernin.</p>
       `
     }
   ];
@@ -1978,6 +2000,36 @@ async function handleExtractedText(text, deckId, config, filename) {
   if (isByok) {
     const result = await generateCards(text, deckId);
     if (result && result.cards && result.cards.length > 0) {
+      // Was silently dropped before: generateCards() returns a summary as
+      // a byproduct, but nothing ever persisted it, so the Documents and
+      // Course Recap views were effectively empty for this — the most
+      // common — generation path. saveDocument() failing shouldn't block
+      // the person from seeing their cards, so it's fire-and-forget with
+      // its own catch rather than awaited into the critical path.
+      if (result.summary) {
+        const newDocId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        saveDocument({
+          id: newDocId,
+          deckId,
+          filename: filename || 'Untitled document',
+          summary: result.summary,
+          size: text ? text.length : undefined
+        }).then(() => {
+          // Option A from the mind-map design doc: generate the topic tree
+          // now, while the full extracted `text` is still in memory — this
+          // is the only point in the document's lifecycle that's true, see
+          // mind_map_schema.py's module docstring. Fire-and-forget and
+          // fully non-blocking: a slow or failed generation here must never
+          // delay the person seeing their cards, and if it fails there's no
+          // real loss — the Documents view's "Mind Map" action can still
+          // generate later from the saved summary (lower fidelity, but not
+          // a dead end). Deliberately not queued for offline retry the way
+          // card generation is, for the same reason — see mind-map-doc-api.js.
+          generateMindMap(text, newDocId, 'full-text').catch(err => {
+            console.error('Background mind map generation failed (non-fatal):', err);
+          });
+        }).catch(err => console.error('saveDocument failed (non-fatal):', err));
+      }
       renderEditStep(result.cards, deckId);
       return;
     }
@@ -2921,8 +2973,15 @@ async function renderDocuments(deckId) {
           <div style="font-size:14px; font-weight:600; color:var(--ink);">${escapeHtml(doc.filename)}</div>
           <div style="font-size:12px; color:var(--ink-muted);">${formatFileSize(doc.size)} · ${formatUploadDate(doc.uploadedAt)}</div>
         </div>
-        <button class="doc-delete-btn" data-id="${doc.id}" style="width:32px;height:32px;border:none;background:transparent;color:var(--danger);font-size:18px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🗑</button>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <button class="doc-mindmap-btn" data-id="${doc.id}" title="Mind Map" aria-label="Mind Map" style="width:32px;height:32px;border:none;background:transparent;color:var(--ink-secondary);font-size:16px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🧠</button>
+          <button class="doc-delete-btn" data-id="${doc.id}" style="width:32px;height:32px;border:none;background:transparent;color:var(--danger);font-size:18px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🗑</button>
+        </div>
       `;
+      row.querySelector('.doc-mindmap-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigate(`/document-mind-map/${doc.id}`);
+      });
       row.querySelector('.doc-delete-btn').addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!confirm('Delete this document?')) return;

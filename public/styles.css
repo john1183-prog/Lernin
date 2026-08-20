@@ -190,6 +190,12 @@ body {
   font-weight: 700;
   letter-spacing: -0.5px;
   color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .app-header-actions {

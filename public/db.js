@@ -8,7 +8,7 @@ import { openDB } from './vendor/idb.js';
 import { newCardDefaults } from './scheduler.js';
 
 const DB_NAME = 'Lernin';
-const DB_VERSION = 9;
+const DB_VERSION = 10;
 
 // Renamed from 'RecallDB' -> 'Lernin' to match the repo/product name.
 // IndexedDB database names can't be renamed in place, so on first load
@@ -191,7 +191,18 @@ export function getDB() {
         }
       }
 
-      // Future migrations: `if (oldVersion < 10) { ... }` etc. Never delete
+      if (oldVersion < 10) {
+        // One mind map per document (1:1 -- regenerating overwrites, no
+        // history kept), so keyed directly by documentId rather than a
+        // synthetic id + index the way motionScripts is (which is 1:many
+        // per deck). See mind-map-doc.js for the generation/fallback split
+        // this store's "source" field records.
+        if (!db.objectStoreNames.contains('documentMindMaps')) {
+          db.createObjectStore('documentMindMaps', { keyPath: 'documentId' });
+        }
+      }
+
+      // Future migrations: `if (oldVersion < 11) { ... }` etc. Never delete
       // or rename stores in-place on user devices without a migration path.
     }
   });
@@ -1078,6 +1089,38 @@ export async function clearQueuedMotionGeneration(id) {
   return db.delete('motionGenQueue', id);
 }
 
+/**
+ * One resolved mind map (the JSON expand_mind_map() returns) per document,
+ * keyed directly by documentId -- regenerating overwrites, no history kept,
+ * unlike motionScripts which can have many per deck. `source` records
+ * which generation path produced it: 'full-text' when generated at upload
+ * time while the document's full extracted text was still in memory
+ * (Option A from the design doc, the faithful path), or
+ * 'summary-fallback' when generated on demand later from just the saved
+ * summary (Option B, for documents that predate this feature or where the
+ * upload-time attempt didn't happen/failed) -- the raw text itself is
+ * never persisted anywhere, so 'summary-fallback' is genuinely the best
+ * available input at that point, not a bug. The UI uses this field to
+ * label fallback-sourced maps as lower-fidelity rather than presenting
+ * both the same way.
+ */
+export async function saveMindMapForDocument(documentId, mindMap, source) {
+  const db = await getDB();
+  const record = { documentId, mindMap, source, createdAt: Date.now() };
+  await db.put('documentMindMaps', record);
+  return record;
+}
+
+export async function getMindMapForDocument(documentId) {
+  const db = await getDB();
+  return db.get('documentMindMaps', documentId);
+}
+
+export async function deleteMindMapForDocument(documentId) {
+  const db = await getDB();
+  return db.delete('documentMindMaps', documentId);
+}
+
 // ---------------------------------------------------------------------------
 // Study reminders — a deliberately scoped-down alternative to true push
 // notifications. Real push (a notification arriving even when the app/tab
@@ -1503,6 +1546,7 @@ export async function getDocument(id) {
 
 export async function deleteDocument(id) {
   const db = await getDB();
+  await db.delete('documentMindMaps', id).catch(() => {}); // best-effort, may not exist
   return db.delete('documents', id);
 }
 
