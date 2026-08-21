@@ -18,6 +18,7 @@ import { setSoundEnabledCache, initSoundSetting, playNavigate } from './sound.js
 import { renderMindMap } from './mind-map.js';
 import { renderDocumentMindMap } from './mind-map-doc.js';
 import { generateMindMap } from './mind-map-doc-api.js';
+import { renderMotionStudio, MOTION_PREFILL_KEY } from './motion-studio.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -219,6 +220,9 @@ async function handleRoute() {
       break;
     case 'document-mind-map':
       activeViewCleanup = await enterDocumentMindMap(id);
+      break;
+    case 'motion':
+      activeViewCleanup = await enterMotionStudio(id);
       break;
     case 'documents': await renderDocuments(id); break;
     case 'new-card': await renderNewCardForm(id); break;
@@ -442,6 +446,7 @@ function openBottomSheet(deck) {
     { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
     { label: 'Map', icon: '🗺️', action: () => navigate(`/map/${deck.id}`) },
     { label: 'Mind Map', icon: '🕸️', action: () => navigate(`/mind-map/${deck.id}`) },
+    { label: 'Motion', icon: '🎬', action: () => navigate(`/motion/${deck.id}`) },
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
     { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
     { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
@@ -546,6 +551,16 @@ async function enterDocumentMindMap(documentId) {
   // here, unlike the card-based mind map which always exits to the deck
   // list regardless of entry point.
   return renderDocumentMindMap(root, documentId, {});
+}
+
+async function enterMotionStudio(deckId) {
+  root.innerHTML = '';
+  // deckId is optional here (unlike the mind maps) -- Motion Studio isn't
+  // inherently tied to one deck's content the way a document or card graph
+  // is, it's a free-form "explain any topic" tool. Passing one just scopes
+  // generated scripts to that deck's saved list, same as arriving from a
+  // deck's action menu already implies.
+  return renderMotionStudio(root, deckId || null, {});
 }
 
 async function renderSettings() {
@@ -1179,6 +1194,13 @@ function renderHelp() {
       body: `
         <p>Documents view → 🧠 on any document. A topic tree built from that <em>document's own structure</em> — not from its flashcards, which are already a study-optimized simplification of the source. Pan and zoom to explore, tap a node for its detail. Nothing animates and nothing can be dragged; the layout is fixed each time it's generated.</p>
         <p>Best result comes from a document generated while you had an AI key configured, since that's the only point your full text is available to build from — after that, only the saved summary remains, so regenerating later produces a shorter, less detailed map (labeled as such). No key configured at all? You'll get a copyable prompt to run in any AI chat and paste the answer back in, same as elsewhere in Lernin.</p>
+      `
+    },
+    {
+      title: 'Motion Studio',
+      body: `
+        <p>Deck sheet → <strong>Motion</strong>. Describe a concept, get a short animated explainer — markers, labels, a camera move, built to make one idea click rather than replace review. Reachable two ways: type any topic directly, or tap a node in a document's Mind Map and choose <strong>Explain with motion</strong> to jump straight in with that topic already filled in.</p>
+        <p>Explainers are saved per deck, so a deck's whole set is one tap away under Saved explainers. Same no-key fallback as everywhere else: without a configured AI key, you'll get a copyable prompt and a place to paste the response back in.</p>
       `
     }
   ];

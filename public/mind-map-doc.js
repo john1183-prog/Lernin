@@ -18,6 +18,7 @@
 import { getDocument, getMindMapForDocument, getApiConfig } from './db.js';
 import { generateMindMap } from './mind-map-doc-api.js';
 import { renderMindMapManualImport } from './mind-map-doc-manual-import.js';
+import { MOTION_PREFILL_KEY } from './motion-studio.js';
 
 const DEPTH_COLORS = ['#e8a33d', '#4a90d9', '#7fbf7f', '#c77fbf'];
 
@@ -28,6 +29,7 @@ function escapeHtmlLocal(str) {
 }
 
 let container = null, canvasEl = null, ctx = null;
+let currentDeckId = null;
 let nodes = [], nodeById = new Map();
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
@@ -147,7 +149,8 @@ function openNodeDetail(node) {
   p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:40%; overflow-y:auto;';
   p.innerHTML = `
     <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtmlLocal(node.title)}</div>
-    ${node.detail ? `<div style="font-size:13px; color:var(--ink-secondary); line-height:1.5;">${escapeHtmlLocal(node.detail)}</div>` : ''}
+    ${node.detail ? `<div style="font-size:13px; color:var(--ink-secondary); line-height:1.5; margin-bottom:10px;">${escapeHtmlLocal(node.detail)}</div>` : ''}
+    ${currentDeckId ? `<button class="btn-secondary" id="dmmExplainBtn" style="font-size:13px;">🎬 Explain with motion</button>` : ''}
   `;
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
@@ -157,6 +160,19 @@ function openNodeDetail(node) {
   p.appendChild(closeBtn);
   canvasEl.parentElement.appendChild(p);
   detailPanelEl = p;
+
+  const explainBtn = p.querySelector('#dmmExplainBtn');
+  if (explainBtn) {
+    explainBtn.addEventListener('click', () => {
+      // Same one-shot handoff pattern motion-studio.js expects — see its
+      // own MOTION_PREFILL_KEY comment. Not importing navigate() from
+      // app.js here to avoid a circular import (app.js already imports
+      // this module); setting the hash directly is exactly what
+      // navigate() does anyway.
+      sessionStorage.setItem(MOTION_PREFILL_KEY, node.title);
+      window.location.hash = `/motion/${currentDeckId}`;
+    });
+  }
 }
 
 function renderLoop() {
@@ -229,6 +245,7 @@ function destroy() {
   container = null; canvasEl = null; ctx = null;
   hoveredNode = null; pointerDownNode = null;
   lastPointer = null; isPanning = false;
+  currentDeckId = null;
 }
 
 function setupCanvasView(bodyEl) {
@@ -294,6 +311,7 @@ export async function renderDocumentMindMap(rootEl, documentId, opts = {}) {
     return destroy;
   }
   header.querySelector('.app-header-title').textContent = `Mind Map \u00b7 ${doc.filename}`;
+  currentDeckId = doc.deckId || null;
 
   if (existing && existing.mindMap) {
     setupCanvasView(body);

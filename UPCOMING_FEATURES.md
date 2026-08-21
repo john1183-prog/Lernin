@@ -301,19 +301,66 @@ identical, no backticks or stray `${` sequences in the spliced text either.
 All 34 existing unit tests still pass unmodified. Pure prompt content, no
 schema or engine changes, so nothing else needed touching.
 
-**Not started:** any polished UI integrated into the main app — that's
-still a separate, later effort, so the Help view stays untouched per
-this file's own convention below. **Also not done: end-to-end
-verification with a real Claude/Gemini key** — everything above was
-proven with a bogus/no-key 401 path and the manual-paste path; nobody's
-yet confirmed the model reliably produces a well-formed script via the
-actual tool-calling schema, and the richer example's actual effect on
-real generation quality is still unmeasured — that's the natural next
-real-key test now that the prompt itself has changed. **Still needed
-before persistent storage is trustworthy:** the free-quota counter is
-still an in-memory dict (same limitation as the pre-existing IP
-rate-limiter) — needs a Vercel Marketplace → Upstash Redis integration
-before this is trusted with real traffic.
+**Real in-app UI shipped** (`motion-studio.js`), replacing "bare test
+harness only" — `motion-test.html` stays as a separate, lower-level dev
+tool for testing the pipeline directly, not something a person is meant
+to find; the app's own navigation now points at the real view. Reachable
+two ways: a new "Motion" entry in the deck action sheet (next to Mind
+Map), and — the more natural path — tapping any node in a document's
+Mind Map v2 now shows "Explain with motion," which hands the node's
+title off as a pre-filled topic and auto-generates on arrival. The
+handoff uses a one-shot `sessionStorage` key
+(`motion-studio.js`'s `MOTION_PREFILL_KEY`) rather than a URL query
+param, since the app's hash router is a plain two-segment
+`/route/:id` parser with no query-string support, and topics can contain
+characters that would need escaping there anyway.
+
+Verified past what a screenshot alone would show: real canvas pixel
+content was inspected at multiple timestamps (0 bright pixels at t=0,
+the layer's own opacity keyframe says it should be invisible there;
+1310 near-white pixels at t=1.5s and t=3s, after the fade-in completes)
+to confirm the player is actually resolving and drawing keyframes, not
+just displaying controls around an empty canvas. The full navigation
+path was also driven for real — not the usual isolated seeding harness —
+starting from a blank app load, creating a deck through the actual UI,
+clicking the actual `.deck-menu-btn`, clicking "Motion" in the real
+bottom sheet, confirming the hash actually changed
+(`#/motion/<realDeckId>`) and the resulting view showed the real deck
+name.
+
+That real-navigation pass caught a genuine pre-existing bug, invisible
+until a deck-scoped view existed to expose it: `renderMotionManualImport()`
+never accepted or passed a `deckId` at all, so every manually-imported
+script silently saved with `deckId: null` regardless of which deck it
+was created from. `motion-test.html`'s script list was never filtered by
+deck (shows everything, always), so this had no visible symptom there.
+`motion-studio.js`'s deck-scoped "Saved explainers" list is the first
+place that actually filters by `deckId`, and a manual import promptly
+vanished from it. Fixed: `renderMotionManualImport()` now takes an
+optional `deckId` and threads it through to `expandMotionScriptManual()`
+(which already accepted one — only the UI layer was dropping it);
+`motion-studio.js`'s call site passes its own deckId, `motion-test.html`'s
+stays `null` since that harness has no deck context to give it. Re-verified
+live: an imported script now shows up correctly in the deck's own list.
+
+**Not started:** end-to-end verification with a real Claude/Gemini
+key — everything above was proven with a bogus/no-key 401 path and the
+manual-paste path; nobody's yet confirmed the model reliably produces a
+well-formed script via the actual tool-calling schema, and the richer
+example's actual effect on real generation quality is still unmeasured —
+that's the natural next real-key test now that the prompt itself has
+changed. **Still needed before persistent storage is trustworthy:** the
+free-quota counter is still an in-memory dict (same limitation as the
+pre-existing IP rate-limiter) — needs a Vercel Marketplace → Upstash
+Redis integration before this is trusted with real traffic. **Also not
+done:** a matching "Explain with motion" hook on the card-based mind
+map's node detail panel (card fronts are often short quiz-style
+fragments rather than clean explainer topics, so this needs a bit more
+thought than the document mind map's node-title-as-topic approach, not
+just a copy-paste of the same hook) — and the Help section still doesn't
+reflect any of this; a guided "how to use Lernin" walkthrough plus a
+curated, pre-generated onboarding explainer (using this feature to
+explain the app itself) are the next planned pieces, not yet started.
 
 ---
 
@@ -754,6 +801,38 @@ against the actual shipped `runForceLayout()` function (not just the
 test-harness copy) across 15 random-seed trials on a 25-node test
 graph: connected pairs reliably closer, worst-case 1.16x, comfortable
 node spacing at rest for even two max-radius nodes.
+
+**Two more real bugs found later, from an actual live screenshot on a
+97-card deck** (not from further test-harness work — the 25-node
+harness above never exercised either of these): every node was
+visibly overlapping its neighbors, and independently, the simulation
+could diverge outright rather than settle at all, on some decks.
+Neither was an N-scaling problem with the springLength=95/repulsion=800
+values just above (re-verified those still hold at N=97 the same way
+they did at N=25) — both were gaps in the untuned parts of the model
+that the smaller test scale never happened to expose. First: repulsion
+has no relationship to actual node radius, so nothing ever guaranteed
+touching nodes would stay apart — confirmed empirically (avg
+nearest-neighbor gap 36.6px vs ~62.6px of combined radius actually
+needed at N=97), fixed with a `resolveCollisions()` post-process pass
+(80 iterations, tuned against N=150 stress tests — 40 left ~9px of
+residual overlap, 80 didn't). Second, found while stress-testing the
+fix: repulsion's `1/d²` term has a singularity as distance approaches
+0, and explicit-Euler integration with a fixed damping constant has no
+protection against the resulting force spike — max velocity was
+observed oscillating (38 → 128 → 166 → 600) instead of decaying, span
+growing past 4000px, on a 97-node/25-edge test case. Fixed with a
+MIN_DIST floor on the repulsion distance and a MAX_VEL cap per
+iteration (both standard stabilizers for this class of simulation).
+Verified across 45+ randomized trials at N=8/25/97/150: zero
+divergences, down from routine at N=97. Also, separately: the same
+live screenshot showed the home screen's header title clipped to
+"Le…" — a same-session regression from `.app-header-title`'s
+long-filename overflow fix (Mind Map v2, below) being too aggressive
+for a title sharing space with six icon buttons; fixed by sizing the
+title to its natural width first and only shrinking under genuine
+pressure, with the icon row now protected from ever being the one
+that shrinks.
 
 ---
 

@@ -23,8 +23,16 @@ function escapeHtmlLocal(str) {
  * @param {Function} onDone — called with { script, id, error } once the
  *        person submits (error is null on success)
  * @param {Function} [onBack] — called if the person backs out without submitting
+ * @param {string|null} [deckId] — associates the saved record with a deck,
+ *        same as the generated (non-manual) path already does. Was
+ *        previously always omitted here regardless of caller, so every
+ *        manually-imported script saved with deckId: null and silently
+ *        never showed up in any deck-scoped list (getMotionScripts(deckId)
+ *        filters by exact match) — invisible while the only place that
+ *        rendered a saved list showed everything unfiltered, surfaced once
+ *        a real deck-scoped view (motion-studio.js) existed to filter it.
  */
-export function renderMotionManualImport(container, topic, onDone, onBack) {
+export function renderMotionManualImport(container, topic, onDone, onBack, deckId = null) {
   container.innerHTML = '';
 
   const promptValue = buildMotionManualPrompt(topic);
@@ -145,7 +153,7 @@ export function renderMotionManualImport(container, topic, onDone, onBack) {
     importBtn.textContent = 'Validating…';
     copyErrorBtn.style.display = 'none';
 
-    const result = await expandMotionScriptManual(lastParsed, topic);
+    const result = await expandMotionScriptManual(lastParsed, topic, deckId);
 
     if (result.error) {
       hint.textContent = `⚠️ ${result.error}`;
