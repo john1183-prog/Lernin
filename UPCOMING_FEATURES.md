@@ -838,6 +838,45 @@ that shrinks.
 
 ## Active — real user feedback, not yet fully addressed
 
+### Curated onboarding motion graphic added to Help
+Third and last piece of the "make the app feel like one connected
+workflow" pass (Motion Studio wiring, Help restructure, this). A
+27-second explainer walking through the same five steps as "How it
+fits together," in Motion Studio's own format — proof the feature is
+good enough to put in front of someone on day one, and a second
+modality for the same message rather than a repeat of it in a
+different font.
+
+Deliberately a **fixed, pre-generated, reviewed asset**
+(`public/onboarding-script.json`), not a live per-visitor generation:
+Help has to load instantly with no API key required from a first-time
+visitor, and `motion-player.js` already only ever reads resolved
+data (never executes anything from a script), so serving a pre-baked
+one costs nothing at runtime and needs no credential path at all.
+Embedded right after the hero, before the TOC — a poster-style play
+button, not autoplay, matching the app's existing principle (see the
+sound-effects convention elsewhere) that anything firing without the
+person having done something reads as an ad, not feedback for an
+action they took. Ends with an explicit "Watch again" state
+(`{loop: false}` passed to `createPlayer`, polled for
+`currentTime >= duration`) rather than either looping silently forever
+or just freezing with no way back in.
+
+Building it caught its own mistake worth noting for next time: the
+first render pass fed the *raw* script (with the emphasis shorthand's
+`at`/`hold`/`style` fields) directly to `motion-player.js`, skipping
+`expand_script()` entirely -- every emphasis layer rendered
+simultaneously as unreadable overlapping text, since the player expects
+already-resolved keyframes, not the AI-generation-schema shape. Fixed
+by running it through the real `/api/expand-motion-script` endpoint
+(the same one manual mode uses) and shipping *that* resolved output as
+the actual asset, not the source script. Re-verified per-beat via
+Playwright at all six markers, one transition frame, and a full
+27-second real-time playback with zero console errors; two captions
+("understand", "study") were also cut for length after the first
+per-beat pass showed them overflowing the canvas edge -- re-verified
+after the edit, comfortable margins on all six beats now.
+
 ### Help restructured into an explicit workflow + a real TOC navigation bug fixed
 Feedback: flashcards should stay the app's main/hero feature (they do —
 that's unchanged), but the newer comprehension tools (both mind maps,

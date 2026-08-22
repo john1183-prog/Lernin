@@ -1013,6 +1013,62 @@ function renderHelp() {
   `;
   wrap.appendChild(hero);
 
+  // ---- Watch: how it works (curated, pre-generated -- not a live AI call) ----
+  const watch = document.createElement('section');
+  watch.className = 'help-section';
+  watch.id = 'help-watch';
+  watch.innerHTML = `
+    <div class="help-watch-stage" id="helpWatchStage">
+      <canvas id="helpWatchCanvas"></canvas>
+      <button class="help-watch-play-overlay" id="helpWatchPlayBtn" aria-label="Watch how Lernin works">
+        <span class="help-watch-play-icon">▶</span>
+        <span>Watch how Lernin works (27s)</span>
+      </button>
+    </div>
+  `;
+  wrap.appendChild(watch);
+
+  (async () => {
+    const stage = watch.querySelector('#helpWatchStage');
+    const canvas = watch.querySelector('#helpWatchCanvas');
+    const playBtn = watch.querySelector('#helpWatchPlayBtn');
+    let player = null;
+    let watchRaf = null;
+
+    function watchForEnd() {
+      cancelAnimationFrame(watchRaf);
+      const check = () => {
+        if (!player) return;
+        if (player.currentTime >= player.duration - 0.05) {
+          playBtn.querySelector('span:last-child').textContent = 'Watch again';
+          playBtn.style.display = '';
+          stage.classList.remove('is-playing');
+          return; // stop polling -- next play() call restarts it
+        }
+        watchRaf = requestAnimationFrame(check);
+      };
+      watchRaf = requestAnimationFrame(check);
+    }
+
+    playBtn.addEventListener('click', async () => {
+      if (!player) {
+        // Fetched once, on first tap -- this is a fixed asset made with
+        // Motion Studio and reviewed once, not a per-visitor generation, so
+        // it needs no API key and costs nothing at runtime. See
+        // motion-player.js: it only ever reads resolved data, never
+        // executes anything from the script.
+        const script = await fetch('/onboarding-script.json').then(r => r.json());
+        const { createPlayer } = await import('./motion-player.js');
+        player = createPlayer(canvas, script, { loop: false });
+        stage.classList.add('is-playing');
+      }
+      player.seek(0);
+      player.play();
+      playBtn.style.display = 'none';
+      watchForEnd();
+    });
+  })();
+
   // ---- TOC ----
   const toc = document.createElement('nav');
   toc.className = 'help-toc';
