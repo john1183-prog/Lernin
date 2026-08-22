@@ -838,6 +838,50 @@ that shrinks.
 
 ## Active — real user feedback, not yet fully addressed
 
+### Help restructured into an explicit workflow + a real TOC navigation bug fixed
+Feedback: flashcards should stay the app's main/hero feature (they do —
+that's unchanged), but the newer comprehension tools (both mind maps,
+Motion Studio) needed to feel like they belong to one workflow rather
+than bolted-on extras, and Help should actually say what that workflow
+is rather than leaving it to be inferred from a flat feature list.
+
+Two changes: (1) `guideSections` reordered from an arbitrary list into
+the actual intended sequence — orient (Home & decks) → bring material
+in (Getting cards in) → understand it before drilling (Mind Map per
+document, Motion Studio — moved up from the tail end) → make cards
+(Formula cards) → study (Study session) → reflect (territory Map, Mind
+Map per deck) → maintain/reference (Leeches/streaks/stats, Documents,
+Reading Toolkit). "Mind Map" renamed to "Mind Map (per deck)" for
+parallel clarity against "Mind Map (per document)" now that both exist.
+(2) New "How it fits together" section — five numbered steps, in the
+app's own established voice (the hero/philosophy sections' direct,
+slightly wry tone, not generic onboarding copy), explicitly naming the
+order rather than leaving someone to infer it from section ordering
+alone.
+
+Verified with the real rendered Help view (Playwright, not just reading
+the JSX-equivalent template strings), which caught a real, pre-existing
+bug along the way, affecting all four of the *original* TOC links too,
+not just the new one: the app's hash router treats every `hashchange`
+as a route to parse (`path.split('/')`), and a bare in-page fragment
+like `#help-order` has no leading `/`, so it parses as an undefined
+route and silently falls through to the deck-list default — clicking
+any Help TOC link was navigating away from Help entirely instead of
+scrolling to a section. Confirmed the mechanism directly (setting
+`location.hash` to a bare fragment did navigate to the deck list, title
+changed to "Lernin", the target section vanished from the DOM) after a
+synthetic Playwright click on the same link didn't reproduce it at all
+— worth noting for future verification work on this file: a headless
+synthetic `.click()` on these anchors didn't trigger the browser's
+native hash-navigation the way a real tap does, so this bug would have
+stayed invisible to exactly that kind of test; confirming via direct
+`location.hash` assignment was what actually exposed it. Fixed by
+intercepting the TOC links' clicks and scrolling manually
+(`scrollIntoView`), never letting them touch `location.hash` — the
+standard pattern for in-page anchors inside a router-driven SPA anyway.
+Re-verified: three different TOC links now scroll correctly (increasing
+`scrollY`, title/hash unchanged) instead of navigating away.
+
 ### Settings page tidy-up
 The API config form at the top was a raw `<form>` with no section
 heading, structurally inconsistent with every block below it (all of

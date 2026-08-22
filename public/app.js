@@ -1018,12 +1018,26 @@ function renderHelp() {
   toc.className = 'help-toc';
   toc.setAttribute('aria-label', 'Help sections');
   toc.innerHTML = `
-    <a href="#help-engines">The two engines</a>
-    <a href="#help-philosophy">Philosophy</a>
-    <a href="#help-guide">How to use every part</a>
-    <a href="#help-faq">FAQ</a>
+    <a href="#help-engines" data-help-anchor="help-engines">The two engines</a>
+    <a href="#help-philosophy" data-help-anchor="help-philosophy">Philosophy</a>
+    <a href="#help-order" data-help-anchor="help-order">How it fits together</a>
+    <a href="#help-guide" data-help-anchor="help-guide">How to use every part</a>
+    <a href="#help-faq" data-help-anchor="help-faq">FAQ</a>
   `;
   wrap.appendChild(toc);
+  // The app's router treats every hashchange as a route: a bare fragment
+  // like "#help-order" has no leading "/", so `path.split('/')` parses it
+  // as an undefined route, which falls through to the deck-list default --
+  // clicking any of these would silently navigate away from Help entirely
+  // instead of scrolling to a section. Intercept and scroll manually
+  // instead of letting the anchor's native href touch location.hash at all.
+  toc.querySelectorAll('a[data-help-anchor]').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = wrap.querySelector(`#${link.dataset.helpAnchor}`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
 
   // ---- Engines ----
   const engines = document.createElement('section');
@@ -1080,6 +1094,23 @@ function renderHelp() {
   `;
   wrap.appendChild(phil);
 
+  // ---- Order (the explicit walkthrough) ----
+  const order = document.createElement('section');
+  order.className = 'help-section';
+  order.id = 'help-order';
+  order.innerHTML = `
+    <h2 class="help-section-title">How it fits together</h2>
+    <p>Five pieces, meant to be used in this order the first time through. Skip around later — but if the app feels like a pile of disconnected features, this is the seam that ties them together.</p>
+    <ol class="help-order-list">
+      <li><strong>Bring it in.</strong> Import a PDF, paste text, or write cards by hand. <em>Getting cards in</em>, below.</li>
+      <li><strong>Get your bearings before you drill.</strong> New document? Open its <em>Mind Map</em> first — see the actual shape of the material before memorizing pieces of it. One concept not clicking? <em>Motion Studio</em>, not a sixth reread.</li>
+      <li><strong>Turn it into cards.</strong> AI-assisted or by hand, formula-aware where the material needs it.</li>
+      <li><strong>Study. Every day, not in one sitting.</strong> The due-cards queue on Home is the entire point of everything else on this page.</li>
+      <li><strong>Check the shape of what you actually know.</strong> The deck's Mind Map and the territory Map both show your own structure back to you — worth a look once there's something there to see.</li>
+    </ol>
+  `;
+  wrap.appendChild(order);
+
   // ---- How to use ----
   const guideSections = [
     {
@@ -1110,6 +1141,29 @@ function renderHelp() {
         </ul>
         <p>Text-based PDFs, .txt/.md, and PowerPoint files (.ppt/.pptx) all get their text extracted automatically — including PowerPoint tables and speaker notes — and this works the same whether or not you've added an API key; only the actual card generation step needs one. Scanned PDFs and image-heavy slide decks fall back to AI vision if you have a key, or the manual paste flow if you don't. Plain images (.jpg/.png) always go through vision.</p>
         <p><em>Max tip:</em> Prefer fewer sharp cards over hundreds of vague ones. One idea per card.</p>
+      `
+    },
+    {
+      title: 'Mind Map (per document)',
+      body: `
+        <p>Documents view → 🧠 on any document. A topic tree built from that <em>document's own structure</em> — not from its flashcards, which are already a study-optimized simplification of the source. Pan and zoom to explore, tap a node for its detail. Nothing animates and nothing can be dragged; the layout is fixed each time it's generated.</p>
+        <p>Best result comes from a document generated while you had an AI key configured, since that's the only point your full text is available to build from — after that, only the saved summary remains, so regenerating later produces a shorter, less detailed map (labeled as such). No key configured at all? You'll get a copyable prompt to run in any AI chat and paste the answer back in, same as elsewhere in Lernin.</p>
+      `
+    },
+    {
+      title: 'Motion Studio',
+      body: `
+        <p>Deck sheet → <strong>Motion</strong>. Describe a concept, get a short animated explainer — markers, labels, a camera move, built to make one idea click rather than replace review. Reachable two ways: type any topic directly, or tap a node in a document's Mind Map and choose <strong>Explain with motion</strong> to jump straight in with that topic already filled in.</p>
+        <p>Explainers are saved per deck, so a deck's whole set is one tap away under Saved explainers. Same no-key fallback as everywhere else: without a configured AI key, you'll get a copyable prompt and a place to paste the response back in.</p>
+      `
+    },
+    {
+      title: 'Formula cards & relationships',
+      body: `
+        <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
+        <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions. Right after creating a new card, you'll get a chance to link it to others while it's fresh — or skip it and link later from the card's detail view.</p>
+        <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
+        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a spread of tiles with their own marks — not playing-card suits, just Lernin's own corner marks: a chevron for basic, a gapped line for cloze, a division sign for formula — plus a colored dot for review stage and a small paused mark if suspended.</p>
       `
     },
     {
@@ -1151,12 +1205,10 @@ function renderHelp() {
       `
     },
     {
-      title: 'Formula cards & relationships',
+      title: 'Mind Map (per deck)',
       body: `
-        <p>Formula cards can store the expression, variables, assumptions, common mistakes, and applications. Use them for engineering, math, physics — anything where the symbol soup is the point.</p>
-        <p>Link cards with <strong>Depends on</strong> or <strong>Related</strong> (including across decks). On the map, those links draw as lines so the graph is visible while you study positions. Right after creating a new card, you'll get a chance to link it to others while it's fresh — or skip it and link later from the card's detail view.</p>
-        <p>Settings → <strong>Reorder sessions by prerequisite</strong> (on by default) uses those links to soft-reorder your queue — prerequisites come up before what depends on them, but nothing is ever excluded. A due card always still appears that session.</p>
-        <p>In <strong>Cards</strong> view you can browse, search, and reverse-lookup by answer when you remember the result but not the name. Cards render as a spread of tiles with their own marks — not playing-card suits, just Lernin's own corner marks: a chevron for basic, a gapped line for cloze, a division sign for formula — plus a colored dot for review stage and a small paused mark if suspended.</p>
+        <p>Deck sheet → <strong>Mind Map</strong>. A force-directed graph of that deck's cards and their "Depends on"/"Related" links — cards that connect end up clustered near each other, unrelated ones drift apart, so the shape of the material is visible at a glance.</p>
+        <p>Different from the territory <strong>Map</strong>: no landmarks, paths, or exploration tooling, just the graph. Drag nodes to explore during a session — nothing is saved, so it's always a fresh read of the current relationships next time you open it. Tap a node for a quick front/back peek. ↺ re-runs the layout if you've dragged things into a mess.</p>
       `
     },
     {
@@ -1180,27 +1232,6 @@ function renderHelp() {
       body: `
         <p>Settings → <strong>Open Reading Toolkit</strong>. A separate, static library of copy-ready prompts for pairing your reading with any AI chat tool — before/during/after reading, plus deeper-comprehension prompts like a Feynman check or Socratic push-back.</p>
         <p>Tap Copy, paste into whatever AI you use, fill in the brackets. It doesn't touch your decks, cards, or generation — purely a study aid that lives alongside the app.</p>
-      `
-    },
-    {
-      title: 'Mind Map',
-      body: `
-        <p>Deck sheet → <strong>Mind Map</strong>. A force-directed graph of that deck's cards and their "Depends on"/"Related" links — cards that connect end up clustered near each other, unrelated ones drift apart, so the shape of the material is visible at a glance.</p>
-        <p>Different from the territory <strong>Map</strong>: no landmarks, paths, or exploration tooling, just the graph. Drag nodes to explore during a session — nothing is saved, so it's always a fresh read of the current relationships next time you open it. Tap a node for a quick front/back peek. ↺ re-runs the layout if you've dragged things into a mess.</p>
-      `
-    },
-    {
-      title: 'Mind Map (per document)',
-      body: `
-        <p>Documents view → 🧠 on any document. A topic tree built from that <em>document's own structure</em> — not from its flashcards, which are already a study-optimized simplification of the source. Pan and zoom to explore, tap a node for its detail. Nothing animates and nothing can be dragged; the layout is fixed each time it's generated.</p>
-        <p>Best result comes from a document generated while you had an AI key configured, since that's the only point your full text is available to build from — after that, only the saved summary remains, so regenerating later produces a shorter, less detailed map (labeled as such). No key configured at all? You'll get a copyable prompt to run in any AI chat and paste the answer back in, same as elsewhere in Lernin.</p>
-      `
-    },
-    {
-      title: 'Motion Studio',
-      body: `
-        <p>Deck sheet → <strong>Motion</strong>. Describe a concept, get a short animated explainer — markers, labels, a camera move, built to make one idea click rather than replace review. Reachable two ways: type any topic directly, or tap a node in a document's Mind Map and choose <strong>Explain with motion</strong> to jump straight in with that topic already filled in.</p>
-        <p>Explainers are saved per deck, so a deck's whole set is one tap away under Saved explainers. Same no-key fallback as everywhere else: without a configured AI key, you'll get a copyable prompt and a place to paste the response back in.</p>
       `
     }
   ];
