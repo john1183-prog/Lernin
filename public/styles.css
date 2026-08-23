@@ -2230,6 +2230,13 @@ input, textarea, select {
   color: var(--ink);
 }
 
+.help-order-close {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink-muted);
+  margin: 10px 2px 0;
+}
+
 .help-accordion {
   display: grid;
   gap: 8px;

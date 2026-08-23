@@ -838,6 +838,45 @@ that shrinks.
 
 ## Active — real user feedback, not yet fully addressed
 
+### Help voice rewritten: corrective -> rescuing, plus consistency pass
+Direct feedback: "wrong voice mixed with inconsistency." The diagnosis
+matched what a read-through confirmed -- the original voice (hero,
+Philosophy, the two engines) was confident but *corrective*: "You are
+not re-reading notes. You are training retrieval," "Highlighting feels
+productive. It is not," "Do not let the streak become the goal." That
+stance is a critic pointing out what you're doing wrong, not a rescue.
+Layered on top, the sections added in the last two passes (How it fits
+together, the guide reorder) were written flatter and more neutral,
+so the page as a whole didn't even agree with itself.
+
+New direction, given directly: "the app has come to rescue you," told
+in the voice of something that has personally suffered through old
+reading habits and is genuinely glad you don't have to anymore. Not
+"you're doing it wrong" -- "we did it wrong too, here's the way out."
+Rewrote every section that carries real tonal weight: the hero (kicker,
+title, both lead paragraphs), "The two engines," all six Philosophy
+items (retitled "Why we built it this way"), and "How it fits
+together" (added a closing line it was missing). Also removed an
+orphaned "Max tip:" device -- a named character that appeared in
+exactly three call-outs deep in the reference guide with zero
+introduction or presence anywhere else in the app, which was its own
+small inconsistency -- folded into the same first-person voice instead
+("What actually helps:"). Softened a few remaining scolding lines found
+along the way ("Lie to it and you get... a rude exam" in the FAQ, "Do
+not let the streak become the goal") to match. Left the FAQ's mostly
+factual Q&A and the step-by-step instructional content in the detailed
+guide largely alone -- neutral/direct is the right register for "press
+Space to flip," rewriting those into warm prose would read as forced.
+
+Caught and fixed a real HTML bug introduced while editing the walkthrough
+section: a new closing paragraph landed between two `</ol>` tags (invalid
+nesting -- a stray duplicate close tag), caught by re-viewing the file
+after the edit rather than trusting the str_replace diff alone. Verified
+with real screenshots of every rewritten section, plus a TOC regression
+check (re-clicked a TOC link post-edit to confirm the earlier
+click-interception fix still holds -- title stayed "Help", no navigation
+away).
+
 ### Onboarding motion graphic redesigned for real motion (v1 read as a slideshow)
 Direct feedback on the first version: "looks like a slide show." Fair —
 looking back at it, every beat was the same static composition (title

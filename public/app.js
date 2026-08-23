@@ -996,19 +996,21 @@ function renderHelp() {
   const hero = document.createElement('div');
   hero.className = 'help-hero';
   hero.innerHTML = `
-    <div class="help-hero-kicker">You already know the pain</div>
-    <h1 class="help-hero-title">Stop rereading. Start remembering.</h1>
+    <div class="help-hero-kicker">We've been exactly where you are</div>
+    <h1 class="help-hero-title">You don't have to reread everything again.</h1>
     <p class="help-hero-lead">
-      Lernin is a study app built for the version of you that is drowning in PDFs,
-      highlighting entire chapters, and still blanking in the exam hall.
-      It combines two things that actually work:
-      <strong>spaced repetition</strong> (so you review the right card at the right time)
-      and a <strong>Memory Palace</strong> map based on the <strong>Method of Loci</strong>
-      (so your brain can hang knowledge on places, not just lists).
+      We built Lernin after years of highlighting entire textbooks and still blanking
+      in the exam hall — and eventually figuring out that wasn't a discipline problem,
+      it was a highlighting problem. So Lernin pairs two things that actually work:
+      <strong>spaced repetition</strong> (you review the right card right before you'd
+      otherwise forget it) and a <strong>Memory Palace</strong> built on the
+      <strong>Method of Loci</strong> (so an idea lives somewhere in your mind, not just
+      in a list you'll never reopen).
     </p>
     <p class="help-hero-lead help-hero-lead-soft">
-      Everything runs on your device. Your decks, grades, and streaks stay yours.
-      This page is the field manual — use it once, then go study.
+      Everything stays on your device — your decks, grades, and streaks are yours,
+      always. Consider this page your welcome mat: have a look around, then go enjoy
+      the relief of actually remembering something.
     </p>
   `;
   wrap.appendChild(hero);
@@ -1107,26 +1109,29 @@ function renderHelp() {
         <h3>Spaced repetition (FSRS)</h3>
         <p>
           You grade each card <em>Again / Hard / Good / Easy</em>. Lernin uses an
-          FSRS scheduler so hard cards come back sooner and easy ones wait longer.
-          You are not “re-reading notes.” You are training retrieval — the skill exams actually test.
+          FSRS scheduler so hard cards come back around sooner and easy ones can
+          wait longer. It feels different from re-reading notes because it is —
+          you're training retrieval, the actual skill an exam tests.
         </p>
         <p>
-          Honest grades matter more than perfect streaks. If you peeked, hit <strong>Again</strong>.
-          The algorithm only works if you tell it the truth.
+          Honest grades matter more than a perfect streak. If you peeked, hit
+          <strong>Again</strong> — the algorithm only helps you if you tell it the truth.
         </p>
       </article>
       <article class="help-card">
         <div class="help-card-icon">🏛️</div>
         <h3>Memory Palace (Method of Loci)</h3>
         <p>
-          The map is not decoration. <strong>Method of Loci</strong> is the ancient trick of
-          placing ideas in imaginary places so you can walk the path later and pull them back.
-          In Lernin, decks are islands, cards are nodes you can drag, and landmarks are rooms
-          in your palace (“Fundamentals”, “Edge cases”, “Formula wall”).
+          The map isn't just a nice visual. <strong>Method of Loci</strong> is a
+          genuinely ancient trick — placing ideas in imagined places so you can walk
+          the path later and pull them back. In Lernin, decks are islands, cards are
+          nodes you can drag, and landmarks are rooms in your own palace
+          ("Fundamentals", "Edge cases", "Formula wall").
         </p>
         <p>
-          Zoom in, arrange cards on purpose, draw study paths, then review <em>on the map</em>
-          so position and meaning reinforce each other.
+          Zoom in, arrange cards on purpose, draw study paths, then review
+          <em>on the map</em> so where something sits and what it means start
+          reinforcing each other.
         </p>
       </article>
     </div>
@@ -1138,14 +1143,14 @@ function renderHelp() {
   phil.className = 'help-section';
   phil.id = 'help-philosophy';
   phil.innerHTML = `
-    <h2 class="help-section-title">Philosophy</h2>
+    <h2 class="help-section-title">Why we built it this way</h2>
     <ul class="help-philosophy-list">
-      <li><strong>Retrieval over recognition.</strong> Highlighting feels productive. It is not. Flipping a card and failing is progress.</li>
-      <li><strong>Your map, your memory.</strong> When you place a card on purpose, you encode a second handle on that idea. Use it.</li>
-      <li><strong>Offline first.</strong> Study on a plane. No account required for the core loop.</li>
-      <li><strong>You own the bill for AI.</strong> Bring your own Claude/Gemini key, or paste into any AI. Lernin is not farming your notes on a mystery server.</li>
-      <li><strong>Explain it back.</strong> After Good/Easy, the Teach-it prompt is optional — but saying it in your own words is how knowledge sticks.</li>
-      <li><strong>Leeches are signals, not shame.</strong> A card you keep missing gets suspended so it stops poisoning the queue. Fix it later on purpose.</li>
+      <li><strong>Retrieval over recognition.</strong> We used to think highlighting was studying, too. It felt productive — it wasn't. Struggling to recall something, even getting it wrong, is what actually works, and every card here is built around that one fact.</li>
+      <li><strong>Your map, your memory.</strong> Placing a card somewhere on purpose gives your brain a second way back to that idea later. People have used memory palaces for centuries because they work — we just built you a digital one.</li>
+      <li><strong>Offline first.</strong> Study on a plane, underground, anywhere with zero bars. No account needed for any of the core loop — we're not going to make you sign up just to remember something.</li>
+      <li><strong>You own the bill for AI.</strong> Bring your own Claude or Gemini key, or paste into whatever AI you already use. We built Lernin because we didn't want to trust some mystery server with our own notes either.</li>
+      <li><strong>Explain it back.</strong> After you grade a card Good or Easy, Teach-it will ask you to explain it in your own words. It's optional — but it's usually the moment something actually clicks.</li>
+      <li><strong>Leeches are signals, not shame.</strong> A card that keeps beating you gets set aside so it stops dragging down every session. That's not you failing — it just needs a different approach, and it'll be there whenever you're ready for it.</li>
     </ul>
   `;
   wrap.appendChild(phil);
@@ -1156,14 +1161,15 @@ function renderHelp() {
   order.id = 'help-order';
   order.innerHTML = `
     <h2 class="help-section-title">How it fits together</h2>
-    <p>Five pieces, meant to be used in this order the first time through. Skip around later — but if the app feels like a pile of disconnected features, this is the seam that ties them together.</p>
+    <p>Five steps. We're not going to make you guess at the right order — here it is, plainly, the way we wish someone had just told us.</p>
     <ol class="help-order-list">
-      <li><strong>Bring it in.</strong> Import a PDF, paste text, or write cards by hand. <em>Getting cards in</em>, below.</li>
-      <li><strong>Get your bearings before you drill.</strong> New document? Open its <em>Mind Map</em> first — see the actual shape of the material before memorizing pieces of it. One concept not clicking? <em>Motion Studio</em>, not a sixth reread.</li>
-      <li><strong>Turn it into cards.</strong> AI-assisted or by hand, formula-aware where the material needs it.</li>
-      <li><strong>Study. Every day, not in one sitting.</strong> The due-cards queue on Home is the entire point of everything else on this page.</li>
-      <li><strong>Check the shape of what you actually know.</strong> The deck's Mind Map and the territory Map both show your own structure back to you — worth a look once there's something there to see.</li>
+      <li><strong>Bring it in, however you've got it.</strong> A PDF, pasted text, or cards you write yourself. <em>Getting cards in</em>, below.</li>
+      <li><strong>Get your bearings before you drill in.</strong> New document? Open its <em>Mind Map</em> and see the actual shape of it first. One concept not clicking? Let <em>Motion Studio</em> explain it — not a sixth reread.</li>
+      <li><strong>Turn it into cards.</strong> AI-assisted or by hand, formula-aware wherever the material needs it.</li>
+      <li><strong>Study a little, every day.</strong> This is the part that actually works — everything else on this page just exists to make this part easier.</li>
+      <li><strong>Come back and see how far you've gotten.</strong> Your deck's Mind Map and your Memory Palace both grow right alongside you — worth a look once there's something there to see.</li>
     </ol>
+    <p class="help-order-close">That's the whole shape of it. Skip around however you like after this — we just didn't want you starting out guessing.</p>
   `;
   wrap.appendChild(order);
 
@@ -1179,7 +1185,7 @@ function renderHelp() {
           <li><strong>Import (📥)</strong> — load a previously exported deck backup.</li>
           <li><strong>Stats / Settings / Help</strong> — top icons. Settings is where you pick AI mode and theme.</li>
         </ul>
-        <p><em>Max tip:</em> Keep decks small and thematic (one course unit per deck). Giant mixed decks make the Memory Palace messy.</p>
+        <p><em>What actually helps:</em> keep decks small and thematic — one course unit per deck. A giant mixed deck just makes the Memory Palace messy.</p>
       `
     },
     {
@@ -1187,7 +1193,7 @@ function renderHelp() {
       body: `
         <p>Two honest paths:</p>
         <ol>
-          <li><strong>Import PDF / AI generate</strong> from the deck sheet → extract text → generate cards → <em>review every card</em> before commit. Delete junk. Fix wording. You are the editor; the model is the intern.</li>
+          <li><strong>Import PDF / AI generate</strong> from the deck sheet → extract text → generate cards → <em>review every card</em> before you commit. Delete what's junk, fix what's clumsy — the model does the first pass, you get the final word.</li>
           <li><strong>+ Card</strong> — write front/back yourself. Use for formulas, definitions you keep missing, and exam traps.</li>
         </ol>
         <p>In Settings choose:</p>
@@ -1196,7 +1202,7 @@ function renderHelp() {
           <li><strong>Paste into any AI</strong> — copy the prompt, paste JSON back. Free, slightly more friction.</li>
         </ul>
         <p>Text-based PDFs, .txt/.md, and PowerPoint files (.ppt/.pptx) all get their text extracted automatically — including PowerPoint tables and speaker notes — and this works the same whether or not you've added an API key; only the actual card generation step needs one. Scanned PDFs and image-heavy slide decks fall back to AI vision if you have a key, or the manual paste flow if you don't. Plain images (.jpg/.png) always go through vision.</p>
-        <p><em>Max tip:</em> Prefer fewer sharp cards over hundreds of vague ones. One idea per card.</p>
+        <p><em>What actually helps:</em> a handful of sharp cards beats a hundred vague ones, every time. One idea per card.</p>
       `
     },
     {
@@ -1257,7 +1263,7 @@ function renderHelp() {
           <li>▶️ Classic study — same FSRS queue, flat UI</li>
         </ul>
         <p>From a deck sheet, <strong>Concept Map</strong> jumps straight into L2 for that deck.</p>
-        <p><em>Max tip:</em> Spend ten minutes arranging a hard deck after import. Place prerequisites left/top, applications right/bottom. Your future self will walk that layout under stress.</p>
+        <p><em>What actually helps:</em> spend ten minutes arranging a hard deck after import. Prerequisites left or top, applications right or bottom — you'll thank yourself the next time you're walking this layout under exam pressure.</p>
       `
     },
     {
@@ -1271,7 +1277,7 @@ function renderHelp() {
       title: 'Leeches, streaks, stats',
       body: `
         <p><strong>Leeches</strong> — cards with too many lapses get suspended so they stop clogging every session. Open a deck's sheet and tap <strong>Leeches</strong> to review them deliberately, with recent grade history per card; reset when you have a better formulation or mnemonic.</p>
-        <p><strong>Streaks</strong> — consecutive days you actually reviewed. Freezes (earned on longer streaks) can protect a missed day. Do not let the streak become the goal; the goal is recall under pressure.</p>
+        <p><strong>Streaks</strong> — consecutive days you actually reviewed. Freezes (earned on longer streaks) can protect a missed day. Let it motivate you, not define you — the streak is a nice side effect, recall under pressure is the actual goal.</p>
         <p><strong>Stats</strong> — retention, activity, per-deck breakdown. Use it to decide which palace wing to renovate this week.</p>
       `
     },
@@ -1331,8 +1337,8 @@ function renderHelp() {
       a: 'It may be suspended as a leech after repeated failures, or simply not due yet. Open the deck\'s sheet and tap Leeches, or check the deck\'s Cards list. Suspended cards are hidden from normal study on purpose.'
     },
     {
-      q: 'What if I grade everything Easy to “finish faster”?',
-      a: 'You will feel productive and learn almost nothing. The scheduler trusts you. Lie to it and you get an optimistic calendar and a rude exam. Grade the struggle you actually had.'
+      q: 'What if I grade everything Easy to "finish faster"?',
+      a: 'You will feel productive in the moment — but you are only fooling the calendar, not the exam. The scheduler trusts whatever you tell it, so grade the struggle you actually had, and it will actually work for you.'
     },
     {
       q: 'Map vs classic study — which should I use?',
