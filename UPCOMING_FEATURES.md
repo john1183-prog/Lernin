@@ -838,6 +838,37 @@ that shrinks.
 
 ## Active — real user feedback, not yet fully addressed
 
+### Onboarding motion graphic redesigned for real motion (v1 read as a slideshow)
+Direct feedback on the first version: "looks like a slide show." Fair —
+looking back at it, every beat was the same static composition (title
+top, big word center, caption below), captions only faded in place with
+zero position movement, and the camera drift was 1.0 → 1.08 across the
+*entire* 27 seconds, imperceptible. Fades between static states is a
+slideshow's whole vocabulary, not motion graphics'.
+
+Redesigned around one throughline of genuinely continuous motion: a row
+of 5 step-nodes with a connecting line, and a traveling dot that glides
+(real position keyframes, eased, not a teleport) from node to node,
+arriving at each exactly on that beat's marker. Verified the glide is
+actually continuous, not jumping at marker boundaries, by pixel-sampling
+the dot's rendered x-position at 6 timestamps between two markers:
+109 → 120 → 165 → 231 → 256 → 260, smooth and monotonic. Each node also
+pulses (scale + a real smooth color interpolation, dim gray to its lit
+color) the moment the dot arrives, and *stays* lit afterward — so by the
+end, the whole track visibly shows the journey completed, not just the
+current step. Captions now slide up into position (y + opacity moving
+together) instead of materializing in place. Emphasis style varies per
+beat (pop / zoom / slideup / pop / zoom) instead of repeating the same
+animation five times. Camera now does a small eased push-in synced to
+each marker and eases back out before the next, instead of one
+continuous drift too subtle to register.
+
+Verified same as the original: schema validation, expand_script(),
+screenshots at all six beats, one continuity check (the pixel-sampling
+above), and a full 27-second real-time playback with zero console
+errors — then re-checked once more inside the actual Help view (not
+just the isolated test harness) before replacing the shipped asset.
+
 ### Curated onboarding motion graphic added to Help
 Third and last piece of the "make the app feel like one connected
 workflow" pass (Motion Studio wiring, Help restructure, this). A
