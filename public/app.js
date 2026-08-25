@@ -14,11 +14,12 @@ import {
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
-import { setSoundEnabledCache, initSoundSetting, playNavigate } from './sound.js';
+import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord } from './sound.js';
 import { renderMindMap } from './mind-map.js';
 import { renderDocumentMindMap } from './mind-map-doc.js';
 import { generateMindMap } from './mind-map-doc-api.js';
 import { renderMotionStudio, MOTION_PREFILL_KEY } from './motion-studio.js';
+import { checkGreetingEasterEgg } from './secrets.js';
 import { renderManualJSONImport } from './manual-json-import.js';
 import { extractTextFromPdf } from './pdf-extract.js';
 import { generateCards, commitGeneratedCards } from './api.js';
@@ -231,9 +232,23 @@ async function handleRoute() {
 }
 
 /* ---------- Home Screen ---------- */
+const IDENTITY_CHIME_KEY = 'lernin:identityChimePlayed';
+
+async function maybePlayIdentityChime() {
+  if (sessionStorage.getItem(IDENTITY_CHIME_KEY)) return;
+  sessionStorage.setItem(IDENTITY_CHIME_KEY, '1');
+  // Re-run this (idempotent — just re-reads and re-caches the setting)
+  // rather than trusting the app-init call at the bottom of this file to
+  // have already resolved: that call fires without awaiting, so on a cold
+  // load this function can legitimately run before it settles.
+  await initSoundSetting();
+  playIdentityChord();
+}
+
 export async function renderDeckList() {
   root.innerHTML = '';
   root.style.padding = '0';
+  maybePlayIdentityChime();
 
   let decks, dueCards, stats;
   try {
@@ -1026,6 +1041,7 @@ function renderHelp() {
         <span class="help-watch-play-icon">▶</span>
         <span>Watch how Lernin works (27s)</span>
       </button>
+      <button class="help-watch-skip" id="helpWatchSkipBtn" aria-label="Skip" style="display:none;">Skip ›</button>
     </div>
   `;
   wrap.appendChild(watch);
@@ -1034,23 +1050,35 @@ function renderHelp() {
     const stage = watch.querySelector('#helpWatchStage');
     const canvas = watch.querySelector('#helpWatchCanvas');
     const playBtn = watch.querySelector('#helpWatchPlayBtn');
+    const skipBtn = watch.querySelector('#helpWatchSkipBtn');
     let player = null;
     let watchRaf = null;
+
+    function endPlayback() {
+      cancelAnimationFrame(watchRaf);
+      playBtn.querySelector('span:last-child').textContent = 'Watch again';
+      playBtn.style.display = '';
+      skipBtn.style.display = 'none';
+      stage.classList.remove('is-playing');
+    }
 
     function watchForEnd() {
       cancelAnimationFrame(watchRaf);
       const check = () => {
         if (!player) return;
         if (player.currentTime >= player.duration - 0.05) {
-          playBtn.querySelector('span:last-child').textContent = 'Watch again';
-          playBtn.style.display = '';
-          stage.classList.remove('is-playing');
+          endPlayback();
           return; // stop polling -- next play() call restarts it
         }
         watchRaf = requestAnimationFrame(check);
       };
       watchRaf = requestAnimationFrame(check);
     }
+
+    skipBtn.addEventListener('click', () => {
+      if (player) player.pause();
+      endPlayback();
+    });
 
     playBtn.addEventListener('click', async () => {
       if (!player) {
@@ -1059,7 +1087,8 @@ function renderHelp() {
         // it needs no API key and costs nothing at runtime. See
         // motion-player.js: it only ever reads resolved data, never
         // executes anything from the script.
-        const script = await fetch('/onboarding-script.json').then(r => r.json());
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const script = await fetch(isDark ? '/onboarding-script.json' : '/onboarding-script-light.json').then(r => r.json());
         const { createPlayer } = await import('./motion-player.js');
         player = createPlayer(canvas, script, { loop: false });
         stage.classList.add('is-playing');
@@ -1067,6 +1096,7 @@ function renderHelp() {
       player.seek(0);
       player.play();
       playBtn.style.display = 'none';
+      skipBtn.style.display = '';
       watchForEnd();
     });
   })();
@@ -2704,12 +2734,12 @@ async function renderCardBrowser(deckId) {
   list.className = 'card-tile-grid';
   list.style.cssText = 'padding:var(--space-sm) var(--space-md) 0;';
 
-  function renderCardList(filteredCards) {
+  function renderCardList(filteredCards, query = '') {
     list.innerHTML = '';
     if (filteredCards.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'grid-column:1/-1; text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
-      empty.textContent = 'No cards found.';
+      empty.textContent = checkGreetingEasterEgg(query) || 'No cards found.';
       list.appendChild(empty);
       return;
     }
@@ -2767,7 +2797,7 @@ async function renderCardBrowser(deckId) {
       const byBack = await searchCardsByAnswer(query);
       const merged = [...byFront, ...byBack].filter(c => c.deckId === deckId);
       const unique = Array.from(new Map(merged.map(c => [c.id, c])).values());
-      renderCardList(unique);
+      renderCardList(unique, query);
     } catch (err) {
       console.error('Search failed:', err);
     }

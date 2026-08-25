@@ -1,0 +1,1196 @@
+{
+  "scene": {
+    "name": "How Lernin Works",
+    "duration": 27.0,
+    "fps": 30,
+    "background": "#F3F8F4",
+    "width": 800,
+    "height": 500
+  },
+  "camera": {
+    "x": 400.0,
+    "y": 250.0,
+    "zoom": 1,
+    "rotation": 0,
+    "keyframes": {
+      "zoom": [
+        {
+          "time": 0.0,
+          "value": 1.0,
+          "easing": "linear"
+        },
+        {
+          "time": 0.5,
+          "value": 1.04,
+          "easing": "easeOut"
+        },
+        {
+          "time": 5.5,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 5.6,
+          "value": 1.04,
+          "easing": "easeOut"
+        },
+        {
+          "time": 10.5,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 10.6,
+          "value": 1.04,
+          "easing": "easeOut"
+        },
+        {
+          "time": 15.5,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 15.6,
+          "value": 1.04,
+          "easing": "easeOut"
+        },
+        {
+          "time": 20.5,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 20.6,
+          "value": 1.04,
+          "easing": "easeOut"
+        },
+        {
+          "time": 24.5,
+          "value": 1.0,
+          "easing": "easeInOut"
+        }
+      ]
+    }
+  },
+  "layers": [
+    {
+      "name": "title",
+      "type": "text",
+      "parent": null,
+      "x": 400.0,
+      "y": 36.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#5A6B5C",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "How Lernin Works",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "progress_line",
+      "type": "line",
+      "parent": null,
+      "x": 120.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": 680.0,
+      "y2": 90.0,
+      "strokeWidth": 3.0,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "node0",
+      "type": "circle",
+      "parent": null,
+      "x": 120.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": 10.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "scale": [
+          {
+            "time": 0.5,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.65,
+            "value": 1.6,
+            "easing": "back"
+          },
+          {
+            "time": 0.9,
+            "value": 1.15,
+            "easing": "easeOut"
+          }
+        ],
+        "color": [
+          {
+            "time": 0.5,
+            "value": "#C8D6C9",
+            "easing": "linear"
+          },
+          {
+            "time": 0.75,
+            "value": "#e8a33d",
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "node1",
+      "type": "circle",
+      "parent": null,
+      "x": 260.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": 10.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "scale": [
+          {
+            "time": 5.5,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 5.65,
+            "value": 1.6,
+            "easing": "back"
+          },
+          {
+            "time": 5.9,
+            "value": 1.15,
+            "easing": "easeOut"
+          }
+        ],
+        "color": [
+          {
+            "time": 5.5,
+            "value": "#C8D6C9",
+            "easing": "linear"
+          },
+          {
+            "time": 5.75,
+            "value": "#4a90d9",
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "node2",
+      "type": "circle",
+      "parent": null,
+      "x": 400.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": 10.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "scale": [
+          {
+            "time": 10.5,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 10.65,
+            "value": 1.6,
+            "easing": "back"
+          },
+          {
+            "time": 10.9,
+            "value": 1.15,
+            "easing": "easeOut"
+          }
+        ],
+        "color": [
+          {
+            "time": 10.5,
+            "value": "#C8D6C9",
+            "easing": "linear"
+          },
+          {
+            "time": 10.75,
+            "value": "#7fbf7f",
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "node3",
+      "type": "circle",
+      "parent": null,
+      "x": 540.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": 10.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "scale": [
+          {
+            "time": 15.5,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 15.65,
+            "value": 1.6,
+            "easing": "back"
+          },
+          {
+            "time": 15.9,
+            "value": 1.15,
+            "easing": "easeOut"
+          }
+        ],
+        "color": [
+          {
+            "time": 15.5,
+            "value": "#C8D6C9",
+            "easing": "linear"
+          },
+          {
+            "time": 15.75,
+            "value": "#f2c14e",
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "node4",
+      "type": "circle",
+      "parent": null,
+      "x": 680.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#C8D6C9",
+      "width": null,
+      "height": null,
+      "radius": 10.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "scale": [
+          {
+            "time": 20.5,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 20.65,
+            "value": 1.6,
+            "easing": "back"
+          },
+          {
+            "time": 20.9,
+            "value": 1.15,
+            "easing": "easeOut"
+          }
+        ],
+        "color": [
+          {
+            "time": 20.5,
+            "value": "#C8D6C9",
+            "easing": "linear"
+          },
+          {
+            "time": 20.75,
+            "value": "#c77fbf",
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "traveling_dot",
+      "type": "circle",
+      "parent": null,
+      "x": 120.0,
+      "y": 90.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#2E7D32",
+      "width": null,
+      "height": null,
+      "radius": 7.0,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": null,
+      "fontSize": null,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.6,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ],
+        "x": [
+          {
+            "time": 0.0,
+            "value": 120.0,
+            "easing": "linear"
+          },
+          {
+            "time": 5.5,
+            "value": 260.0,
+            "easing": "easeInOut"
+          },
+          {
+            "time": 10.5,
+            "value": 400.0,
+            "easing": "easeInOut"
+          },
+          {
+            "time": 15.5,
+            "value": 540.0,
+            "easing": "easeInOut"
+          },
+          {
+            "time": 20.5,
+            "value": 680.0,
+            "easing": "easeInOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "emph_bring_in",
+      "type": "emphasis",
+      "parent": null,
+      "x": 400.0,
+      "y": 140.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#e8a33d",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Bring it in",
+      "fontSize": 55,
+      "format": "text",
+      "keyframes": {
+        "scale": [
+          {
+            "time": 0.5,
+            "value": 0.3,
+            "easing": "linear"
+          },
+          {
+            "time": 0.68,
+            "value": 1.12,
+            "easing": "back"
+          },
+          {
+            "time": 0.82,
+            "value": 1,
+            "easing": "easeInOut"
+          },
+          {
+            "time": 4.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 4.25,
+            "value": 0.85,
+            "easing": "easeIn"
+          }
+        ],
+        "opacity": [
+          {
+            "time": 0.5,
+            "value": 0,
+            "easing": "linear"
+          },
+          {
+            "time": 0.58,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 4.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 4.25,
+            "value": 0,
+            "easing": "easeIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_bring_in",
+      "type": "caption",
+      "parent": null,
+      "x": 400.0,
+      "y": 330.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Import a PDF, paste text, or write cards by hand.",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 0.85,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 1.25,
+            "value": 1.0,
+            "easing": "easeOut"
+          },
+          {
+            "time": 5.1,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 5.5,
+            "value": 0.0,
+            "easing": "easeIn"
+          }
+        ],
+        "y": [
+          {
+            "time": 0.85,
+            "value": 330.0,
+            "easing": "linear"
+          },
+          {
+            "time": 1.25,
+            "value": 300.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "emph_understand",
+      "type": "emphasis",
+      "parent": null,
+      "x": 400.0,
+      "y": 140.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#4a90d9",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Understand it first",
+      "fontSize": 55,
+      "format": "text",
+      "keyframes": {
+        "scale": [
+          {
+            "time": 5.5,
+            "value": 2.4,
+            "easing": "linear"
+          },
+          {
+            "time": 5.8,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 9.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 9.25,
+            "value": 0.85,
+            "easing": "easeIn"
+          }
+        ],
+        "opacity": [
+          {
+            "time": 5.5,
+            "value": 0,
+            "easing": "linear"
+          },
+          {
+            "time": 5.62,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 9.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 9.25,
+            "value": 0,
+            "easing": "easeIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_understand",
+      "type": "caption",
+      "parent": null,
+      "x": 400.0,
+      "y": 330.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Open its Mind Map, or ask Motion Studio to explain.",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 5.85,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 6.25,
+            "value": 1.0,
+            "easing": "easeOut"
+          },
+          {
+            "time": 10.1,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 10.5,
+            "value": 0.0,
+            "easing": "easeIn"
+          }
+        ],
+        "y": [
+          {
+            "time": 5.85,
+            "value": 330.0,
+            "easing": "linear"
+          },
+          {
+            "time": 6.25,
+            "value": 300.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "emph_make_cards",
+      "type": "emphasis",
+      "parent": null,
+      "x": 400.0,
+      "y": 140.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#7fbf7f",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Turn it into cards",
+      "fontSize": 55,
+      "format": "text",
+      "keyframes": {
+        "y": [
+          {
+            "time": 10.5,
+            "value": 170.0,
+            "easing": "linear"
+          },
+          {
+            "time": 10.78,
+            "value": 140.0,
+            "easing": "easeOut"
+          }
+        ],
+        "opacity": [
+          {
+            "time": 10.5,
+            "value": 0,
+            "easing": "linear"
+          },
+          {
+            "time": 10.72,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 14.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 14.25,
+            "value": 0,
+            "easing": "easeIn"
+          }
+        ],
+        "scale": [
+          {
+            "time": 14.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 14.25,
+            "value": 0.85,
+            "easing": "easeIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_make_cards",
+      "type": "caption",
+      "parent": null,
+      "x": 400.0,
+      "y": 330.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "AI-assisted or by hand \u2014 you're always the editor.",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 10.85,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 11.25,
+            "value": 1.0,
+            "easing": "easeOut"
+          },
+          {
+            "time": 15.1,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 15.5,
+            "value": 0.0,
+            "easing": "easeIn"
+          }
+        ],
+        "y": [
+          {
+            "time": 10.85,
+            "value": 330.0,
+            "easing": "linear"
+          },
+          {
+            "time": 11.25,
+            "value": 300.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "emph_study",
+      "type": "emphasis",
+      "parent": null,
+      "x": 400.0,
+      "y": 140.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#f2c14e",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Study. Every day.",
+      "fontSize": 55,
+      "format": "text",
+      "keyframes": {
+        "scale": [
+          {
+            "time": 15.5,
+            "value": 0.3,
+            "easing": "linear"
+          },
+          {
+            "time": 15.68,
+            "value": 1.12,
+            "easing": "back"
+          },
+          {
+            "time": 15.82,
+            "value": 1,
+            "easing": "easeInOut"
+          },
+          {
+            "time": 19.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 19.25,
+            "value": 0.85,
+            "easing": "easeIn"
+          }
+        ],
+        "opacity": [
+          {
+            "time": 15.5,
+            "value": 0,
+            "easing": "linear"
+          },
+          {
+            "time": 15.58,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 19.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 19.25,
+            "value": 0,
+            "easing": "easeIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_study",
+      "type": "caption",
+      "parent": null,
+      "x": 400.0,
+      "y": 330.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Spaced repetition \u2014 proven to make it stick.",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 15.85,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 16.25,
+            "value": 1.0,
+            "easing": "easeOut"
+          },
+          {
+            "time": 20.1,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 20.5,
+            "value": 0.0,
+            "easing": "easeIn"
+          }
+        ],
+        "y": [
+          {
+            "time": 15.85,
+            "value": 330.0,
+            "easing": "linear"
+          },
+          {
+            "time": 16.25,
+            "value": 300.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "emph_reflect",
+      "type": "emphasis",
+      "parent": null,
+      "x": 400.0,
+      "y": 140.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#c77fbf",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "See what you know",
+      "fontSize": 55,
+      "format": "text",
+      "keyframes": {
+        "scale": [
+          {
+            "time": 20.5,
+            "value": 2.4,
+            "easing": "linear"
+          },
+          {
+            "time": 20.8,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 24.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 24.25,
+            "value": 0.85,
+            "easing": "easeIn"
+          }
+        ],
+        "opacity": [
+          {
+            "time": 20.5,
+            "value": 0,
+            "easing": "linear"
+          },
+          {
+            "time": 20.62,
+            "value": 1,
+            "easing": "easeOut"
+          },
+          {
+            "time": 24.0,
+            "value": 1,
+            "easing": "linear"
+          },
+          {
+            "time": 24.25,
+            "value": 0,
+            "easing": "easeIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_reflect",
+      "type": "caption",
+      "parent": null,
+      "x": 400.0,
+      "y": 330.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Your own Mind Map, growing with every card you master.",
+      "fontSize": 22.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 20.85,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 21.25,
+            "value": 1.0,
+            "easing": "easeOut"
+          },
+          {
+            "time": 24.1,
+            "value": 1.0,
+            "easing": "linear"
+          },
+          {
+            "time": 24.5,
+            "value": 0.0,
+            "easing": "easeIn"
+          }
+        ],
+        "y": [
+          {
+            "time": 20.85,
+            "value": 330.0,
+            "easing": "linear"
+          },
+          {
+            "time": 21.25,
+            "value": 300.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cap_close",
+      "type": "text",
+      "parent": null,
+      "x": 400.0,
+      "y": 260.0,
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "color": "#0F1810",
+      "width": null,
+      "height": null,
+      "radius": null,
+      "sides": null,
+      "x2": null,
+      "y2": null,
+      "strokeWidth": null,
+      "text": "Welcome to Lernin.",
+      "fontSize": 34.0,
+      "format": "text",
+      "keyframes": {
+        "opacity": [
+          {
+            "time": 24.5,
+            "value": 0.0,
+            "easing": "linear"
+          },
+          {
+            "time": 25.3,
+            "value": 1.0,
+            "easing": "easeOut"
+          }
+        ]
+      }
+    }
+  ]
+}

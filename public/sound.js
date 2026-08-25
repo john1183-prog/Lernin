@@ -51,6 +51,13 @@ function isEnabled() {
   return cachedEnabled === true;
 }
 
+/** Lets a caller check the cached setting without triggering a sound —
+ * used by app.js to decide whether the identity chime's once-per-session
+ * gate should actually be consumed (see maybePlayIdentityChime()). */
+export function isSoundEnabled() {
+  return isEnabled();
+}
+
 /**
  * Plays a short set of tones. Each note: { freq, freqEnd?, start, duration,
  * type?, gain? }. Times are seconds, relative to "now." Silently no-ops if
@@ -73,8 +80,9 @@ function playTones(notes) {
         osc.frequency.linearRampToValueAtTime(note.freqEnd, now + note.start + note.duration);
       }
       const peakGain = note.gain ?? 0.07;
+      const attack = note.attack ?? 0.01;
       gainNode.gain.setValueAtTime(0, now + note.start);
-      gainNode.gain.linearRampToValueAtTime(peakGain, now + note.start + 0.01);
+      gainNode.gain.linearRampToValueAtTime(peakGain, now + note.start + attack);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.duration);
       osc.connect(gainNode);
       gainNode.connect(ctx.destination);
@@ -133,4 +141,21 @@ export function playNavigate() {
   // often than a flip or a grade, so this stays deliberately smaller
   // than either rather than competing with them.
   playTones([{ freq: 340, start: 0, duration: 0.035, gain: 0.035 }]);
+}
+
+export function playIdentityChord() {
+  // Lernin's own "arriving" sound — plays once per session, on first
+  // reaching Home (see maybePlayIdentityChime() in app.js), gated by
+  // sessionStorage so it never repeats mid-session no matter how much
+  // navigation happens. Deliberately distinct from playSessionComplete()'s
+  // three-note ascending C major arpeggio (a celebration, sequential,
+  // snappy attack) — this is the same warm C major color but as one
+  // sustained chord with a slow, gentle attack. Arriving somewhere calm,
+  // not finishing something.
+  playTones([
+    { freq: 261.63, start: 0, duration: 1.1, gain: 0.05, attack: 0.25 },  // C4
+    { freq: 329.63, start: 0, duration: 1.1, gain: 0.045, attack: 0.28 }, // E4
+    { freq: 392.0, start: 0, duration: 1.1, gain: 0.045, attack: 0.3 },   // G4
+    { freq: 523.25, start: 0.05, duration: 1.0, gain: 0.035, attack: 0.35 } // C5, a touch delayed, a little shimmer
+  ]);
 }
