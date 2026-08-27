@@ -1177,6 +1177,14 @@ body {
   margin-bottom: var(--space-xl);
 }
 
+.session-summary-sweep {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: -12px 0 var(--space-lg);
+  animation: helpFadeUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .session-summary-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

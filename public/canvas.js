@@ -14,6 +14,7 @@ import {
   saveAnnotation, getAnnotationsForDeck, deleteAnnotation
 } from './db.js';
 import { startStudySession } from './study.js';
+import { isNearMapSecret, hasFoundMapSecret, markMapSecretFound, MAP_SECRET_SPOT } from './secrets.js';
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -553,6 +554,56 @@ function renderL1() {
     const bounds = territory.bounds ?? territoryBounds(territory);
     if (!rectIntersects(bounds, viewport)) continue;
     drawTerritory(territory, viewport);
+  }
+  if (isNearMapSecret(camera.x, camera.y, camera.zoom)) {
+    drawMapSecret();
+    if (!hasFoundMapSecret()) markMapSecretFound();
+  }
+}
+
+/**
+ * A small sprouting-plant motif at a deliberately distant, otherwise-
+ * empty world coordinate (see secrets.js's MAP_SECRET_SPOT comment for
+ * why that spot is safely far from any real territory). Only draws while
+ * the camera is actually there at near-max zoom, so finding it takes
+ * genuine deliberate exploration, not an accidental scroll-past. A gentle
+ * continuous sway (not a one-shot animation) so it reads as a small
+ * living thing rather than a static sprite -- ties into the same
+ * growth/mastery visual language the islands themselves already use.
+ */
+function drawMapSecret() {
+  const s = worldToScreen(MAP_SECRET_SPOT.x, MAP_SECRET_SPOT.y);
+  const sway = Math.sin(Date.now() / 900) * 3;
+  const scale = camera.zoom;
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(scale, scale);
+
+  // stem
+  ctx.strokeStyle = '#4a7c4e';
+  ctx.lineWidth = 2 / scale;
+  ctx.beginPath();
+  ctx.moveTo(0, 14);
+  ctx.quadraticCurveTo(sway * 0.3, 4, 0, -10);
+  ctx.stroke();
+
+  // two small leaves
+  ctx.fillStyle = '#66BB6A';
+  ctx.beginPath();
+  ctx.ellipse(-6 + sway * 0.15, -4, 7, 3.5, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(6 + sway * 0.15, -8, 7, 3.5, 0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  if (camera.zoom > 2.9) {
+    ctx.fillStyle = 'rgba(160,176,162,0.7)';
+    ctx.font = '11px system-ui,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('every mastered card starts here', s.x, s.y + 34);
   }
 }
 

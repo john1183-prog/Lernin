@@ -11,6 +11,7 @@ import {
   initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete
 } from './sound.js';
 import { renderMath, showToast } from './app.js';
+import { checkCleanSweep } from './secrets.js';
 
 let session = {
   queue: [],
@@ -809,6 +810,7 @@ function renderSessionSummary() {
   const accuracy = total > 0 ? Math.round(((session.results.good + session.results.easy) / total) * 100) : 0;
   const circumference = 2 * Math.PI * 52;
   const offset = circumference - (accuracy / 100) * circumference;
+  const cleanSweepMsg = checkCleanSweep(session.results);
 
   container.innerHTML = `
     <div class="session-summary">
@@ -821,6 +823,7 @@ function renderSessionSummary() {
         <div class="session-summary-score">${accuracy}%</div>
       </div>
       <div class="session-summary-label">Session accuracy</div>
+      ${cleanSweepMsg ? `<div class="session-summary-sweep">${cleanSweepMsg}</div>` : ''}
       <div class="session-summary-stats">
         <div class="session-summary-stat">
           <div class="session-summary-stat-value">${total}</div>

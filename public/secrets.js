@@ -29,3 +29,56 @@ export function checkGreetingEasterEgg(query) {
   }
   return null;
 }
+
+/**
+ * Territory Map (L1). A deliberately distant, empty world coordinate --
+ * chosen far past typical territory placement (territoryPosition() in
+ * canvas.js spaces territories via TERRITORY_SPACING=900 * sqrt(index),
+ * so even a map with a dozen territories stays well under 3200 from
+ * origin) -- found only by deliberately zooming all the way in and
+ * panning somewhere with nothing else there. Ties into the app's own
+ * growth/mastery visual language (islands literally get more vibrant as
+ * you master them) rather than being an arbitrary hidden object: the
+ * idea is "this is where it all starts," not "here's a random pineapple."
+ */
+export const MAP_SECRET_SPOT = { x: 4000, y: -3000 };
+export const MAP_SECRET_RADIUS = 160;
+export const MAP_SECRET_MIN_ZOOM = 2.8; // L1's zoom caps at 3
+
+export function isNearMapSecret(cameraX, cameraY, cameraZoom) {
+  if (cameraZoom < MAP_SECRET_MIN_ZOOM) return false;
+  const dx = cameraX - MAP_SECRET_SPOT.x, dy = cameraY - MAP_SECRET_SPOT.y;
+  return Math.sqrt(dx * dx + dy * dy) < MAP_SECRET_RADIUS;
+}
+
+const MAP_SECRET_SEEN_KEY = 'lernin:foundMapSecret';
+
+export function hasFoundMapSecret() {
+  try { return localStorage.getItem(MAP_SECRET_SEEN_KEY) === '1'; } catch { return true; }
+}
+
+export function markMapSecretFound() {
+  try { localStorage.setItem(MAP_SECRET_SEEN_KEY, '1'); } catch { /* private browsing, etc. -- fine to no-op */ }
+}
+
+/**
+ * End of a study session. A genuinely real, already-wired moment (unlike
+ * streak freezes, which have full backend logic in db.js but currently no
+ * UI that ever calls it -- not something to bolt an easter egg onto
+ * without first building the feature it'd depend on). A small session
+ * (1-4 cards) getting every grade right isn't unusual enough to call out;
+ * five or more clean is a genuine, noticeable run.
+ */
+const CLEAN_SWEEP_MIN_CARDS = 5;
+const CLEAN_SWEEP_MESSAGES = [
+  "Clean sweep. Every single one.",
+  "Not one Again. That's a real session.",
+  "All of them. Nothing slipped."
+];
+
+export function checkCleanSweep(results) {
+  if (!results) return null;
+  const total = (results.again || 0) + (results.hard || 0) + (results.good || 0) + (results.easy || 0);
+  if (total < CLEAN_SWEEP_MIN_CARDS || results.again > 0) return null;
+  return CLEAN_SWEEP_MESSAGES[Math.floor(Math.random() * CLEAN_SWEEP_MESSAGES.length)];
+}
