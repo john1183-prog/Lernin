@@ -33,6 +33,18 @@ TEXT_FORMATS = ("text", "formula")
 ANIMATABLE_PROPS = ("x", "y", "scale", "rotation", "opacity", "color")
 CAMERA_PROPS = ("x", "y", "zoom", "rotation")
 
+# Named, synthesized-tone-only vocabulary — matches sound.js's zero-asset
+# philosophy exactly (see playMotionCue() there for what each name actually
+# sounds like). Deliberately NOT free-form frequency/duration params: an
+# LLM picking raw Hz values has no ear and no way to know what sits well
+# against the app's existing sound identity, whereas a small named palette
+# is something a prompt example can demonstrate correctly once and have
+# every generation match. "tick" a small beat/step landing, "pop" a term
+# or detail appearing, "rise" building toward a reveal, "arrive" a reveal
+# or camera move settling, "chime" the concept fully landing (used at most
+# once, near the end).
+AUDIO_TONES = ("tick", "pop", "rise", "arrive", "chime")
+
 
 class TimeRef(BaseModel):
     """A point in time. If marker is set, time = marker's time + offset.
@@ -237,12 +249,34 @@ class Marker(BaseModel):
     time: float = Field(..., ge=0)
 
 
+class AudioCue(BaseModel):
+    """A single named, synthesized tone at a point in the timeline. See
+    AUDIO_TONES above for the fixed vocabulary and motion_engine.py for how
+    'at' gets resolved to an absolute time — the frontend player receives
+    only {time, tone}, never anything it could interpret as a file or a
+    frequency to synthesize itself."""
+    at: TimeRef
+    tone: str
+
+    @field_validator("tone")
+    @classmethod
+    def _known_tone(cls, v):
+        if v not in AUDIO_TONES:
+            raise ValueError(f"Unknown audio tone '{v}'. Use one of {AUDIO_TONES}.")
+        return v
+
+
 class MotionScript(BaseModel):
     """The full shorthand an LLM produces for one Motion Studio animation."""
     scene: Scene
     markers: List[Marker] = Field(default_factory=list)
     camera: Optional[Camera] = None
     layers: List[Layer] = Field(..., min_length=1, max_length=40)
+    # Optional and sparse by design — most beats don't need a sound, and a
+    # script with a cue on every single keyframe would just be noise (both
+    # literally and as a signal of a model over-using the feature). 12 is
+    # generous headroom for even a long, many-beat explainer.
+    audio: List[AudioCue] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode="after")
     def _cross_reference_checks(self):
@@ -264,6 +298,9 @@ class MotionScript(BaseModel):
                 for point in track.points:
                     if point.time.marker and point.time.marker not in marker_names:
                         raise ValueError(f"Camera references unknown marker '@{point.time.marker}'.")
+        for cue in self.audio:
+            if cue.at.marker and cue.at.marker not in marker_names:
+                raise ValueError(f"Audio cue '{cue.tone}' references unknown marker '@{cue.at.marker}'.")
         return self
 
 
@@ -374,6 +411,25 @@ MOTION_SCRIPT_SCHEMA = {
                 "zoom": {"type": "number"},
                 "rotation": {"type": "number"},
                 "keyframes": {"type": "array", "items": _CAMERA_TRACK_SCHEMA},
+            },
+        },
+        "audio": {
+            "type": "array",
+            "description": (
+                "Optional, sparse. Up to 12 short synthesized tones placed at specific moments — "
+                "not background music, not one per keyframe. Use 'tick' for a small beat/step "
+                "landing, 'pop' for a term or detail appearing, 'rise' building toward a reveal, "
+                "'arrive' when a reveal or camera move settles, and 'chime' at most once, near the "
+                "end, for the concept fully landing. Most scripts need 2-5 cues total, placed on "
+                "markers, not on every layer's entrance."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "at": _TIME_REF_SCHEMA,
+                    "tone": {"type": "string", "enum": list(AUDIO_TONES)},
+                },
+                "required": ["at", "tone"],
             },
         },
         "layers": {

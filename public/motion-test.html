@@ -73,6 +73,14 @@
     import { generateMotion } from './motion-api.js';
     import { renderMotionManualImport } from './motion-manual-import.js';
     import { getApiConfig, getMotionScripts, getMotionScript } from './db.js';
+    import { playMotionCue, initSoundSetting } from './sound.js';
+
+    // This standalone dev page never imports app.js, which is what
+    // primes sound.js's enabled-cache for the real app. Without this,
+    // playMotionCue() would silently no-op here forever regardless of
+    // the actual stored setting -- a real gap for a tool whose whole
+    // purpose is exercising this pipeline directly, audio cues included.
+    initSoundSetting();
 
     const statusArea = document.getElementById('statusArea');
     const manualImportArea = document.getElementById('manualImportArea');
@@ -123,7 +131,7 @@
       playerControls.style.display = '';
       stage.style.aspectRatio = `${script.scene.width} / ${script.scene.height}`;
 
-      player = createPlayer(canvas, script);
+      player = createPlayer(canvas, script, { onAudioCue: (tone) => playMotionCue(tone) });
       seekSlider.max = String(script.scene.duration);
       seekSlider.value = '0';
       timeLabel.textContent = `0.0s / ${script.scene.duration.toFixed(1)}s`;

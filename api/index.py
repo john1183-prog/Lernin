@@ -375,6 +375,12 @@ _MOTION_EXAMPLE_JSON = """{
     {"name": "reveal", "time": 8.0},
     {"name": "conclusion", "time": 13.0}
   ],
+  "audio": [
+    {"at": {"marker": "setup", "offset": 0.4}, "tone": "tick"},
+    {"at": {"marker": "reveal", "offset": -0.4}, "tone": "rise"},
+    {"at": {"marker": "reveal", "offset": 0.5}, "tone": "arrive"},
+    {"at": {"marker": "conclusion", "offset": 0.5}, "tone": "chime"}
+  ],
   "camera": {
     "keyframes": [
       {"property": "zoom", "points": [
@@ -477,7 +483,15 @@ MOTION_SYSTEM_PROMPT = (
     "appeared is still on screen at the end is a bug, not a feature -- aim "
     "for roughly 2-4 layers visible at any single moment, not the whole cast. "
     "Set format to 'formula' only for actual mathematical notation, valid "
-    "KaTeX/LaTeX -- never for plain words.\n\n"
+    "KaTeX/LaTeX -- never for plain words. "
+    "Optionally add a few 'audio' cues (at most 12, and most scripts only "
+    "need 2-5): each is a marker-relative or absolute time plus one of "
+    "'tick' (a small beat landing), 'pop' (a term or detail appearing), "
+    "'rise' (building toward a reveal), 'arrive' (a reveal or camera move "
+    "settling), or 'chime' (the concept fully landing -- use at most once, "
+    "near the end). These are short synthesized tones, not music -- place "
+    "them on markers to underline the pacing you already built, don't "
+    "sprinkle one on every layer's entrance.\n\n"
     "Below is a fully worked example on an unrelated topic (Newton's Second "
     "Law) -- study it for the PACING and MECHANICS, not the subject matter, "
     "which has nothing to do with whatever concept you're actually asked to "
@@ -499,8 +513,11 @@ MOTION_SYSTEM_PROMPT = (
     "itself. The camera's 'zoom' track ramps in on the same 'reveal' "
     "marker the formula appears on and eases back out on 'conclusion', so "
     "the camera move reinforces the beat structure rather than running on "
-    "its own timeline. At no point are more than 3-4 of the 6 total layers "
-    "visible together.\n\n"
+    "its own timeline. The four 'audio' cues echo that same beat structure "
+    "rather than running independently -- a 'tick' just after 'setup' as "
+    "the arrow appears, 'rise' leading into 'reveal', 'arrive' as the "
+    "formula settles, and a single closing 'chime' near 'conclusion'. At "
+    "no point are more than 3-4 of the 6 total layers visible together.\n\n"
     "Do not wrap your own output in markdown fences. Do not add commentary."
 )
 
@@ -566,6 +583,11 @@ def build_motion_manual_prompt(topic: str) -> str:
         "for roughly 2-4 layers visible at once, not the whole cast\n"
         "- set \"format\": \"formula\" only for real mathematical notation "
         "(valid KaTeX/LaTeX) on a text/caption/emphasis layer, never for plain words\n"
+        "- optional top-level \"audio\": an array of at most 12 "
+        "{\"at\": <time object>, \"tone\": <name>} cues, tone one of tick, "
+        "pop, rise, arrive, chime (see example above) -- most scripts only "
+        "need 2-5, placed on markers to underline the existing pacing, not "
+        "background music and not one per layer\n"
         "- keep duration reasonable, 8-45 seconds for one concept\n"
         "- scene \"width\"/\"height\" must be 200-1920 pixels (800x500 is a good "
         "default); \"fps\" must be 15-60 (30 is a good default)\n"

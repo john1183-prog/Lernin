@@ -32,7 +32,7 @@ console.log('=== DB migration ===');
 const db = await getDB();
 check('motionScripts store exists', db.objectStoreNames.contains('motionScripts'));
 check('motionGenQueue store exists', db.objectStoreNames.contains('motionGenQueue'));
-check('DB version is 9', db.version === 9, `got ${db.version}`);
+check('DB version is 10', db.version === 10, `got ${db.version}`);
 
 console.log('=== client ID ===');
 const id1 = await getMotionClientId();
@@ -128,6 +128,32 @@ console.log('=== retry_of_error is actually sent in the request body ===');
   await generateMotion('a topic', null, 'a previous error message');
   check('retry_of_error included in request body', capturedBody.retry_of_error === 'a previous error message', JSON.stringify(capturedBody));
   globalThis.fetch = realFetch;
+}
+
+console.log('=== live backend: manual mode round-trip with audio cues ===');
+{
+  const scriptWithAudio = {
+    scene: { name: 'Audio Manual Test', duration: 6 },
+    markers: [{ name: 'beat', time: 2.0 }],
+    layers: [{ name: 'box', type: 'rect', width: 50, height: 50, color: '#00ff00' }],
+    audio: [
+      { at: { marker: 'beat', offset: 0.3 }, tone: 'pop' },
+      { at: { offset: 5.5 }, tone: 'chime' },
+    ],
+  };
+  const result = await expandMotionScriptManual(scriptWithAudio, 'audio cue test');
+  check('manual expand with audio succeeds', result.error === null, JSON.stringify(result));
+  check('resolved script carries resolved audio cues', Array.isArray(result.script?.audio) && result.script.audio.length === 2, JSON.stringify(result.script?.audio));
+  check('audio cue times resolved correctly', result.script?.audio?.[0]?.time === 2.3 && result.script?.audio?.[1]?.time === 5.5, JSON.stringify(result.script?.audio));
+
+  const badAudioScript = {
+    scene: { name: 'Bad Audio Test', duration: 4 },
+    layers: [{ name: 'box', type: 'rect', width: 50, height: 50 }],
+    audio: [{ at: { offset: 1 }, tone: 'not-a-real-tone' }],
+  };
+  const badResult = await expandMotionScriptManual(badAudioScript, 'bad audio test');
+  check('unknown audio tone rejected, not thrown', badResult.error != null, JSON.stringify(badResult));
+  check('unknown audio tone error names the bad value', badResult.error.includes('not-a-real-tone'), badResult.error);
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

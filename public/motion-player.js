@@ -319,6 +319,16 @@ function createOverlay(canvas) {
   return { sync, setCamera, place, hide, destroy };
 }
 
+// ---------- Audio cues ----------
+// script.audio (if present) is already fully resolved by expand_script():
+// [{time, tone}, ...] sorted ascending. The player never plays a sound
+// itself — that would couple this pure renderer to sound.js and to the
+// app's sound-enabled setting, neither of which belongs here. Instead it
+// tracks a pointer into the sorted cue list and calls opts.onAudioCue(tone,
+// time) once per cue, only as real-time forward playback crosses it — never
+// on seek/scrub, and never more than once per cue per pass. The caller
+// decides what a cue actually sounds like (see sound.js's playMotionCue()).
+
 // ---------- Public API ----------
 // createPlayer(canvas, script) returns a controller. `script` is the
 // resolved JSON from /api/generate-motion or /api/expand-motion-script
@@ -335,6 +345,27 @@ export function createPlayer(canvas, script, opts = {}) {
 
   const overlay = createOverlay(canvas);
   const roots = rootLayers(layers);
+
+  const audioCues = Array.isArray(script.audio)
+    ? script.audio.slice().sort((a, b) => a.time - b.time)
+    : [];
+  let audioCueIdx = 0;
+
+  function fireCuesUpTo(time) {
+    while (audioCueIdx < audioCues.length && audioCues[audioCueIdx].time <= time) {
+      if (opts.onAudioCue) opts.onAudioCue(audioCues[audioCueIdx].tone, audioCues[audioCueIdx].time);
+      audioCueIdx++;
+    }
+  }
+
+  // Points audioCueIdx at the first cue strictly after `time`, so a seek
+  // never fires a cue as a side effect of scrubbing, but forward playback
+  // resumed from that point still fires everything after it correctly.
+  function resetAudioCuePointer(time) {
+    let i = 0;
+    while (i < audioCues.length && audioCues[i].time <= time + 1e-6) i++;
+    audioCueIdx = i;
+  }
 
   let t = 0;
   let playing = false;
@@ -374,7 +405,18 @@ export function createPlayer(canvas, script, opts = {}) {
     if (playing) {
       if (lastTs != null) {
         t += (ts - lastTs) / 1000;
-        if (t > scene.duration) t = opts.loop === false ? scene.duration : 0;
+        if (t > scene.duration) {
+          // Fire whatever's left before the end, then wrap (or stop).
+          fireCuesUpTo(scene.duration);
+          if (opts.loop === false) {
+            t = scene.duration;
+          } else {
+            t = 0;
+            audioCueIdx = 0; // next pass can fire the same cues again
+          }
+        } else {
+          fireCuesUpTo(t);
+        }
       }
       lastTs = ts;
     }
@@ -402,6 +444,7 @@ export function createPlayer(canvas, script, opts = {}) {
     },
     seek(seconds) {
       t = Math.max(0, Math.min(scene.duration, seconds));
+      resetAudioCuePointer(t);
       render();
     },
     get currentTime() { return t; },

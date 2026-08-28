@@ -143,6 +143,44 @@ export function playNavigate() {
   playTones([{ freq: 340, start: 0, duration: 0.035, gain: 0.035 }]);
 }
 
+// Motion Studio's fixed, named-tone palette (see AUDIO_TONES in
+// motion_schema.py). A script only ever carries a tone NAME, never raw
+// frequencies — this map is the one place that turns a name into an
+// actual sound, so every explainer shares one consistent sound identity
+// rather than each generation inventing its own. Gated by the same
+// isEnabled()/playTones() path as every other UI sound above, so it's
+// silent by default and respects the same Settings toggle — no separate
+// on/off surface for Motion Studio audio.
+const MOTION_CUE_TONES = {
+  // A small beat/step landing — quiet, brief, doesn't compete with a caption.
+  tick: [{ freq: 420, start: 0, duration: 0.05, gain: 0.04 }],
+  // A term or detail appearing — a quick soft pop, one step up from tick.
+  pop: [{ freq: 560, freqEnd: 640, start: 0, duration: 0.08, gain: 0.05 }],
+  // Building toward a reveal — a short rising sweep, not a full melody.
+  rise: [{ freq: 440, freqEnd: 720, start: 0, duration: 0.22, gain: 0.045 }],
+  // A reveal or camera move settling — two-note landing, echoes playGood().
+  arrive: [
+    { freq: 523.25, start: 0, duration: 0.1, gain: 0.05 },
+    { freq: 659.25, start: 0.07, duration: 0.16, gain: 0.055 },
+  ],
+  // The concept fully landing — a fuller three-note close, used sparingly
+  // (at most once per script by convention, near the end).
+  chime: [
+    { freq: 523.25, start: 0, duration: 0.14, gain: 0.05 },
+    { freq: 659.25, start: 0.1, duration: 0.14, gain: 0.05 },
+    { freq: 783.99, start: 0.2, duration: 0.26, gain: 0.055 },
+  ],
+};
+
+/** Plays one named Motion Studio audio cue. Unknown names no-op silently —
+ * a resolved script only ever carries names from AUDIO_TONES, but this
+ * stays defensive rather than throwing mid-playback over a bad name. */
+export function playMotionCue(tone) {
+  const notes = MOTION_CUE_TONES[tone];
+  if (!notes) return;
+  playTones(notes);
+}
+
 export function playIdentityChord() {
   // Lernin's own "arriving" sound — plays once per session, on first
   // reaching Home (see maybePlayIdentityChime() in app.js), gated by

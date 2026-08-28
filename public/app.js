@@ -1090,7 +1090,8 @@ function renderHelp() {
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         const script = await fetch(isDark ? '/onboarding-script.json' : '/onboarding-script-light.json').then(r => r.json());
         const { createPlayer } = await import('./motion-player.js');
-        player = createPlayer(canvas, script, { loop: false });
+        const { playMotionCue } = await import('./sound.js');
+        player = createPlayer(canvas, script, { loop: false, onAudioCue: (tone) => playMotionCue(tone) });
         stage.classList.add('is-playing');
       }
       player.seek(0);

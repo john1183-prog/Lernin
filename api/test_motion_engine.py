@@ -318,6 +318,50 @@ class TestFullScene(unittest.TestCase):
         self.assertEqual(out["camera"]["keyframes"]["zoom"][1]["time"], 1.3)
 
 
+class TestAudioCues(unittest.TestCase):
+    def test_absolute_and_marker_cues_resolve_and_sort_by_time(self):
+        s = script(
+            markers=[{"name": "reveal", "time": 3.0}],
+            audio=[
+                {"at": {"offset": 9.0}, "tone": "chime"},
+                {"at": {"offset": 0}, "tone": "tick"},
+                {"at": {"marker": "reveal", "offset": 0.1}, "tone": "pop"},
+            ],
+            scene={"name": "Test", "duration": 10, "fps": 30},
+        )
+        out = expand_script(s)
+        self.assertEqual(
+            out["audio"],
+            [
+                {"time": 0.0, "tone": "tick"},
+                {"time": 3.1, "tone": "pop"},
+                {"time": 9.0, "tone": "chime"},
+            ],
+        )
+
+    def test_defaults_to_empty_list(self):
+        out = expand_script(script())
+        self.assertEqual(out["audio"], [])
+
+    def test_unknown_tone_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(audio=[{"at": {"offset": 0}, "tone": "boom"}])
+
+    def test_unknown_marker_reference_rejected_at_validation(self):
+        with self.assertRaises(ValidationError):
+            script(audio=[{"at": {"marker": "nope", "offset": 0}, "tone": "tick"}])
+
+    def test_cue_beyond_duration_raises_at_expansion(self):
+        s = script(scene={"name": "Test", "duration": 3, "fps": 30},
+                    audio=[{"at": {"offset": 30}, "tone": "tick"}])
+        with self.assertRaises(MotionEngineError):
+            expand_script(s)
+
+    def test_more_than_twelve_cues_rejected(self):
+        with self.assertRaises(ValidationError):
+            script(audio=[{"at": {"offset": i}, "tone": "tick"} for i in range(13)])
+
+
 class TestGeminiSchemaCompatibility(unittest.TestCase):
     """MOTION_SCRIPT_SCHEMA is sent as-is to both Claude's tool input_schema
     and Gemini's responseSchema. Gemini's 'type' is a protobuf enum field,

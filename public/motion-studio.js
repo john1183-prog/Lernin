@@ -23,6 +23,7 @@ import { createPlayer } from './motion-player.js';
 import { generateMotion } from './motion-api.js';
 import { renderMotionManualImport } from './motion-manual-import.js';
 import { getApiConfig, getMotionScripts, getMotionScript, getDeck } from './db.js';
+import { playMotionCue } from './sound.js';
 
 export const MOTION_PREFILL_KEY = 'lernin:motionStudioPrefillTopic';
 
@@ -114,7 +115,10 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     playerControls.style.display = 'flex';
     stage.style.aspectRatio = `${script.scene.width} / ${script.scene.height}`;
 
-    player = createPlayer(canvas, script);
+    // onAudioCue just delegates to sound.js's named-tone player -- it
+    // already no-ops silently when sound is off (see sound.js), so no
+    // extra gating needed here.
+    player = createPlayer(canvas, script, { onAudioCue: (tone) => playMotionCue(tone) });
     seekSlider.max = String(script.scene.duration);
     seekSlider.value = '0';
     timeLabel.textContent = `0.0s / ${script.scene.duration.toFixed(1)}s`;

@@ -169,6 +169,17 @@ def expand_script(script: MotionScript) -> dict:
             "keyframes": _expand_tracks(cam.keyframes, markers, scene.duration, "camera"),
         }
 
+    resolved_audio = sorted(
+        (
+            {
+                "time": _resolve_time(cue.at, markers, scene.duration, f"audio cue '{cue.tone}'"),
+                "tone": cue.tone,
+            }
+            for cue in script.audio
+        ),
+        key=lambda c: c["time"],
+    )
+
     return {
         "scene": {
             "name": scene.name,
@@ -180,4 +191,5 @@ def expand_script(script: MotionScript) -> dict:
         },
         "camera": resolved_camera,
         "layers": [_expand_layer(layer, markers, scene) for layer in script.layers],
+        "audio": resolved_audio,
     }

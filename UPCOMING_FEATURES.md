@@ -715,7 +715,55 @@ including browser back/forward — `navigate()` alone wouldn't have
 covered those) — skips the very first cold-load call so nothing plays
 before the person has done anything.
 
-**Relationship picker restored at card-creation time** — not via the
+**Motion Studio audio cues (Encarta identity pivot, Phase 2)** — a
+named, synthesized-tone-only vocabulary (`tick`, `pop`, `rise`,
+`arrive`, `chime` — see `AUDIO_TONES` in `motion_schema.py`) an LLM can
+place sparingly (max 12, typically 2-5) on a script's existing markers.
+Deliberately NOT free-form frequency/duration params — an LLM has no
+ear, so a small named palette with sounds actually tuned by hand (in
+`sound.js`'s `playMotionCue()`, reusing the existing `playTones()`
+engine) is the only way every generation shares one consistent sound
+identity rather than each invention sounding different.
+`motion_engine.py`'s `expand_script()` resolves cues to absolute
+`{time, tone}` pairs, sorted — same marker-resolution path as every
+other keyframe. `motion-player.js` stays a pure renderer: it never
+plays a sound itself, just tracks a pointer into the sorted cue list
+and calls `opts.onAudioCue(tone, time)` once per cue, only as real-time
+forward playback crosses it (never on seek/scrub, correctly re-armed
+across a loop wrap or a backward seek — verified with 15 checks in
+`public/test_motion_player_audio.mjs` against real player logic with
+lightweight canvas/DOM mocks and a manually-driven `requestAnimationFrame`,
+no browser needed). Wired into every real player call site
+(`motion-studio.js`, the Help onboarding player in `app.js`,
+`motion-test.html`'s dev harness) via `onAudioCue: (tone) =>
+playMotionCue(tone)` — gated by the same sound-enabled cache as every
+other UI sound, no separate on/off surface. `motion-test.html` needed
+its own `initSoundSetting()` call added: it's a standalone dev page
+that never imports `app.js` (which is what primes that cache for the
+real app), so cues would have silently no-op'd there forever without
+it — a real gap caught while wiring this in, not a hypothetical one.
+The shared few-shot example (`_MOTION_EXAMPLE_JSON` in `api/index.py`)
+now demonstrates 4 cues synced to its existing markers; the JS mirror
+of the manual-mode prompt (`buildMotionManualPrompt()` in
+`motion-api.js`) was re-verified byte-identical to Python's
+`build_motion_manual_prompt()` output via the documented splice-and-
+diff process, not hand-retyped. 40 backend unit tests (6 new), a live
+HTTP round-trip against a running local server (valid cues resolve
+correctly, an unknown tone is rejected with a clear error, a script
+with no `audio` field still works), and the existing `motion-test.html`
+harness now audibly exercises the whole pipeline end to end. The two
+already-committed onboarding script JSON assets don't have `audio` yet
+— by design, deferred to a follow-up pass (see Phase 2 remaining below)
+rather than bundled in here.
+
+Still open from the same Phase 2 plan: camera fly-to on the territory
+map's L1→L2 transition, a leech-suspension "banishment" animation +
+sound, and — now that real audio actually exists — revisiting the
+onboarding script's content to add cues synced to its existing 5 beats.
+Phase 3 (a MindMaze-style hidden quiz mode) stays its own dedicated
+design pass, not folded into this.
+
+
 originally-suggested silent-autosave approach (too much new
 complexity/risk for what it bought: what happens on Cancel after an
 autosave, keeping type changes in sync, etc.). Simpler version
