@@ -46,6 +46,18 @@ let idleTimeoutId = null;
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
 
+// L1->L2 "fly-to": a one-shot callback fired once the ongoing camera
+// ease reaches its target (see renderLoop's cameraSettled check below).
+// Used to hold the camera zooming into the tapped island on L1 first,
+// then switch to L2's own transition -- rather than the old instant
+// content swap where L2's card cloud replaced L1's islands the moment
+// zoomLevel flipped, before the camera had visually arrived anywhere
+// near the tapped spot.
+let cameraArrivedCallback = null;
+let cameraArrivedTimeoutId = null;
+const FLY_IN_ZOOM = 2.2; // well within L1's existing pinch/wheel-zoom range (clampZoom caps L1 at 3)
+const FLY_IN_TIMEOUT_MS = 1400; // safety net only -- natural settle lands ~800-1000ms regardless of distance (exponential ease)
+
 /** @type {1|2|3} */
 let zoomLevel = 1;
 let activeDeckId = null;       // L2/L3
@@ -141,6 +153,13 @@ export function destroyCanvasView() {
   rafId = null;
   if (idleTimeoutId) clearTimeout(idleTimeoutId);
   idleTimeoutId = null;
+  // A mid-flight fly-in commit (see flyIntoDeck()) firing after teardown
+  // would call enterDeckView() against a canvas/DOM that no longer
+  // exists -- e.g. the person taps an island then immediately navigates
+  // away before the zoom-in settles.
+  if (cameraArrivedTimeoutId !== null) clearTimeout(cameraArrivedTimeoutId);
+  cameraArrivedTimeoutId = null;
+  cameraArrivedCallback = null;
   if (canvasEl) {
     canvasEl.removeEventListener('pointerdown', onPointerDown);
     canvasEl.removeEventListener('pointermove', onPointerMove);
@@ -270,6 +289,25 @@ function computeMastery(cards) {
 // ---------------------------------------------------------------------------
 // L2 / L3 data
 // ---------------------------------------------------------------------------
+
+/** Tapped an island on L1: zoom the camera into it first (still rendering
+ * L1) and only switch to L2's own card-cloud view once that zoom-in has
+ * visually settled, or the safety timeout fires -- whichever first. */
+function flyIntoDeck(island) {
+  if (cameraArrivedTimeoutId !== null) clearTimeout(cameraArrivedTimeoutId);
+  targetCamera = { x: island.pos.x, y: island.pos.y, zoom: FLY_IN_ZOOM };
+  const commit = () => {
+    if (cameraArrivedTimeoutId !== null) {
+      clearTimeout(cameraArrivedTimeoutId);
+      cameraArrivedTimeoutId = null;
+    }
+    cameraArrivedCallback = null;
+    enterDeckView(island.deckId);
+  };
+  cameraArrivedCallback = commit;
+  cameraArrivedTimeoutId = setTimeout(commit, FLY_IN_TIMEOUT_MS);
+  scheduleFrame(0);
+}
 
 async function enterDeckView(deckId, { animate = true } = {}) {
   activeDeckId = deckId;
@@ -533,6 +571,16 @@ function renderLoop() {
   const cameraSettled = Math.abs(targetCamera.x - camera.x) < 0.4 &&
                          Math.abs(targetCamera.y - camera.y) < 0.4 &&
                          Math.abs(targetCamera.zoom - camera.zoom) < 0.0015;
+
+  // Fires flyIntoDeck()'s commit once the L1 zoom-in has visually
+  // arrived, AFTER this frame renders so the settled/zoomed-in L1 frame
+  // actually shows before the content swaps to L2 on the next frame.
+  if (cameraSettled && cameraArrivedCallback) {
+    const cb = cameraArrivedCallback;
+    cameraArrivedCallback = null;
+    cb();
+  }
+
   const isActive = activePointers.size > 0 || !cameraSettled;
 
   // Full rate while actively dragging/panning/pinching or the camera is
@@ -1013,6 +1061,18 @@ function attachGestureHandlers() {
 function onPointerDown(e) {
   canvasEl.setPointerCapture(e.pointerId);
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  // A fresh touch during an in-flight fly-in (see flyIntoDeck()) means
+  // the person is redirecting -- panning, pinching, or tapping something
+  // else -- not passively waiting for the earlier tap's deck to open.
+  // Without this, dragging away mid-zoom-in could leave the pending
+  // commit sitting there and fire enterDeckView() for the original
+  // island later, once the camera happens to settle somewhere else
+  // entirely, opening a deck the person never actually chose.
+  if (cameraArrivedTimeoutId !== null) {
+    clearTimeout(cameraArrivedTimeoutId);
+    cameraArrivedTimeoutId = null;
+    cameraArrivedCallback = null;
+  }
   scheduleFrame(0);
   const rect = canvasEl.getBoundingClientRect();
   const sx = e.clientX - rect.left;
@@ -1163,7 +1223,7 @@ function onPointerUp(e) {
 function handleTap(sx, sy) {
   if (zoomLevel === 1) {
     const hit = hitTestIsland(sx, sy);
-    if (hit) enterDeckView(hit.deckId);
+    if (hit) flyIntoDeck(hit);
     return;
   }
 

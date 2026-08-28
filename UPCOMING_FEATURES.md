@@ -757,11 +757,48 @@ already-committed onboarding script JSON assets don't have `audio` yet
 rather than bundled in here.
 
 Still open from the same Phase 2 plan: camera fly-to on the territory
-map's L1→L2 transition, a leech-suspension "banishment" animation +
-sound, and — now that real audio actually exists — revisiting the
-onboarding script's content to add cues synced to its existing 5 beats.
-Phase 3 (a MindMaze-style hidden quiz mode) stays its own dedicated
-design pass, not folded into this.
+map's L1→L2 transition (**done**, see below), a leech-suspension
+"banishment" animation + sound, and — now that real audio actually
+exists — revisiting the onboarding script's content to add cues synced
+to its existing 5 beats. Phase 3 (a MindMaze-style hidden quiz mode)
+stays its own dedicated design pass, not folded into this.
+
+**Camera fly-to on L1→L2 (Encarta identity pivot, Phase 2)** — tapping
+a territory-map island used to instantly swap L1's islands for L2's
+card cloud the moment `zoomLevel` flipped, before the camera had
+visually arrived anywhere near the tapped spot -- a jarring content cut
+rather than a "diving into the deck" feel. `flyIntoDeck()` in
+`canvas.js` now holds on L1, easing the camera into the tapped island
+(zoom 2.2, well within L1's existing pinch/wheel-zoom range) using the
+render loop's own settle-detection (`cameraSettled`), and only then
+calls the real `enterDeckView()` to start L2's own transition -- a
+one-shot callback (`cameraArrivedCallback`) fired from inside
+`renderLoop()` right after that frame renders, so the fully-zoomed-in
+L1 frame actually shows before content swaps. A 1400ms safety timeout
+guards against the callback never firing (natural settle lands
+~800-1000ms regardless of starting distance, since the ease is
+exponential). Two edge cases handled, not hypothetical -- both found by
+tracing through what could go wrong, not by hitting them live: (1) a
+mid-flight tap on the canvas destroy path (`destroyCanvasView()`) could
+otherwise leave a pending `setTimeout` that fires `enterDeckView()`
+against a torn-down view; (2) starting a new gesture mid-flight
+(`onPointerDown()`) -- panning, pinching, tapping elsewhere -- could
+otherwise leave the original commit pending and open the wrong deck
+later once the camera happened to settle somewhere unrelated. Both now
+cancel the pending commit/timeout. Verified with a live Playwright
+render through the real app's actual navigation (a real
+pointerdown+pointerup pair, not a synthetic `.click()`, per the
+project's own documented lesson that synthetic clicks don't always
+reproduce real interaction behavior) against a deck seeded via the
+app's real `db.js` functions (`addDeck`/`saveManualCard`) -- not a
+synthetic harness. Four screenshots across the transition confirm the
+island genuinely grows across frames before the swap (not an instant
+cut), and the final frame shows the correct breadcrumb
+("Territories › [deck name]") with both seeded cards rendered as L2
+nodes. Zero real console errors (two Google-Fonts-CDN failures were
+sandbox network-config noise, unrelated to this change, and excluded
+from the pass condition with that reasoning documented in the test
+itself).
 
 
 originally-suggested silent-autosave approach (too much new
