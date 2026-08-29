@@ -756,12 +756,11 @@ already-committed onboarding script JSON assets don't have `audio` yet
 — by design, deferred to a follow-up pass (see Phase 2 remaining below)
 rather than bundled in here.
 
-Still open from the same Phase 2 plan: camera fly-to on the territory
-map's L1→L2 transition (**done**, see below), a leech-suspension
-"banishment" animation + sound, and — now that real audio actually
-exists — revisiting the onboarding script's content to add cues synced
-to its existing 5 beats. Phase 3 (a MindMaze-style hidden quiz mode)
-stays its own dedicated design pass, not folded into this.
+Still open from the same Phase 2 plan: a leech-suspension "banishment"
+animation + sound (**done**, see below), and — now that real audio
+actually exists — revisiting the onboarding script's content to add
+cues synced to its existing 5 beats. Phase 3 (a MindMaze-style hidden
+quiz mode) stays its own dedicated design pass, not folded into this.
 
 **Camera fly-to on L1→L2 (Encarta identity pivot, Phase 2)** — tapping
 a territory-map island used to instantly swap L1's islands for L2's
@@ -799,6 +798,44 @@ nodes. Zero real console errors (two Google-Fonts-CDN failures were
 sandbox network-config noise, unrelated to this change, and excluded
 from the pass condition with that reasoning documented in the test
 itself).
+
+**Leech banishment animation + sound (Encarta identity pivot, Phase 2)**
+— a card crossing the lapse threshold (`LEECH_LAPSE_THRESHOLD = 4` in
+`scheduler.js`) used to just silently vanish from the queue with the
+same 150ms sideways-swipe exit as any other grade; `gradeCard()`'s
+`leech` flag on the return value was computed but never read anywhere
+in `study.js`. Now that moment gets its own deliberately calmer,
+slower treatment -- a settling drift-down-and-shrink
+(`cardBanish`/`is-exiting-leech` in `styles.css`, 600ms vs the normal
+150ms) plus a distinct descending two-note tone (`playLeechBanish()`
+in `sound.js`, a fourth down with a soft, longer release -- closer in
+character to `playGood()`'s warmth than `playAgain()`'s brisk "not
+yet") plus a toast in the same voice as the existing Leeches Help copy
+("Leeches are signals, not shame"): "Set aside for now — that's not a
+fail, just a signal to come back to it differently." `result.leech`
+from `gradeCard()` now threads through `handleGrade()` →
+`showTeachIt()` (its Skip/Continue handlers, for completeness, even
+though a lapse-driven leech realistically only ever fires on
+Again/Hard, not the Good/Easy grades that route through Teach-It) →
+`animateCardExit(isLeech)`, which branches on it. Confirmed
+`undoLastGrade()` needed no changes: its pre-grade snapshot (taken
+before `gradeCard()` runs) already restores `suspended` correctly if a
+leech-triggering grade gets undone. Verified with a live Playwright
+render through the real study session UI, not a synthetic harness: a
+card seeded one lapse away from the threshold via the app's real
+`db.js` functions, graded "Again" via the actual grade button (not a
+direct function call), with the real `AudioContext.createOscillator`
+instrumented to prove tones actually fired (not just "no exception
+thrown") -- confirmed real oscillator calls, the card's
+`suspended`/`leech`/`lapses` fields correctly updated in IndexedDB, the
+toast rendered with the exact expected copy, and three screenshots
+(before grading, mid-animation, after settle/session-summary)
+confirming the card visually drifts and fades rather than cutting
+instantly, with the toast persisting naturally into the session
+summary. Zero real console errors (the same sandbox-only
+Google-Fonts-CDN noise as other Playwright verifications this session,
+excluded from the pass condition with that reasoning documented in the
+test itself).
 
 
 originally-suggested silent-autosave approach (too much new

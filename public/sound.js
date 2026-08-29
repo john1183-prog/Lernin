@@ -127,6 +127,19 @@ export function playEasy() {
   ]);
 }
 
+export function playLeechBanish() {
+  // A card just got set aside as a leech -- a pause, not a punishment
+  // (see the Help copy: "Leeches are signals, not shame"). Deliberately
+  // calm and settled: two notes descending a fourth with a soft, longer
+  // release, closer in character to playGood()'s warmth than
+  // playAgain()'s brisk "not yet" -- there's no alarm or buzzer quality
+  // here on purpose.
+  playTones([
+    { freq: 466.16, start: 0, duration: 0.18, gain: 0.05 },
+    { freq: 349.23, start: 0.14, duration: 0.34, gain: 0.045 }
+  ]);
+}
+
 export function playSessionComplete() {
   // A small closing chime — three ascending notes with a bit more air.
   playTones([

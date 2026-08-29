@@ -8,7 +8,8 @@ import {
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import {
-  initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete
+  initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete,
+  playLeechBanish
 } from './sound.js';
 import { renderMath, showToast } from './app.js';
 import { checkCleanSweep } from './secrets.js';
@@ -538,15 +539,15 @@ async function handleGrade(grade) {
 
   // Teach It for Good/Easy
   if (grade === 'good' || grade === 'easy') {
-    showTeachIt(card, fsrsUpdate, reviewLogEntry);
+    showTeachIt(card, fsrsUpdate, reviewLogEntry, result.leech);
     return;
   }
 
   await persistGrade(card, fsrsUpdate, reviewLogEntry);
-  animateCardExit();
+  animateCardExit(result.leech);
 }
 
-function showTeachIt(card, fsrsUpdate, reviewLogEntry) {
+function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false) {
   const container = document.querySelector('.study-session');
   const sheet = document.createElement('div');
   sheet.className = 'teach-it-sheet';
@@ -570,14 +571,14 @@ function showTeachIt(card, fsrsUpdate, reviewLogEntry) {
   sheet.querySelector('.teach-it-skip').addEventListener('click', async () => {
     sheet.remove();
     await persistGrade(card, fsrsUpdate, reviewLogEntry);
-    animateCardExit();
+    animateCardExit(isLeech);
   });
 
   sheet.querySelector('.teach-it-continue').addEventListener('click', async () => {
     reviewLogEntry.teachingNote = textarea.value.trim() || null;
     sheet.remove();
     await persistGrade(card, fsrsUpdate, reviewLogEntry);
-    animateCardExit();
+    animateCardExit(isLeech);
   });
 }
 
@@ -626,11 +627,34 @@ async function undoLastGrade() {
   }
 }
 
-function animateCardExit() {
+function announceLeechBanish() {
+  // A card just crossed the lapse threshold and got suspended -- see the
+  // Leeches Help copy ("Leeches are signals, not shame"). Sound and toast
+  // fire once, right as the exit starts, regardless of whether a visual
+  // settle animation can actually run.
+  playLeechBanish();
+  showToast("Set aside for now — that's not a fail, just a signal to come back to it differently.", 3400);
+}
+
+function animateCardExit(isLeech = false) {
   const wrap = document.getElementById('cardWrap');
   if (!wrap) {
+    if (isLeech) announceLeechBanish();
     session.index++;
     showCard();
+    return;
+  }
+
+  if (isLeech) {
+    // Deliberately calmer, slower exit than a normal grade -- a settling
+    // drift-down-and-shrink rather than the brisk sideways swipe (see
+    // cardBanish in styles.css).
+    announceLeechBanish();
+    wrap.classList.add('is-exiting-leech');
+    setTimeout(() => {
+      session.index++;
+      showCard();
+    }, 600);
     return;
   }
 
