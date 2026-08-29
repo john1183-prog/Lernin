@@ -756,11 +756,11 @@ already-committed onboarding script JSON assets don't have `audio` yet
 — by design, deferred to a follow-up pass (see Phase 2 remaining below)
 rather than bundled in here.
 
-Still open from the same Phase 2 plan: a leech-suspension "banishment"
-animation + sound (**done**, see below), and — now that real audio
-actually exists — revisiting the onboarding script's content to add
-cues synced to its existing 5 beats. Phase 3 (a MindMaze-style hidden
-quiz mode) stays its own dedicated design pass, not folded into this.
+Still open from the same Phase 2 plan: — now that real audio actually
+exists — revisiting the onboarding script's content to add cues synced
+to its existing 5 beats (**done**, see below). This closes out Phase 2
+entirely. Phase 3 (a MindMaze-style hidden quiz mode) stays its own
+dedicated design pass, not folded into this.
 
 **Camera fly-to on L1→L2 (Encarta identity pivot, Phase 2)** — tapping
 a territory-map island used to instantly swap L1's islands for L2's
@@ -836,6 +836,46 @@ summary. Zero real console errors (the same sandbox-only
 Google-Fonts-CDN noise as other Playwright verifications this session,
 excluded from the pass condition with that reasoning documented in the
 test itself).
+
+**Onboarding script audio cues (Encarta identity pivot, Phase 2 —
+closes out Phase 2)** — the two committed onboarding assets
+(`public/onboarding-script.json` and `-light.json`) were designed and
+verified silent, before the audio-cue subsystem existed. Both now carry
+7 audio cues, added directly to the resolved JSON (these are
+already-expanded `expand_script()`-shaped output consumed straight by
+`motion-player.js`, not raw `MotionScript` source with markers -- so
+cues are hardcoded absolute times, not marker-relative). Times were
+read directly off the asset's own existing keyframes (`traveling_dot`'s
+`x` arrivals and each `nodeN`'s scale-pulse, both landing at exactly
+0.5/5.5/10.5/15.5/20.5s) rather than guessed: a `tick` at each of the 5
+step-arrivals, an `arrive` at 24.5s when the camera's final keyframe
+settles and the closing caption begins fading in, and a single `chime`
+at 25.6s as the closing caption reaches full opacity and the whole
+"how Lernin works" idea lands. Confirmed both assets share byte-
+identical timing before reusing one cue array for both (`diff`-level
+comparison of every layer's keyframe times, scene duration, and camera
+keyframes -- not assumed from the theme-pass being "just a color
+swap"). Verified with a live Playwright render through the real Help
+view, not a synthetic harness: real `AudioContext.createOscillator`
+instrumented to record wall-clock timing of every tone (not just that
+tones fired), the real onboarding JSON fetched and its `audio` array
+confirmed present with all 7 cues, and the actual poster-button ▶ Play
+control clicked to start real playback. The recorded oscillator timing
+lines up with the intended schedule to within measurement noise:
+consecutive tick spacing lands at exactly 5.0s (matching
+5.5s-apart cues precisely), the arrive cue lands 4.0s after the last
+tick (matching 24.5−20.5), and chime lands 1.1s after arrive (matching
+25.6−24.5) -- an exact match, not just "some sound played somewhere."
+One earlier, unrelated oscillator call (a UI navigation sound firing on
+the route change to Help, unrelated to the video itself) showed up in
+the same capture window and was accounted for rather than mistaken for
+a timing bug. Three screenshots across playback (before play, mid
+playback at the "Understand it first" beat, and the final frame with
+all 5 nodes lit and the closing caption visible) confirm the visual
+sequence still plays correctly after the edit -- adding the `audio` key
+didn't disturb anything the player already reads. Zero real console
+errors (same sandbox Google-Fonts-CDN noise as every other Playwright
+verification this session).
 
 
 originally-suggested silent-autosave approach (too much new

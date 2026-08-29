@@ -1192,5 +1192,35 @@
         ]
       }
     }
+  ],
+  "audio": [
+    {
+      "time": 0.5,
+      "tone": "tick"
+    },
+    {
+      "time": 5.5,
+      "tone": "tick"
+    },
+    {
+      "time": 10.5,
+      "tone": "tick"
+    },
+    {
+      "time": 15.5,
+      "tone": "tick"
+    },
+    {
+      "time": 20.5,
+      "tone": "tick"
+    },
+    {
+      "time": 24.5,
+      "tone": "arrive"
+    },
+    {
+      "time": 25.6,
+      "tone": "chime"
+    }
   ]
 }
