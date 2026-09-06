@@ -1000,6 +1000,64 @@ that shrinks.
 
 ## Active — real user feedback, not yet fully addressed
 
+### Unescaped LaTeX backslashes silently corrupting or breaking manual-mode paste-back (fixed)
+Direct user report: a real 16-card physics deck (basic + formula cards,
+LaTeX like `\frac{d}{t}` and `\Delta v`) failed to import via manual
+mode, with an error message ("check the opening { and closing }") that
+had nothing to do with the actual problem.
+
+Root cause, confirmed by testing the exact reported JSON against
+`json.loads`: models routinely emit LaTeX in JSON string values with a
+single backslash (`\frac`, `\Delta`) instead of the doubled backslash
+JSON string syntax requires. This produces two distinct, differently-
+dangerous failure modes:
+- `\Delta`, `\alpha` — the letter after the backslash isn't a valid JSON
+  escape character at all, so `JSON.parse` throws outright. This was the
+  error actually surfaced, misleadingly attributed to missing braces.
+- `\frac`, `\tau`, `\nabla`, `\beta` — these start with a letter (f/t/n/b/r)
+  that *is* a valid JSON escape (form feed, tab, newline, backspace,
+  carriage return respectively), so `JSON.parse` does **not** throw — it
+  silently succeeds with a literal control character spliced into the
+  string where the LaTeX command was meant to be. No error, no visible
+  symptom beyond a corrupted formula, easy to miss entirely.
+
+`json-repair.js`'s existing repair chain (`repairUnescapedQuotes`,
+trailing-comma stripping) had no handling for either case. Added
+`repairLatexBackslashes()`: repairs the first class unconditionally (no
+reading of that input was ever valid JSON), and repairs the second via
+a heuristic — a genuine control-character escape in real prose is
+essentially never immediately followed by 2+ more lowercase letters
+forming a word (`frac`, `tau`, `nabla`...), since real sentences
+resume with capitals, punctuation, or whitespace, not a continued
+lowercase run.
+
+**Caught a real bug in the first version of this fix via testing, not
+assumption:** initially wired in as a reactive fallback, only invoked
+when `JSON.parse` threw. The `\frac`-style silent-corruption case never
+throws in the first place, so the fix never ran for exactly the failure
+mode it was built to catch — only the `\Delta`-style hard failure ever
+reached it. Fixed by applying the repair unconditionally, before the
+first parse attempt, on every candidate. **Caught a second real bug**
+from the same testing pass: the initial "followed by any letter"
+heuristic false-positived on genuine intentional newlines followed by a
+capitalized sentence start (`"Line one\nLine two"` — capital L looks
+like "any letter" too) — narrowed to specifically 2+ *lowercase*
+letters, which still catches every realistic LaTeX command name
+(lowercase words) while leaving real prose newlines/tabs alone.
+
+Verified: the exact reported 16-card JSON now imports cleanly with
+every formula (`\frac{d}{t}`, `\frac{\Delta v}{\Delta t}`,
+`\frac{1}{2}mv^2`) and every LaTeX variable name (`\Delta v`, `\Delta t`)
+recovered correctly. A 13-case test suite covering both failure modes,
+already-correct double-escaped input, genuine Windows-style paths,
+genuine intentional newlines/tabs (including the capital-letter-after
+case that broke the first version), multiple LaTeX terms in one value,
+and LaTeX combined with a trailing comma (the composed-repair path) —
+all pass. This fix lives in one shared function used by all four
+manual-mode paste-back flows (card generation ×2 call sites, Motion
+Studio, Mind Map v2), so it's not card-generation-specific — any of
+them could have hit the same silent corruption.
+
 ### Help voice rewritten: corrective -> rescuing, plus consistency pass
 Direct feedback: "wrong voice mixed with inconsistency." The diagnosis
 matched what a read-through confirmed -- the original voice (hero,
