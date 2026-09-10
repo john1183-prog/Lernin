@@ -52,6 +52,23 @@ function applyEase(name, t) {
   return fn(t);
 }
 
+/**
+ * Perceived luminance of a hex color (Rec. 709 weights), used to decide
+ * whether a caption's background chip should be dark or light — see
+ * drawShape()'s caption case. Scene backgrounds are opaque hex strings
+ * by construction (schema-validated), so no alpha handling needed.
+ */
+function isLightColor(hex) {
+  if (!hex || hex[0] !== '#') return false;
+  const h = hex.length === 4
+    ? hex.replace(/#(.)(.)(.)/, '#$1$1$2$2$3$3')
+    : hex;
+  const r = parseInt(h.slice(1, 3), 16), g = parseInt(h.slice(3, 5), 16), b = parseInt(h.slice(5, 7), 16);
+  if ([r, g, b].some(Number.isNaN)) return false;
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.6;
+}
+
 function lerpColor(hexA, hexB, t) {
   const pa = parseInt(hexA.slice(1), 16), pb = parseInt(hexB.slice(1), 16);
   const ar = (pa >> 16) & 255, ag = (pa >> 8) & 255, ab = pa & 255;
@@ -188,7 +205,16 @@ function drawShape(ctx, l, col) {
       const padX = 16, padY = 10;
       const tw = ctx.measureText(text).width;
       const bw = tw + padX * 2, bh = (l.fontSize || 26) * 1.25 + padY * 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      // The box needs to contrast with THIS caption's own text color, not
+      // a fixed assumption about the scene -- a light-theme script's dark
+      // ink text (see onboarding-script-light.json) was landing on the
+      // same hardcoded black chip a dark-theme script's white text uses,
+      // which reads fine on a dark background but is dark-on-dark and
+      // hard to read on a light one. Keying off the resolved text color
+      // itself (already in hand as `col`) rather than the scene
+      // background is the more direct fix: it's the box/text pair that
+      // needs contrast, not the box/wider-scene pair.
+      ctx.fillStyle = isLightColor(col) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.85)';
       roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 8);
       ctx.fill();
       ctx.fillStyle = col;
