@@ -5,7 +5,7 @@
 */
 
 import {
-  getAllDecks, getCardsByDeck, getCard, getDeck,
+  getActiveDecks, getCardsByDeck, getCard, getDeck,
   saveIslandPosition, getIslandPositionOverrides, clearIslandPosition,
   saveConceptPosition, getConceptPositionOverrides,
   getRelationshipsFrom, getRelationshipsTo, getCrossDeckRelationshipPairs,
@@ -220,7 +220,7 @@ function islandDefaultPos(territoryCenter, islandId, index, total) {
 
 async function buildWorldModel() {
   const [decks, overrides] = await Promise.all([
-    getAllDecks(),
+    getActiveDecks(),
     getIslandPositionOverrides()
   ]);
   try {

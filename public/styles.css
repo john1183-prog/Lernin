@@ -411,6 +411,36 @@ body {
   color: var(--accent);
 }
 
+.deck-tile-badge.is-archived-badge {
+  background: rgba(138, 154, 140, 0.15);
+  color: var(--ink-secondary);
+}
+
+.deck-tile.is-archived {
+  opacity: 0.72;
+  border: 1px dashed var(--ink-muted);
+}
+
+.deck-tile.is-archived::before {
+  background: var(--ink-muted);
+}
+
+.archived-decks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: none;
+  border: none;
+  padding: 8px 4px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink-secondary);
+}
+
+.archived-decks-toggle:hover {
+  color: var(--ink);
+}
+
 /* ---------- Card browser: solitaire-style tiles ---------- */
 .card-tile-grid {
   display: grid;
@@ -595,6 +625,14 @@ body {
 .sheet-action.is-primary {
   color: var(--accent);
   font-weight: 600;
+}
+
+.sheet-action.is-danger {
+  color: var(--danger);
+}
+
+.sheet-action.is-danger:hover {
+  background: var(--danger-soft);
 }
 
 .sheet-action-icon {

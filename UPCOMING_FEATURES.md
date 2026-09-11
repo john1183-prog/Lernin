@@ -875,10 +875,43 @@ all 5 nodes lit and the closing caption visible) confirm the visual
 sequence still plays correctly after the edit -- adding the `audio` key
 didn't disturb anything the player already reads. Zero real console
 errors (same sandbox Google-Fonts-CDN noise as every other Playwright
-verification this session).
+**Deck Archiving & Hard Deletion (UI/UX Architecture Brief §5, Step 1)** —
+shipped Build Step 1 from `UI_UX_ARCHITECTURE_BRIEF.md`.
+- **Data layer** (`public/db.js`): `saveDeck` persists `archived` boolean
+  field (default `false`); `archiveDeck(deckId)` and `unarchiveDeck(deckId)`
+  helpers; `getActiveDecks()` and `getArchivedDecks()`; `deleteDeck(deckId)`
+  cascades deletion across `decks`, `cards`, and `documents`, and cleans up
+  `territoryLayout` overrides; `getCardsDueTodayOrEarlier()` updated so the
+  global query (no `deckId`) excludes cards belonging to archived decks,
+  meaning archived decks never inflate the Home hero "N cards due today" count
+  nor appear in the "Study all" session queue; `exportDeckData` and
+  `importDeckData` preserve the `archived` field.
+- **Territory Map** (`public/canvas.js`): `buildWorldModel` updated to query
+  `getActiveDecks()` instead of `getAllDecks()`, ensuring archived deck islands
+  do not render on the map.
+- **UI & Bottom Sheet** (`public/app.js`, `public/styles.css`): Home screen
+  `renderDeckList()` separates active decks from archived decks. When archived
+  decks exist, a collapsable `📦 Archived (N) ▸` section renders below the
+  active deck list; tapping expands an inline list of archived deck tiles
+  with dashed borders and muted styling. The deck bottom sheet (`openBottomSheet`)
+  contextually offers "Archive" (or "Unarchive" for archived decks) and "Delete"
+  (with `.sheet-action.is-danger` styling) separated by a sheet divider.
+- **Delete confirmation modal**: `openDeleteDeckConfirm(deck)` displays a warm,
+  rescuing confirmation sheet stating the exact card count and reminding the user
+  that archiving is a safe non-destructive alternative before they permanently delete.
+  Canceling ("Keep deck") aborts safely; confirming ("Delete permanently")
+  hard-deletes the deck and cards and displays a warm toast.
+- **Verified end-to-end**: automated headless Chrome CDP test through real app
+  navigation: seed deck + 2 cards (1 due) → verify deck in active list, on map,
+  and in due count → archive deck → verify excluded from active list, excluded
+  from map, due count drops to 0, appears under Archived (1) toggle → reload
+  browser → verify persistence of archived state across reload → unarchive deck →
+  verify restored to active list, restored to map, due count restored → trigger
+  delete dialog → test "Keep deck" cancel (deck survives) → test "Delete permanently"
+  (deck & cards deleted from IndexedDB, empty state rendered). 64/64 backend tests
+  and motion audio test pass.
 
 
-originally-suggested silent-autosave approach (too much new
 complexity/risk for what it bought: what happens on Cancel after an
 autosave, keeping type changes in sync, etc.). Simpler version
 shipped instead: the existing single Save button is untouched: after

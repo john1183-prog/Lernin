@@ -10,7 +10,8 @@ import {
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
   exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument, saveDocument,
   getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
-  localDayKey
+  localDayKey,
+  getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
@@ -250,12 +251,13 @@ export async function renderDeckList() {
   root.style.padding = '0';
   maybePlayIdentityChime();
 
-  let decks, dueCards, stats;
+  let decks, dueCards, stats, archivedDecks;
   try {
-    [decks, dueCards, stats] = await Promise.all([
-      getDecks(),
+    [decks, dueCards, stats, archivedDecks] = await Promise.all([
+      getActiveDecks(),
       getCardsDueTodayOrEarlier(),
-      getReviewStats()
+      getReviewStats(),
+      getArchivedDecks()
     ]);
   } catch (err) {
     showToast('Failed to load dashboard.', 5000);
@@ -328,19 +330,29 @@ export async function renderDeckList() {
   list.className = 'deck-list';
 
   if (decks.length === 0) {
-    list.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">📚</div>
-        <div class="empty-state-title">No decks yet</div>
-        <div class="empty-state-text">Create a deck or import a PDF to get started with active recall.</div>
-        <div class="empty-state-actions">
-          <button class="btn-secondary" id="emptyImportBtn">📥 Import deck</button>
-          <button class="btn-secondary" id="emptyHelpBtn">❓ How Lernin works</button>
+    if (archivedDecks.length > 0) {
+      list.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📦</div>
+          <div class="empty-state-title">All decks are archived</div>
+          <div class="empty-state-text">Your decks are resting in the archive below. Restore any deck anytime to resume active study.</div>
         </div>
-      </div>
-    `;
-    list.querySelector('#emptyImportBtn').addEventListener('click', triggerDeckImport);
-    list.querySelector('#emptyHelpBtn').addEventListener('click', () => navigate('/help'));
+      `;
+    } else {
+      list.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📚</div>
+          <div class="empty-state-title">No decks yet</div>
+          <div class="empty-state-text">Create a deck or import a PDF to get started with active recall.</div>
+          <div class="empty-state-actions">
+            <button class="btn-secondary" id="emptyImportBtn">📥 Import deck</button>
+            <button class="btn-secondary" id="emptyHelpBtn">❓ How Lernin works</button>
+          </div>
+        </div>
+      `;
+      list.querySelector('#emptyImportBtn').addEventListener('click', triggerDeckImport);
+      list.querySelector('#emptyHelpBtn').addEventListener('click', () => navigate('/help'));
+    }
   } else {
     for (const deck of decks) {
       const tile = await buildDeckTile(deck);
@@ -374,6 +386,66 @@ export async function renderDeckList() {
 
   root.appendChild(list);
 
+  if (archivedDecks.length > 0) {
+    const archivedContainer = document.createElement('div');
+    archivedContainer.className = 'archived-decks-container';
+    archivedContainer.style.cssText = 'padding: 0 var(--space-md); margin-top: var(--space-md);';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'archived-decks-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.innerHTML = `
+      <span class="archived-toggle-icon">📦</span>
+      <span style="font-weight:600; font-size:14px; color:var(--ink-secondary);">Archived (${archivedDecks.length})</span>
+      <span class="archived-arrow" style="font-size:12px; color:var(--ink-muted); transition: transform 0.2s ease;">▸</span>
+    `;
+
+    const subList = document.createElement('div');
+    subList.className = 'archived-deck-list';
+    subList.style.display = 'none';
+    subList.style.marginTop = 'var(--space-sm)';
+
+    for (const d of archivedDecks) {
+      const tile = await buildDeckTile(d);
+      tile.classList.add('is-archived');
+      subList.appendChild(tile);
+    }
+
+    let expanded = false;
+    toggle.addEventListener('click', () => {
+      expanded = !expanded;
+      toggle.setAttribute('aria-expanded', String(expanded));
+      const arrow = toggle.querySelector('.archived-arrow');
+      if (arrow) arrow.style.transform = expanded ? 'rotate(90deg)' : 'rotate(0deg)';
+      if (expanded) {
+        if (viewMode === 'grid') {
+          subList.style.display = 'grid';
+          subList.style.gridTemplateColumns = '1fr 1fr';
+          subList.style.gap = 'var(--space-sm)';
+        } else if (viewMode === 'horizontal') {
+          subList.style.display = 'flex';
+          subList.style.overflowX = 'auto';
+          subList.style.gap = 'var(--space-sm)';
+          subList.style.flexWrap = 'nowrap';
+          for (const tile of subList.children) {
+            tile.style.flexShrink = '0';
+            tile.style.width = '160px';
+          }
+        } else {
+          subList.style.display = 'flex';
+          subList.style.flexDirection = 'column';
+          subList.style.gap = 'var(--space-sm)';
+        }
+      } else {
+        subList.style.display = 'none';
+      }
+    });
+
+    archivedContainer.appendChild(toggle);
+    archivedContainer.appendChild(subList);
+    root.appendChild(archivedContainer);
+  }
+
   const newBtn = document.createElement('button');
   newBtn.className = 'btn-secondary';
   newBtn.style.cssText = 'margin: var(--space-md); width: calc(100% - var(--space-md)*2);';
@@ -395,6 +467,7 @@ async function buildDeckTile(deck) {
 
   const tile = document.createElement('div');
   tile.className = 'deck-tile';
+  if (deck.archived) tile.classList.add('is-archived');
   if (masteryPct >= 80) tile.classList.add('is-mastered');
   else if (masteryPct >= 30) tile.classList.add('is-progress');
 
@@ -402,7 +475,7 @@ async function buildDeckTile(deck) {
     <div class="deck-tile-header">
       <div class="deck-tile-title">${escapeHtml(deck.title)}</div>
       <div style="display:flex;align-items:center;gap:8px;">
-        ${due > 0 ? `<span class="deck-tile-badge">${due} due</span>` : ''}
+        ${deck.archived ? `<span class="deck-tile-badge is-archived-badge">📦 Archived</span>` : (due > 0 ? `<span class="deck-tile-badge">${due} due</span>` : '')}
         <button class="deck-menu-btn" aria-label="Open actions">⋮</button>
       </div>
     </div>
@@ -453,6 +526,7 @@ function openBottomSheet(deck) {
   sheet.setAttribute('aria-modal', 'true');
   sheet.setAttribute('aria-label', `${escapeHtml(deck.title)} actions`);
 
+  const isArchived = !!deck.archived;
   const actions = [
     { label: 'Study', icon: '▶️', primary: true, action: () => navigate(`/study/${deck.id}`) },
     { label: 'Import PDF', icon: '📄', action: () => renderPDFImport(deck.id) },
@@ -465,13 +539,38 @@ function openBottomSheet(deck) {
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
     { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
     { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
+    isArchived
+      ? {
+          label: 'Unarchive',
+          icon: '📦',
+          action: async () => {
+            await unarchiveDeck(deck.id);
+            showToast('Welcome back! Deck restored to your active study list.');
+            renderDeckList();
+          }
+        }
+      : {
+          label: 'Archive',
+          icon: '📦',
+          action: async () => {
+            await archiveDeck(deck.id);
+            showToast('Tucked away in archive — your progress is safe whenever you want to revisit.');
+            renderDeckList();
+          }
+        },
+    {
+      label: 'Delete',
+      icon: '🗑️',
+      danger: true,
+      action: () => openDeleteDeckConfirm(deck)
+    }
   ];
 
   let html = '<div class="sheet-handle"></div>';
   actions.forEach((a, i) => {
-    if (i === 4) html += '<div class="sheet-divider"></div>';
+    if (i === 4 || i === 11) html += '<div class="sheet-divider"></div>';
     html += `
-      <button class="sheet-action ${a.primary ? 'is-primary' : ''}">
+      <button class="sheet-action ${a.primary ? 'is-primary' : ''} ${a.danger ? 'is-danger' : ''}">
         <span class="sheet-action-icon">${a.icon}</span>
         ${escapeHtml(a.label)}
       </button>
@@ -529,6 +628,77 @@ function openBottomSheet(deck) {
   sheet.addEventListener('touchend', (e) => {
     if (e.changedTouches[0].clientY - startY > 80) closeSheet();
   });
+}
+
+async function openDeleteDeckConfirm(deck) {
+  let cardCount = 0;
+  try {
+    const cards = await getCardsByDeck(deck.id);
+    cardCount = cards.length;
+  } catch (_) {}
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  document.body.appendChild(backdrop);
+
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', `Delete ${escapeHtml(deck.title)}`);
+
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div style="padding:0 var(--space-lg) var(--space-md); display:flex; flex-direction:column; gap:var(--space-md);">
+      <h2 style="font-size:18px; color:var(--ink); font-weight:600;">Delete “${escapeHtml(deck.title)}”?</h2>
+      <p style="font-size:14px; line-height:1.5; color:var(--ink-secondary);">
+        This will permanently remove this deck and its ${cardCount} card${cardCount === 1 ? '' : 's'}. If you just need a break from studying these, archiving keeps all your cards and progress safe instead.
+      </p>
+      <div style="display:flex; gap:10px; margin-top:var(--space-xs);">
+        <button type="button" id="deleteCancelBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface-hover); color:var(--ink); font-size:15px; font-weight:500; cursor:pointer;">Keep deck</button>
+        <button type="button" id="deleteConfirmBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--danger); color:white; font-size:15px; font-weight:600; cursor:pointer;">Delete permanently</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+
+  let isClosing = false;
+  function closeConfirm() {
+    if (isClosing) return;
+    isClosing = true;
+    document.removeEventListener('keydown', onKey);
+    sheet.style.animation = 'slideDown 0.25s ease forwards';
+    backdrop.style.animation = 'fadeIn 0.2s ease reverse forwards';
+    setTimeout(() => {
+      sheet.remove();
+      backdrop.remove();
+    }, 250);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') closeConfirm();
+  }
+  document.addEventListener('keydown', onKey);
+
+  backdrop.addEventListener('click', closeConfirm);
+  const handle = sheet.querySelector('.sheet-handle');
+  if (handle) handle.addEventListener('click', closeConfirm);
+
+  sheet.querySelector('#deleteCancelBtn').addEventListener('click', closeConfirm);
+  sheet.querySelector('#deleteConfirmBtn').addEventListener('click', async () => {
+    closeConfirm();
+    try {
+      await deleteDeck(deck.id);
+      showToast(`Deleted “${deck.title}” — all clean.`);
+      renderDeckList();
+    } catch (err) {
+      console.error(err);
+      showToast('Could not delete deck right now.', 4000);
+    }
+  });
+
+  const cancelBtn = sheet.querySelector('#deleteCancelBtn');
+  if (cancelBtn) cancelBtn.focus();
 }
 
 /* ---------- Views ---------- */

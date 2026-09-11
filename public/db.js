@@ -460,6 +460,11 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
 export async function getCardsDueTodayOrEarlier({ deckId, now, limit, excludeSuspended = true } = {}) {
   const db = await getDB();
   const cutoff = now ?? Date.now();
+  let archivedDeckIds = null;
+  if (!deckId) {
+    const allDecks = await db.getAll('decks');
+    archivedDeckIds = new Set(allDecks.filter(d => d.archived).map(d => d.id));
+  }
   const tx = db.transaction('cards', 'readonly');
   const results = [];
 
@@ -480,9 +485,11 @@ export async function getCardsDueTodayOrEarlier({ deckId, now, limit, excludeSus
     const range = IDBKeyRange.upperBound(cutoff);
     let cursor = await index.openCursor(range);
     while (cursor) {
-      if (!excludeSuspended || !cursor.value.suspended) {
-        results.push(cursor.value);
-        if (limit && results.length >= limit) break;
+      if (!archivedDeckIds.has(cursor.value.deckId)) {
+        if (!excludeSuspended || !cursor.value.suspended) {
+          results.push(cursor.value);
+          if (limit && results.length >= limit) break;
+        }
       }
       cursor = await cursor.continue();
     }
@@ -579,13 +586,24 @@ export async function saveDeck(deck) {
     id: deck.id,
     title: deck.title,
     courseTerritoryId: deck.courseTerritoryId,
-    createdAt: deck.createdAt || Date.now()
+    createdAt: deck.createdAt || Date.now(),
+    archived: deck.archived || false
   });
 }
 
 export async function getAllDecks() {
   const db = await getDB();
   return db.getAll('decks');
+}
+
+export async function getActiveDecks() {
+  const all = await getAllDecks();
+  return all.filter(d => !d.archived);
+}
+
+export async function getArchivedDecks() {
+  const all = await getAllDecks();
+  return all.filter(d => !!d.archived);
 }
 
 export async function getDeck(deckId) {
@@ -1227,7 +1245,7 @@ export async function exportDeckData(deckId, { includeProgress = true } = {}) {
     exportedAt: Date.now(),
     sourceApp: 'Lernin',
     includesProgress: includeProgress,
-    deck: { title: deck.title, courseTerritoryId: deck.courseTerritoryId },
+    deck: { title: deck.title, courseTerritoryId: deck.courseTerritoryId, archived: deck.archived || false },
     cards: cards.map((c) => ({
       id: c.id, // kept for reviewLog cross-referencing below; import mints a fresh id regardless
       front: c.front,
@@ -1280,7 +1298,8 @@ export async function importDeckData(parsed) {
     id: newDeckId,
     title: parsed.deck.title,
     courseTerritoryId: parsed.deck.courseTerritoryId || 'uncategorized',
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    archived: parsed.deck.archived || false
   });
 
   const cardTx = db.transaction('cards', 'readwrite');
@@ -1643,6 +1662,11 @@ export async function deleteDeck(deckId) {
     await tx.objectStore('documents').delete(doc.id);
   }
   await tx.done;
+  if (db.objectStoreNames.contains('territoryLayout')) {
+    try {
+      await db.delete('territoryLayout', deckId);
+    } catch (_) {}
+  }
 }
 
 /** Rename a deck */
@@ -1651,6 +1675,24 @@ export async function renameDeck(deckId, newTitle) {
   const deck = await db.get('decks', deckId);
   if (!deck) throw new Error(`renameDeck: deck ${deckId} not found`);
   deck.title = newTitle;
+  return db.put('decks', deck);
+}
+
+/** Archive a deck (soft-hide from default list, map, and global due counts) */
+export async function archiveDeck(deckId) {
+  const db = await getDB();
+  const deck = await db.get('decks', deckId);
+  if (!deck) throw new Error(`archiveDeck: deck ${deckId} not found`);
+  deck.archived = true;
+  return db.put('decks', deck);
+}
+
+/** Unarchive a deck */
+export async function unarchiveDeck(deckId) {
+  const db = await getDB();
+  const deck = await db.get('decks', deckId);
+  if (!deck) throw new Error(`unarchiveDeck: deck ${deckId} not found`);
+  deck.archived = false;
   return db.put('decks', deck);
 }
 
