@@ -693,7 +693,8 @@ body {
 }
 
 .study-undo-btn,
-.study-help-btn {
+.study-help-btn,
+.study-exit-btn {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-md);
@@ -709,7 +710,8 @@ body {
 }
 
 .study-undo-btn:hover,
-.study-help-btn:hover {
+.study-help-btn:hover,
+.study-exit-btn:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }

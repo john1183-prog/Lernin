@@ -910,6 +910,39 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
   - All unit & regression suites passing (frontend motion player audio tests pass, syntax checks pass).
 
+**Universal Jump-to-Card Audit & Card Mind Map Study Action (UI/UX Architecture Brief §5, Step 4; §3.2)** —
+shipped Build Step 4 from `UI_UX_ARCHITECTURE_BRIEF.md`, ensuring every visual surface provides a fast path
+to study cards without dead ends.
+- **Surface Audit (§3.2)**:
+  - *Territory Map L3* (`public/canvas.js`): Already surfaces card front/back, formula, relationship chips,
+    and a primary `"Study this card"` button launching `startStudySession`. Verified meeting the bar.
+  - *Card Mind Map* (`public/mind-map.js`): Node tap previously opened a peek panel showing only front/back
+    and a close button — identified as the clear gap. Upgraded with full formula support and a primary
+    `"Study this card"` action.
+  - *Document Mind Map* (`public/mind-map-doc.js`): Nodes represent document structural sections/topics rather
+    than individual cards. Retained honest actions (`"Explain with motion"` and `"Back"`) without inventing
+    fabricated card links.
+  - *Motion Studio* (`public/motion-studio.js`): Topic-driven explainer studio. Retained honest action model
+    (prefills when arriving from mind-map node; freely-typed topics do not link to fake cards).
+- **Reusable `cardQuickActions` Helper** (`public/study.js`):
+  Exported helper that renders a standard action row with a `"Study this card"` primary button
+  (`.card-action-study`) that seamlessly launches `startStudySession(container, { deckId, startCardId, onExit })`.
+- **Card Mind Map Study Integration** (`public/mind-map.js`):
+  Tapping a node in the force-directed card graph now shows front, back, LaTeX formulas (`$$...$$`), and the
+  `cardQuickActions` row. Clicking `"Study this card"` destroys the mind map view, runs the active recall study
+  session starting with that exact card, and on exit smoothly restores the Mind Map view.
+- **Study Engine Card Injection Guarantee** (`public/study.js`):
+  When `startStudySession` receives `startCardId`, it fetches the card via `getCard(startCardId)` and guarantees
+  it is present at the front of the study queue, even if the deck has 0 cards due today. This ensures explicit
+  "Study this card" jumps never get blocked by the "All caught up!" empty state screen.
+- **Verified via automated headless Chrome CDP test**:
+  - Card Mind Map node tap opens peek panel containing the `"Study this card"` button.
+  - Clicking `"Study this card"` immediately launches the study engine displaying the card's front, back, and grading buttons.
+  - Exiting the study session smoothly returns the user to the Card Mind Map.
+  - Territory Map L3 study button verified intact and functional.
+  - Document Mind Map and Motion Studio confirmed honest without fabricated card links.
+  - All unit & regression suites passing.
+
 **Territory Map: Paths + Recency + Idle Motion (UI/UX Architecture Brief §5, Step 3; §3.1 Steps 5–7)** —
 shipped Build Step 3 from `UI_UX_ARCHITECTURE_BRIEF.md`, adding life and narrative to the Territory Map.
 - **Paths as Routes (Step 5)** (`public/canvas.js`): Cross-deck connector lines now render as worn-earth

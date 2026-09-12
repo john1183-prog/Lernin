@@ -22,6 +22,7 @@
 */
 
 import { getCardsByDeck, getRelationshipsFrom, getDeck } from './db.js';
+import { cardQuickActions } from './study.js';
 
 const SAND_HSL = { h: 38, s: 28, l: 78 };
 const OCHRE_HSL = { h: 32, s: 55, l: 55 };
@@ -171,6 +172,7 @@ let isPanning = false;
 let lastPointer = null;
 let dragMoved = 0;
 let onExitCb = null;
+let currentDeckId = null;
 const DRAG_THRESHOLD = 4;
 
 function scheduleFrame(delayMs) {
@@ -186,6 +188,7 @@ function scheduleFrame(delayMs) {
 export async function renderMindMap(rootEl, deckId, opts = {}) {
   container = rootEl;
   onExitCb = opts.onExit || null;
+  currentDeckId = deckId;
   container.innerHTML = '';
   container.style.padding = '0';
 
@@ -390,18 +393,42 @@ let detailPanelEl = null;
 function openNodeDetail(node) {
   detailPanelEl?.remove();
   const p = document.createElement('div');
-  p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:40%; overflow-y:auto;';
+  p.className = 'mind-map-node-detail';
+  p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:45%; overflow-y:auto; z-index:10;';
   p.innerHTML = `
     <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtmlLocal(node.card.front)}</div>
     <div style="font-size:13px; color:var(--ink-secondary); line-height:1.5;">${escapeHtmlLocal(node.card.back || '')}</div>
+    ${node.card.formula ? `<div style="font-size:13px; margin-top:6px; color:var(--ink-secondary);">$$${escapeHtmlLocal(node.card.formula)}$$</div>` : ''}
   `;
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
-  closeBtn.textContent = '\u2715';
+  closeBtn.textContent = '✕';
   closeBtn.style.cssText = 'position:absolute; top:8px; right:10px; border:none; background:none; color:var(--ink-muted); font-size:14px; cursor:pointer;';
-  closeBtn.addEventListener('click', () => p.remove());
+  closeBtn.addEventListener('click', () => {
+    p.remove();
+    if (detailPanelEl === p) detailPanelEl = null;
+  });
   p.style.position = 'absolute';
   p.appendChild(closeBtn);
+
+  if (currentDeckId && node.card) {
+    const did = currentDeckId;
+    const parentContainer = container;
+    const exitCb = onExitCb;
+    const actions = cardQuickActions({
+      cardId: node.card.id,
+      deckId: did,
+      container: parentContainer,
+      onBeforeStudy: () => {
+        destroy();
+      },
+      onExit: () => {
+        renderMindMap(parentContainer, did, { onExit: exitCb });
+      }
+    });
+    p.appendChild(actions);
+  }
+
   canvasEl.parentElement.appendChild(p);
   detailPanelEl = p;
 }
@@ -494,4 +521,13 @@ function destroy() {
   container = null; canvasEl = null; ctx = null;
   hoveredNode = null; draggedNode = null; pointerDownNode = null;
   lastPointer = null; isPanning = false;
+  currentDeckId = null;
+}
+
+if (typeof window !== 'undefined') {
+  window.__mindMapDebug = {
+    getNodes: () => nodes,
+    openNodeDetail,
+    getDetailPanel: () => detailPanelEl
+  };
 }

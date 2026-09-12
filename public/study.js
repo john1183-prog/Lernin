@@ -46,6 +46,43 @@ function toRating(grade) {
   return r;
 }
 
+/* ---------- Reusable Quick Actions ---------- */
+
+/**
+ * Renders a consistent action row for any visual surface holding a real card ID:
+ * provides a primary "Study this card" button that starts a study session
+ * for that specific card.
+ *
+ * @param {Object} params
+ * @param {string} params.cardId
+ * @param {string} params.deckId
+ * @param {HTMLElement} params.container
+ * @param {Function} [params.onExit]
+ * @param {Function} [params.onBeforeStudy]
+ * @returns {HTMLElement}
+ */
+export function cardQuickActions({ cardId, deckId, container, onExit, onBeforeStudy }) {
+  const row = document.createElement('div');
+  row.className = 'card-quick-actions';
+  row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-top:12px;';
+
+  const studyBtn = document.createElement('button');
+  studyBtn.className = 'btn-primary card-action-study';
+  studyBtn.textContent = 'Study this card';
+  studyBtn.style.cssText = 'font-size:13px; padding:6px 14px;';
+  studyBtn.addEventListener('click', async () => {
+    if (typeof onBeforeStudy === 'function') onBeforeStudy();
+    await startStudySession(container, {
+      deckId,
+      startCardId: cardId,
+      onExit
+    });
+  });
+
+  row.appendChild(studyBtn);
+  return row;
+}
+
 /* ---------- Session Start ---------- */
 export async function startStudySession(container, opts = {}) {
   await initSoundSetting();
@@ -76,6 +113,15 @@ export async function startStudySession(container, opts = {}) {
 
   // Filter out suspended
   cards = cards.filter(c => !c.suspended);
+
+  // If a specific card was requested to study (e.g. from Territory Map L3 or Mind Map),
+  // ensure it is present in cards even if not otherwise due today.
+  if (session.startCardId) {
+    const specificCard = await getCard(session.startCardId);
+    if (specificCard && !specificCard.suspended && !cards.some(c => c.id === session.startCardId)) {
+      cards.unshift(specificCard);
+    }
+  }
 
   if (cards.length === 0) {
     container.innerHTML = `
@@ -248,6 +294,7 @@ function updateHeader() {
     <div class="study-header-actions">
       <button class="study-undo-btn" id="studyUndoBtn" aria-label="Undo last grade" ${canUndo ? '' : 'disabled'}>↩</button>
       <button class="study-help-btn" id="studyHelpBtn" aria-label="Keyboard shortcuts">?</button>
+      <button class="study-exit-btn" id="studyExitBtn" aria-label="Exit session">✕</button>
     </div>
   `;
 
@@ -259,6 +306,11 @@ function updateHeader() {
   const helpBtn = header.querySelector('#studyHelpBtn');
   if (helpBtn) {
     helpBtn.addEventListener('click', showShortcutsOverlay);
+  }
+
+  const exitBtn = header.querySelector('#studyExitBtn');
+  if (exitBtn) {
+    exitBtn.addEventListener('click', leaveSession);
   }
 }
 
