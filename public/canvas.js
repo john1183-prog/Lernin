@@ -588,15 +588,12 @@ function renderLoop() {
   const isActive = activePointers.size > 0 || !cameraSettled;
 
   // Full rate while actively dragging/panning/pinching or the camera is
-  // easing toward a new target; otherwise a slow ~4fps idle tick. This
-  // was previously an unconditional 60fps loop even while the map sat
-  // completely idle — real battery/CPU cost for a canvas that wasn't
-  // changing. A slow idle tick (rather than instrumenting every single
-  // state-mutating call site with an explicit redraw trigger) is a
-  // deliberate safety trade-off: it self-corrects within ~250ms even if
-  // some future change forgets to trigger a redraw, at a small fraction
-  // of the original cost — 15x+ fewer frames while idle.
-  scheduleFrame(isActive ? 0 : 250);
+  // easing toward a new target; otherwise a slow idle tick. At L1 the
+  // idle sway animation needs ~25fps (40ms) to look smooth; at L2 the
+  // card cloud is static so 4fps (250ms) is sufficient. Both are well
+  // below the old unconditional 60fps loop.
+  const hasIdleAnim = zoomLevel === 1;
+  scheduleFrame(isActive ? 0 : hasIdleAnim ? 40 : 250);
 }
 
 function renderL1() {
@@ -711,9 +708,10 @@ function findIslandByDeckId(deckId) {
 /**
  * Island-to-island lines at L1 — one line per deck pair (aggregated,
  * not one per relationship), weighted by how many relationships cross
- * that pair. Same visual language as L2's relationship lines (dashed,
- * MAP_INK, alpha-based highlight) but simpler: no direction/arrowheads,
- * since at this zoom level they'd be unreadable clutter, not signal.
+ * that pair. Rendered as a worn-earth double-stroke track: a wide ochre
+ * undercoat (the exposed dirt) + a narrow lighter topcoat (the trodden
+ * centre). Width scales with pair.count so busier routes look wider.
+ * No dashes — solid strokes read more like a real path than a schematic.
  */
 function drawIslandConnections() {
   if (crossDeckPairs.length === 0) return;
@@ -728,11 +726,26 @@ function drawIslandConnections() {
     const isHi = hoveredIsland && (hoveredIsland.deckId === pair.deckIdA || hoveredIsland.deckId === pair.deckIdB);
     const dim = hoveredIsland && !isHi;
 
+    const baseWidth = Math.min(3 + pair.count * 0.6, 6) * (isHi ? 1.4 : 1);
+
+    // Wide undercoat — worn earth / exposed dirt
     ctx.save();
-    ctx.globalAlpha = dim ? 0.06 : (isHi ? 0.55 : 0.22);
-    ctx.strokeStyle = MAP_INK;
-    ctx.lineWidth = Math.min(1 + pair.count * 0.4, 3) * (isHi ? 1.4 : 1);
-    ctx.setLineDash([5, 4]);
+    ctx.globalAlpha = dim ? 0.04 : (isHi ? 0.40 : 0.18);
+    ctx.strokeStyle = '#8B6F47';
+    ctx.lineWidth = baseWidth;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sb.x, sb.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // Narrow topcoat — trodden centre, slightly lighter
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.06 : (isHi ? 0.55 : 0.28);
+    ctx.strokeStyle = '#C4A265';
+    ctx.lineWidth = baseWidth * 0.45;
+    ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(sa.x, sa.y);
     ctx.lineTo(sb.x, sb.y);
@@ -744,7 +757,7 @@ function drawIslandConnections() {
 function drawTerritory(territory, viewport) {
   drawTerritoryActivityHalo(territory);
   for (const island of territory.islands) {
-    if (camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD) drawIsland(island);
+    if (camera.zoom >= LOD_ISLAND_DETAIL_THRESHOLD) drawIsland(island, territory);
     else drawIslandSimple(island);
   }
   // Territory label
@@ -784,16 +797,122 @@ function islandColor(mastery, seedId) {
   return { h: base.h + jitter, s: base.s, l: base.l };
 }
 
-function drawIslandGlow(island, radius) {
+/**
+ * Recency-as-ambient-life scalar in [0.3, 1.0].
+ * High value → vivid, glowing, textured (recently studied).
+ * Low value  → desaturated, quiet, faint (untouched or brand-new).
+ *
+ * Uses island.mastery as the per-island proxy (cumulative review effort)
+ * blended with the territory's activityLevel as a group modifier. The
+ * floor of 0.3 keeps even unstarted islands faintly visible.
+ */
+function islandVitality(island, territory) {
+  const perIsland = island.mastery;
+  const groupBoost = (territory?.activityLevel ?? 0) * 0.5;
+  return 0.3 + 0.7 * Math.min(1, Math.max(perIsland, groupBoost));
+}
+
+function drawIslandGlow(island, radius, vitality) {
   const s = worldToScreen(island.pos.x, island.pos.y);
   const { h, s: sat, l } = islandColor(island.mastery, island.id);
   const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, radius);
-  g.addColorStop(0, `hsla(${h},${sat}%,${l}%,0.35)`);
+  const glowAlpha = 0.35 * vitality;
+  g.addColorStop(0, `hsla(${h},${sat}%,${l}%,${glowAlpha.toFixed(3)})`);
   g.addColorStop(1, `hsla(${h},${sat}%,${l}%,0)`);
   ctx.beginPath();
   ctx.fillStyle = g;
   ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/**
+ * Full terrain render for one island at L1 (called from drawTerritory via
+ * drawIsland). Accepts the parent territory so we can compute vitality.
+ *
+ * Step 6 — Recency as ambient life:
+ *   vitality ∈ [0.3, 1.0] scales glow alpha, fill saturation, texture
+ *   alpha, and coastline/contour opacity so untouched islands look quiet
+ *   and desaturated while recently studied ones look vivid.
+ *
+ * Step 7 — Idle motion:
+ *   A tiny sinusoidal world-space offset (phase unique per island via
+ *   hashToUnit) moves the island centre very slowly so it reads as alive.
+ *   Amplitude is 1.2 world units — imperceptible as jitter, visible as
+ *   gentle drift. All drawing uses the swayed screen position so nothing
+ *   tears. The sway is purely cosmetic and never affects hit-testing or
+ *   position storage.
+ */
+function drawIsland(island, territory) {
+  // --- Step 7: per-island sinusoidal sway (idle motion) ---
+  const phase = hashToUnit(island.id) * Math.PI * 2;
+  const swayX = Math.sin(Date.now() / 2400 + phase) * 1.2;
+  const swayY = Math.cos(Date.now() / 3100 + phase * 1.3) * 0.8;
+  const s = worldToScreen(island.pos.x + swayX, island.pos.y + swayY);
+
+  const radius = ISLAND_RADIUS_BASE * camera.zoom;
+  const { h, s: sat, l } = islandColor(island.mastery, island.id);
+
+  // --- Step 6: vitality scalar [0.3, 1.0] ---
+  const vit = islandVitality(island, territory);
+  const vSat = sat * (0.4 + 0.6 * vit);   // desaturate quiet islands
+
+  drawIslandGlow(island, radius * 2.2, vit);
+
+  const points = islandSilhouettePoints(s.x, s.y, radius, island.id);
+
+  if (island === hoveredIsland) {
+    const hoverPoints = islandSilhouettePoints(s.x, s.y, radius, island.id, 7);
+    buildSilhouettePath(ctx, hoverPoints);
+    ctx.strokeStyle = 'rgba(46,125,50,0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+
+  // 1 & 2: Procedural silhouette and terrain shading (radial gradient high-ground -> shoreline)
+  buildSilhouettePath(ctx, points);
+  const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, radius);
+  grad.addColorStop(0, `hsl(${h},${vSat}%,${Math.min(100, l + 14)}%)`);
+  grad.addColorStop(0.6, `hsl(${h},${vSat}%,${l}%)`);
+  grad.addColorStop(1, `hsl(${h},${Math.min(100, vSat + 10)}%,${Math.max(0, l - 10)}%)`);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Coastline stroke — quieter on low-vitality islands
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = `rgba(0,0,0,${(0.25 * vit).toFixed(3)})`;
+  ctx.stroke();
+
+  // 3: Texture density marks (clipped to silhouette) — faded on quiet islands
+  ctx.save();
+  buildSilhouettePath(ctx, points);
+  ctx.clip();
+  ctx.globalAlpha = vit;
+  drawIslandTexture(s.x, s.y, radius, island.id, island.cardCount, { h, s: vSat, l });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Elevation contour rings reflecting mastery — quieter on low-vitality islands
+  const ringCount = Math.round(island.mastery * 3);
+  for (let ring = 1; ring <= ringCount; ring++) {
+    const ringScale = 0.5 + ring * 0.18;
+    const ringPts = islandSilhouettePoints(s.x, s.y, radius * ringScale, island.id);
+    buildSilhouettePath(ctx, ringPts);
+    ctx.strokeStyle = `hsla(${h},${vSat}%,${l}%,${(0.5 * vit).toFixed(3)})`;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  if (camera.zoom > 0.8) {
+    ctx.fillStyle = MAP_INK;
+    ctx.font = `${Math.max(10, 12 * camera.zoom)}px system-ui,sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(island.title, s.x, s.y + radius + 14);
+    if (island.dueCount > 0) {
+      ctx.font = `600 ${Math.max(9, 10 * camera.zoom)}px system-ui,sans-serif`;
+      ctx.fillStyle = 'rgba(220,80,60,0.9)';
+      ctx.fillText(`${island.dueCount} due`, s.x, s.y + radius + 28);
+    }
+  }
 }
 
 function drawMapBackground(rect) {
@@ -857,67 +976,6 @@ function drawIslandSimple(island) {
   ctx.fillStyle = `hsl(${h},${sat}%,${l}%)`;
   ctx.arc(s.x, s.y, LOD_SIMPLE_DOT_RADIUS, 0, Math.PI * 2);
   ctx.fill();
-}
-
-function drawIsland(island) {
-  const s = worldToScreen(island.pos.x, island.pos.y);
-  const radius = ISLAND_RADIUS_BASE * camera.zoom;
-  const { h, s: sat, l } = islandColor(island.mastery, island.id);
-  drawIslandGlow(island, radius * 2.2);
-
-  const points = islandSilhouettePoints(s.x, s.y, radius, island.id);
-
-  if (island === hoveredIsland) {
-    const hoverPoints = islandSilhouettePoints(s.x, s.y, radius, island.id, 7);
-    buildSilhouettePath(ctx, hoverPoints);
-    ctx.strokeStyle = 'rgba(46,125,50,0.55)';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-  }
-
-  // 1 & 2: Procedural silhouette and terrain shading (radial gradient high-ground -> shoreline)
-  buildSilhouettePath(ctx, points);
-  const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, radius);
-  grad.addColorStop(0, `hsl(${h},${sat}%,${Math.min(100, l + 14)}%)`);
-  grad.addColorStop(0.6, `hsl(${h},${sat}%,${l}%)`);
-  grad.addColorStop(1, `hsl(${h},${Math.min(100, sat + 10)}%,${Math.max(0, l - 10)}%)`);
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Coastline stroke
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-  ctx.stroke();
-
-  // 3: Texture density marks tied to card count (clipped to silhouette)
-  ctx.save();
-  buildSilhouettePath(ctx, points);
-  ctx.clip();
-  drawIslandTexture(s.x, s.y, radius, island.id, island.cardCount, { h, s: sat, l });
-  ctx.restore();
-
-  // Elevation contour rings reflecting mastery
-  const ringCount = Math.round(island.mastery * 3);
-  for (let ring = 1; ring <= ringCount; ring++) {
-    const ringScale = 0.5 + ring * 0.18;
-    const ringPts = islandSilhouettePoints(s.x, s.y, radius * ringScale, island.id);
-    buildSilhouettePath(ctx, ringPts);
-    ctx.strokeStyle = `hsla(${h},${sat}%,${l}%,0.5)`;
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-  }
-
-  if (camera.zoom > 0.8) {
-    ctx.fillStyle = MAP_INK;
-    ctx.font = `${Math.max(10, 12 * camera.zoom)}px system-ui,sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillText(island.title, s.x, s.y + radius + 14);
-    if (island.dueCount > 0) {
-      ctx.font = `600 ${Math.max(9, 10 * camera.zoom)}px system-ui,sans-serif`;
-      ctx.fillStyle = 'rgba(220,80,60,0.9)';
-      ctx.fillText(`${island.dueCount} due`, s.x, s.y + radius + 28);
-    }
-  }
 }
 
 // ---- L2 drawing -----------------------------------------------------------
@@ -1829,4 +1887,15 @@ function escapeHtml(str) {
   const d = document.createElement('div');
   d.textContent = str ?? '';
   return d.innerHTML;
+}
+
+if (typeof window !== 'undefined') {
+  window.__mapDebug = {
+    getWorldTerritories: () => worldTerritories,
+    getCrossDeckPairs: () => crossDeckPairs,
+    getCamera: () => camera,
+    worldToScreen,
+    getCanvas: () => canvasEl,
+    getZoomLevel: () => zoomLevel
+  };
 }

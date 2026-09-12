@@ -910,6 +910,34 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
   - All unit & regression suites passing (frontend motion player audio tests pass, syntax checks pass).
 
+**Territory Map: Paths + Recency + Idle Motion (UI/UX Architecture Brief §5, Step 3; §3.1 Steps 5–7)** —
+shipped Build Step 3 from `UI_UX_ARCHITECTURE_BRIEF.md`, adding life and narrative to the Territory Map.
+- **Paths as Routes (Step 5)** (`public/canvas.js`): Cross-deck connector lines now render as worn-earth
+  double-stroke tracks. A wide ochre undercoat (`#8B6F47`, solid, round-capped) represents the exposed dirt;
+  a narrower lighter topcoat (`#C4A265`) represents the trodden centre. Both strokes scale width with
+  `pair.count` (more shared cards = wider, better-travelled road). Hover alpha behaviour is preserved;
+  dashes are gone — solid strokes read as real paths, not schematic indicators.
+- **Recency as Ambient Life (Step 6)** (`public/canvas.js`): New `islandVitality(island, territory)`
+  helper returns a [0.3, 1.0] scalar blending per-island mastery with the territory's `activityLevel`.
+  High vitality → vivid glow, saturated fill, dense texture, strong coastline. Low vitality (untouched
+  or brand-new deck) → desaturated, faint, quiet. Applied to: glow alpha, HSL saturation, texture dot
+  alpha, coastline opacity, and contour ring opacity. Floor of 0.3 keeps all islands faintly visible.
+- **Idle Motion (Step 7)** (`public/canvas.js`): Each island sways continuously on two slightly different
+  frequencies (~0.042 Hz X / ~0.032 Hz Y, amplitude 1.2/0.8 world units). Phase is unique per island via
+  `hashToUnit(island.id) * Math.PI * 2`, making each one feel independently alive. All drawing (silhouette,
+  texture, glow, label) uses the swayed screen position so nothing tears. Hit-testing is unaffected (uses
+  stored world pos, not swayed pos). Idle frame rate at L1 raised from 250ms to 40ms (~25fps) to drive
+  smooth sway; L2 stays at 250ms idle.
+- **L2/LOD Isolation**: All three effects are L1-only. L2 flat fill and 250ms idle tick are unaffected.
+  `drawIslandSimple` (LOD fallback, zoom < 0.55) is unaffected.
+- **Verified via automated headless Chrome CDP test**:
+  - Path colour confirmed warm ochre (not MAP_INK grey) at connector midpoint.
+  - Vitality difference confirmed between low-mastery (mastery≈0) and high-mastery (mastery≈0.6) islands
+    via fill pixel saturation comparison.
+  - Sway confirmed live: island centre pixel shifts between two frames captured 200ms apart.
+  - L2 background confirmed static (no pixel change between frames at L2).
+  - All unit & regression suites passing.
+
 **Deck Archiving & Hard Deletion (UI/UX Architecture Brief §5, Step 1)** —
 shipped Build Step 1 from `UI_UX_ARCHITECTURE_BRIEF.md`.
 - **Data layer** (`public/db.js`): `saveDeck` persists `archived` boolean
