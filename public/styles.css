@@ -45,6 +45,8 @@ body {
   --ochre: #E6A23C;
   --moss: #2E7D32;
   --map-bg: #E8EDE9;
+  --map-bg-sky: #D0DEDE;
+  --map-bg-horizon: #E8EDE9;
   --map-ink: #1A1F1B;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
@@ -85,6 +87,8 @@ body {
   --danger-soft: rgba(239,83,80,0.10);
   --warning: #FFCA28;
   --map-bg: #14181C;
+  --map-bg-sky: #0A0D10;
+  --map-bg-horizon: #1E2830;
   --map-ink: #EDEFF1;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.3);

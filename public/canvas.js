@@ -77,6 +77,8 @@ let hoveredIsland = null;
 let hoveredCard = null;
 
 let MAP_BG = '#14181C';
+let MAP_BG_SKY = '#0A0D10';
+let MAP_BG_HORIZON = '#1E2830';
 let MAP_INK = '#EDEFF1';
 
 // Gestures
@@ -487,6 +489,8 @@ function resizeCanvas() {
 function refreshThemeColors() {
   const styles = getComputedStyle(document.documentElement);
   MAP_BG = styles.getPropertyValue('--map-bg').trim() || MAP_BG;
+  MAP_BG_SKY = styles.getPropertyValue('--map-bg-sky').trim() || MAP_BG_SKY;
+  MAP_BG_HORIZON = styles.getPropertyValue('--map-bg-horizon').trim() || MAP_BG_HORIZON;
   MAP_INK = styles.getPropertyValue('--map-ink').trim() || MAP_INK;
 }
 
@@ -559,12 +563,12 @@ function renderLoop() {
   if (!ctx || !canvasEl) return;
   const rect = canvasEl.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
-  ctx.fillStyle = MAP_BG;
-  ctx.fillRect(0, 0, rect.width, rect.height);
-
   if (zoomLevel === 1) {
+    drawMapBackground(rect);
     renderL1();
   } else {
+    ctx.fillStyle = MAP_BG;
+    ctx.fillRect(0, 0, rect.width, rect.height);
     renderL2();
   }
 
@@ -792,6 +796,60 @@ function drawIslandGlow(island, radius) {
   ctx.fill();
 }
 
+function drawMapBackground(rect) {
+  const grad = ctx.createLinearGradient(0, 0, 0, rect.height);
+  grad.addColorStop(0, MAP_BG_SKY);
+  grad.addColorStop(1, MAP_BG_HORIZON);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, rect.width, rect.height);
+}
+
+function islandSilhouettePoints(cx, cy, baseRadius, islandId, extraRadius = 0) {
+  const count = 14;
+  const points = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const noise = hashToUnit(`${i * 1013}:${islandId}`);
+    const r = (baseRadius * (0.72 + 0.28 * noise)) + extraRadius;
+    points.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r
+    });
+  }
+  return points;
+}
+
+function buildSilhouettePath(ctx, points) {
+  const n = points.length;
+  if (n < 3) return;
+  ctx.beginPath();
+  const mid0 = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 };
+  ctx.moveTo(mid0.x, mid0.y);
+  for (let i = 1; i < n; i++) {
+    const next = points[(i + 1) % n];
+    const mid = { x: (points[i].x + next.x) / 2, y: (points[i].y + next.y) / 2 };
+    ctx.quadraticCurveTo(points[i].x, points[i].y, mid.x, mid.y);
+  }
+  ctx.quadraticCurveTo(points[0].x, points[0].y, mid0.x, mid0.y);
+  ctx.closePath();
+}
+
+function drawIslandTexture(cx, cy, radius, islandId, cardCount, { h, s: sat, l }) {
+  const dotCount = Math.min(40, Math.round((cardCount || 0) * 0.6));
+  if (dotCount <= 0) return;
+  const dotRadius = Math.max(1.5, 1.8 * camera.zoom);
+  ctx.fillStyle = `hsla(${h},${Math.min(100, sat + 15)}%,${Math.max(0, l - 24)}%,0.65)`;
+  for (let k = 0; k < dotCount; k++) {
+    const r = radius * 0.72 * Math.sqrt(hashToUnit(`${k * 7919}:tex:${islandId}`));
+    const theta = hashToUnit(`${k * 4999}:tth:${islandId}`) * Math.PI * 2;
+    const dx = cx + Math.cos(theta) * r;
+    const dy = cy + Math.sin(theta) * r;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function drawIslandSimple(island) {
   const s = worldToScreen(island.pos.x, island.pos.y);
   const { h, s: sat, l } = islandColor(island.mastery, island.id);
@@ -807,28 +865,45 @@ function drawIsland(island) {
   const { h, s: sat, l } = islandColor(island.mastery, island.id);
   drawIslandGlow(island, radius * 2.2);
 
+  const points = islandSilhouettePoints(s.x, s.y, radius, island.id);
+
   if (island === hoveredIsland) {
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, radius + 7, 0, Math.PI * 2);
+    const hoverPoints = islandSilhouettePoints(s.x, s.y, radius, island.id, 7);
+    buildSilhouettePath(ctx, hoverPoints);
     ctx.strokeStyle = 'rgba(46,125,50,0.55)';
     ctx.lineWidth = 2.5;
     ctx.stroke();
   }
 
-  ctx.beginPath();
-  ctx.fillStyle = `hsl(${h},${sat}%,${l}%)`;
-  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  // 1 & 2: Procedural silhouette and terrain shading (radial gradient high-ground -> shoreline)
+  buildSilhouettePath(ctx, points);
+  const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, radius);
+  grad.addColorStop(0, `hsl(${h},${sat}%,${Math.min(100, l + 14)}%)`);
+  grad.addColorStop(0.6, `hsl(${h},${sat}%,${l}%)`);
+  grad.addColorStop(1, `hsl(${h},${Math.min(100, sat + 10)}%,${Math.max(0, l - 10)}%)`);
+  ctx.fillStyle = grad;
   ctx.fill();
+
+  // Coastline stroke
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = 'rgba(0,0,0,0.25)';
   ctx.stroke();
 
+  // 3: Texture density marks tied to card count (clipped to silhouette)
+  ctx.save();
+  buildSilhouettePath(ctx, points);
+  ctx.clip();
+  drawIslandTexture(s.x, s.y, radius, island.id, island.cardCount, { h, s: sat, l });
+  ctx.restore();
+
+  // Elevation contour rings reflecting mastery
   const ringCount = Math.round(island.mastery * 3);
   for (let ring = 1; ring <= ringCount; ring++) {
-    ctx.beginPath();
+    const ringScale = 0.5 + ring * 0.18;
+    const ringPts = islandSilhouettePoints(s.x, s.y, radius * ringScale, island.id);
+    buildSilhouettePath(ctx, ringPts);
     ctx.strokeStyle = `hsla(${h},${sat}%,${l}%,0.5)`;
-    ctx.lineWidth = 1.5;
-    ctx.arc(s.x, s.y, radius * (0.5 + ring * 0.18), 0, Math.PI * 2);
+    ctx.lineWidth = 1.2;
     ctx.stroke();
   }
 

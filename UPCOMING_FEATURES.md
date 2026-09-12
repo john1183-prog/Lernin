@@ -875,6 +875,41 @@ all 5 nodes lit and the closing caption visible) confirm the visual
 sequence still plays correctly after the edit -- adding the `audio` key
 didn't disturb anything the player already reads. Zero real console
 errors (same sandbox Google-Fonts-CDN noise as every other Playwright
+**Territory Map Terrain Pass (UI/UX Architecture Brief §5, Step 2; §3.1 Steps 1–4)** —
+shipped Build Step 2 from `UI_UX_ARCHITECTURE_BRIEF.md`, transforming the Territory
+Map from abstract geometric data dots into rich, textured memory palace islands.
+- **Procedural Island Silhouettes** (`public/canvas.js`): Replaced the circular
+  `ctx.arc` island bodies with 14-point irregular polygons smoothed via quadratic
+  splines (`islandSilhouettePoints`, `buildSilhouettePath`). The shape is seeded
+  strictly from the deck's ID using deterministic multiplier hashing, ensuring
+  each island's coastline is completely stable across reloads and sessions.
+  The hover outline (`is-hovered`) smoothly tracks the procedural coastline with
+  a 7px offset path.
+- **Terrain Shading** (`public/canvas.js`): Radial elevation gradient from lighter
+  "high ground" center to base midtone to a deeper "shoreline" edge, deriving stops
+  from `islandColor(mastery, id)` without altering existing color decisions.
+- **Texture Density Tied to Card Count** (`public/canvas.js`): `drawIslandTexture`
+  scatters small tufts/marks across the island interior, scaled proportionally to
+  card count (`Math.min(40, Math.round(cardCount * 0.6))`) and clipped strictly
+  within the coastline boundary. A 3-card deck visibly shows sparse texture (2 dots),
+  while larger decks (e.g. 30 cards) show rich density (18 dots), providing instant
+  spatial feedback on deck size before reading numbers.
+- **Environment Background Gradient** (`public/styles.css`, `public/canvas.js`):
+  Replaced the flat canvas fill on L1 with a sky-to-horizon gradient using new
+  design tokens `--map-bg-sky` and `--map-bg-horizon` across both light theme
+  (`#D0DEDE` to `#E8EDE9`) and dark theme (`#0A0D10` to `#1E2830`). The L2/L3 card
+  cloud views retain the uniform flat `MAP_BG` fill with zero gradient bleed.
+- **LOD Path Preserved**: Zooming out below the LOD threshold (< 0.55) continues to
+  use `drawIslandSimple`, rendering lightweight overview dots without degradation.
+- **Verified via automated headless Chrome CDP test**:
+  - Dark theme environment gradient verified via pixel sampling (sky #0A0D10 -> horizon #1E2830).
+  - Silhouette determinism and pixel stability verified across browser reload (exact match on all coordinates).
+  - Texture density confirmed scaling with card count (3 cards -> 2 dots; 30 cards -> 18 dots).
+  - Light theme environment gradient verified via pixel sampling (sky #D0DEDE -> horizon #E8EDE9).
+  - L2 view background verified completely flat (`MAP_BG`) across canvas bounds with no gradient bleed.
+  - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
+  - All unit & regression suites passing (frontend motion player audio tests pass, syntax checks pass).
+
 **Deck Archiving & Hard Deletion (UI/UX Architecture Brief §5, Step 1)** —
 shipped Build Step 1 from `UI_UX_ARCHITECTURE_BRIEF.md`.
 - **Data layer** (`public/db.js`): `saveDeck` persists `archived` boolean
