@@ -909,6 +909,31 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - L2 view background verified completely flat (`MAP_BG`) across canvas bounds with no gradient bleed.
   - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
   - All unit & regression suites passing (frontend motion player audio tests pass, syntax checks pass).
+**Card Mind Map Consistency Pass (UI/UX Architecture Brief §5, Step 5; §3.3)** —
+shipped Build Step 5 from `UI_UX_ARCHITECTURE_BRIEF.md`, bringing Card Mind Map nodes into
+harmony with the Territory Map's visual language while preserving graph density and legibility.
+- **Procedural Organic Pebble Silhouettes** (`public/mind-map.js`): Replaced circular `ctx.arc`
+  fills with 10-point irregular polygon contours smoothed via quadratic splines (`nodeSilhouettePoints`,
+  `buildNodePath`). The contour is seeded strictly from `cardId` using deterministic hashing (`hashToUnit`),
+  ensuring each card's pebble shape is stable across reloads and sessions.
+- **Lighter-Weight Calibration for Dense Graphs**: Territory Map islands use 14 points with 28% modulation
+  and internal tuft marks. For the denser Card Mind Map (25–100 nodes), nodes use 10 points with gentle
+  12% modulation (`0.88 + 0.12 * noise`) and omit internal speckles, producing an organic pebble feel
+  without distorting label text or creating visual clutter.
+- **Terrain Elevation Radial Shading** (`public/mind-map.js`): Replaced flat fills with a high-ground radial
+  gradient from lighter elevated center (`l + 10%`), base midtone at `0.6`, to deeper shoreline edge
+  (`s + 6%, l - 8%`), matching the Territory Map's topographical depth cues.
+- **Unified Color Palette & Deterministic Jitter**: Nodes derive color from the shared palette
+  `SAND_HSL (38, 28%, 78%)` → `OCHRE_HSL (32, 55%, 55%)` → `MOSS_HSL (110, 32%, 38%)` with deterministic
+  ±6° hue jitter keyed to `cardId`. Size (`22 + mastery * 18`) and color meanings are strictly preserved.
+- **Organic Hover & Drag Halo**: Selection and drag rings track the organic pebble contour with a 4px offset path.
+- **Verified via automated headless Chrome CDP test**:
+  - Soft irregular pebble contours verified via non-circular radial coordinate measurements.
+  - 100% determinism and pixel stability verified across browser page reload (exact match on all coordinates).
+  - High-ground radial terrain gradient confirmed (center lightness > perimeter lightness).
+  - Color and size semantics confirmed aligned with mastery (sand/small for novice, moss/large for mastered).
+  - Dense deck layout verified uncluttered and legible.
+  - All unit & regression suites passing.
 
 **Universal Jump-to-Card Audit & Card Mind Map Study Action (UI/UX Architecture Brief §5, Step 4; §3.2)** —
 shipped Build Step 4 from `UI_UX_ARCHITECTURE_BRIEF.md`, ensuring every visual surface provides a fast path

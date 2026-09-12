@@ -27,16 +27,64 @@ import { cardQuickActions } from './study.js';
 const SAND_HSL = { h: 38, s: 28, l: 78 };
 const OCHRE_HSL = { h: 32, s: 55, l: 55 };
 const MOSS_HSL = { h: 110, s: 32, l: 38 };
+const HUE_JITTER_RANGE = 6;
 
 function lerpHsl(a, b, t) {
   return { h: a.h + (b.h - a.h) * t, s: a.s + (b.s - a.s) * t, l: a.l + (b.l - a.l) * t };
 }
 
-function masteryColor(mastery) {
-  const c = mastery < 0.5
+function hashToUnit(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return (h % 10000) / 10000;
+}
+
+function nodeColor(mastery, seedId) {
+  const base = mastery < 0.5
     ? lerpHsl(SAND_HSL, OCHRE_HSL, mastery / 0.5)
     : lerpHsl(OCHRE_HSL, MOSS_HSL, (mastery - 0.5) / 0.5);
+  const jitter = (hashToUnit(String(seedId)) - 0.5) * 2 * HUE_JITTER_RANGE;
+  return { h: base.h + jitter, s: base.s, l: base.l };
+}
+
+function masteryColor(mastery) {
+  const c = nodeColor(mastery, 'default');
   return `hsl(${Math.round(c.h)}, ${Math.round(c.s)}%, ${Math.round(c.l)}%)`;
+}
+
+/**
+ * Generates a 10-point soft irregular contour for a mind map node.
+ * Uses gentle 12% radius modulation so nodes look like natural pebbles
+ * without distorting text labels or overcrowding dense graphs.
+ */
+function nodeSilhouettePoints(cx, cy, baseRadius, cardId, extraRadius = 0) {
+  const count = 10;
+  const points = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const noise = hashToUnit(`${i * 1013}:${cardId}`);
+    const r = (baseRadius * (0.88 + 0.12 * noise)) + extraRadius;
+    points.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r
+    });
+  }
+  return points;
+}
+
+function buildNodePath(ctx, points) {
+  const n = points.length;
+  if (n < 3) return;
+  ctx.beginPath();
+  const mid0 = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 };
+  ctx.moveTo(mid0.x, mid0.y);
+  for (let i = 1; i < n; i++) {
+    const next = points[(i + 1) % n];
+    const mid = { x: (points[i].x + next.x) / 2, y: (points[i].y + next.y) / 2 };
+    ctx.quadraticCurveTo(points[i].x, points[i].y, mid.x, mid.y);
+  }
+  ctx.quadraticCurveTo(points[0].x, points[0].y, mid0.x, mid0.y);
+  ctx.closePath();
 }
 
 /**
@@ -486,11 +534,29 @@ function renderLoop() {
     if (s.x < -r - 40 || s.x > rect.width + r + 40 || s.y < -r - 40 || s.y > rect.height + r + 40) continue;
     const isHi = n === hoveredNode || n === draggedNode;
 
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = masteryColor(n.mastery);
+    const color = nodeColor(n.mastery, n.id);
+    const points = nodeSilhouettePoints(s.x, s.y, r, n.id);
+
+    // Hover / drag halo tracking the organic contour
+    if (isHi) {
+      const hoverPts = nodeSilhouettePoints(s.x, s.y, r, n.id, 4);
+      buildNodePath(ctx, hoverPts);
+      ctx.strokeStyle = isDark ? 'rgba(74,160,90,0.65)' : 'rgba(46,125,50,0.55)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    // Soft procedural pebble body with high-ground radial gradient
+    buildNodePath(ctx, points);
+    const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+    grad.addColorStop(0, `hsl(${color.h},${color.s}%,${Math.min(100, color.l + 10)}%)`);
+    grad.addColorStop(0.6, `hsl(${color.h},${color.s}%,${color.l}%)`);
+    grad.addColorStop(1, `hsl(${color.h},${Math.min(100, color.s + 6)}%,${Math.max(0, color.l - 8)}%)`);
+    ctx.fillStyle = grad;
     ctx.fill();
-    ctx.lineWidth = isHi ? 3 : 2;
+
+    // Coastline border
+    ctx.lineWidth = isHi ? 2.5 : 1.5;
     ctx.strokeStyle = nodeBorder;
     ctx.stroke();
 
@@ -528,6 +594,8 @@ if (typeof window !== 'undefined') {
   window.__mindMapDebug = {
     getNodes: () => nodes,
     openNodeDetail,
-    getDetailPanel: () => detailPanelEl
+    getDetailPanel: () => detailPanelEl,
+    nodeSilhouettePoints,
+    nodeColor
   };
 }
