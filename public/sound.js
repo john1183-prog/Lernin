@@ -210,3 +210,42 @@ export function playIdentityChord() {
     { freq: 523.25, start: 0.05, duration: 1.0, gain: 0.035, attack: 0.35 } // C5, a touch delayed, a little shimmer
   ]);
 }
+
+/**
+ * Distinct synthesized tones per Home feature tile (Encarta-Kids hover feel).
+ * Oscillator-only, debounced to prevent cacophony on fast pointer swipes.
+ */
+const TILE_HOVER_TONES = {
+  map: [
+    { freq: 261.63, start: 0, duration: 0.12, gain: 0.04, attack: 0.015 },
+    { freq: 392.00, start: 0.02, duration: 0.13, gain: 0.035, attack: 0.02 }
+  ],
+  'mind-map': [
+    { freq: 293.66, start: 0, duration: 0.11, gain: 0.04, attack: 0.015 },
+    { freq: 392.00, start: 0.03, duration: 0.13, gain: 0.04, attack: 0.02 }
+  ],
+  motion: [
+    { freq: 329.63, start: 0, duration: 0.10, gain: 0.035, attack: 0.015 },
+    { freq: 493.88, start: 0.02, duration: 0.14, gain: 0.04, attack: 0.02 }
+  ],
+  documents: [
+    { freq: 220.00, start: 0, duration: 0.12, gain: 0.04, attack: 0.02 },
+    { freq: 329.63, start: 0.03, duration: 0.13, gain: 0.035, attack: 0.02 }
+  ]
+};
+
+let lastTileHoverTime = 0;
+let lastTileHoverKey = null;
+
+export function playTileHover(tileKey) {
+  const now = Date.now();
+  if (lastTileHoverKey === tileKey && now - lastTileHoverTime < 260) return;
+  if (now - lastTileHoverTime < 60) return;
+  lastTileHoverTime = now;
+  lastTileHoverKey = tileKey;
+
+  const notes = TILE_HOVER_TONES[tileKey];
+  if (!notes) return;
+  playTones(notes);
+}
+

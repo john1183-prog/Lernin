@@ -908,7 +908,49 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Light theme environment gradient verified via pixel sampling (sky #D0DEDE -> horizon #E8EDE9).
   - L2 view background verified completely flat (`MAP_BG`) across canvas bounds with no gradient bleed.
   - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
-  - All unit & regression suites passing (frontend motion player audio tests pass, syntax checks pass).
+**Home Restructure & Hover Grid (UI/UX Architecture Brief §5, Step 6; §3.5)** —
+shipped Build Step 6 from `UI_UX_ARCHITECTURE_BRIEF.md`, restructuring the Home screen into an
+exploratory Encarta-Kids-style discovery hub while keeping core study urgency clear.
+- **Due-Cards Hero Stays at Top**: The primary study callout (`.hero-cta` and `.stats-strip`)
+  remains anchored at the very top of Home, preserving the app's unambiguous "Study now" first action.
+- **Encarta-Kids-Style Feature Grid** (`public/app.js`, `public/styles.css`): Directly below the hero,
+  a responsive 4-tile exploratory grid (`.feature-grid`) showcases the app's spatial and creation surfaces:
+  * **Territory Map**: "Explore your knowledge landscape" → routes to `#/map`.
+  * **Mind Map**: "Trace connected ideas & relations" → routes via chooser or single-deck fast path.
+  * **Motion Studio**: "Watch visual concept explainers" → routes to `#/motion`.
+  * **Documents**: "Extract cards & study texts" → routes to `#/documents`.
+  *(Study and Stats are intentionally excluded from the grid tiles since the top hero and stats-strip already own them).*
+- **Procedural Terrain Visual Language Tile Art**: Zero stock photos or external assets. Each tile features
+  crisp, scalable inline SVG artwork created in the exact terrain palette (`SAND_HSL`, `OCHRE_HSL`, `MOSS_HSL`,
+  and water/earth accents) with organic pebble contours and elevation shading matching the Territory Map.
+- **Synthesis-Only Audio & CSS Motion**:
+  * Added `playTileHover(tileKey)` in `public/sound.js` using Web Audio oscillators with distinct harmonic intervals
+    per tile (Territory Map: C4-G4 fifth; Mind Map: D4-G4 rising fourth; Motion Studio: E4-B4 shimmer; Documents: A3-E4 fifth),
+    gated by the user's sound setting with 60ms debounce to prevent noise clutter on pointer scrubbing.
+  * CSS scale/glow animation (`translateY(-3px) scale(1.02)` and warm ambient shadow) on hover, focus, and touch.
+- **Mind Map Chooser Bottom Sheet**:
+  * When multiple active decks or documents exist, clicking the Mind Map tile opens a warm bottom sheet
+    (`.mind-map-chooser-sheet`) letting the user choose between Deck Cards or Document Outline.
+  * Single active deck fast path: If only one active deck exists, clicking Mind Map jumps straight into that
+    deck's card mind map without modal friction.
+- **Global Documents View** (`public/app.js`): Upgraded `renderDocuments` to support a top-level view when no
+  specific deck ID is passed, displaying all imported documents across decks with outline links and deletion.
+- **Secondary Deck List & Archived Section**:
+  * Decks now sit gracefully below the feature grid with a dedicated header (`.deck-section-header`) showing
+    deck count and layout view toggle (`☰ List`, `⊞ Grid`, `↔ Strip`).
+  * The `📦 Archived (N) ▸` collapsable container remains intact directly below the active decks, preserving
+    expansion toggle, unarchive, and deletion flows.
+- **Verified via automated headless Chrome CDP test**:
+  - DOM hierarchy verified: Hero -> Stats Strip -> Feature Grid -> Deck Section Header -> Deck List -> Archived.
+  - Exactly 4 approved tiles verified with procedural SVG art (no Study/Stats duplicate tiles).
+  - Hover CSS transform and synthesized audio trigger verified.
+  - Light and Dark theme rendering confirmed via screenshots (`home_feature_grid_light.png`, `home_feature_grid_dark.png`).
+  - Territory Map, Motion Studio, and Documents direct tile routing verified.
+  - Mind Map Chooser verified opening with deck and document options, and routing correctly.
+  - Mind Map single-deck fast path verified jumping straight into card graph.
+  - Secondary deck list and collapsable archived container verified functional.
+  - All unit & regression suites passing.
+
 **Card Mind Map Consistency Pass (UI/UX Architecture Brief §5, Step 5; §3.3)** —
 shipped Build Step 5 from `UI_UX_ARCHITECTURE_BRIEF.md`, bringing Card Mind Map nodes into
 harmony with the Territory Map's visual language while preserving graph density and legibility.

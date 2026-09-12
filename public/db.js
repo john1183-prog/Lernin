@@ -1563,6 +1563,12 @@ export async function getDocument(id) {
   return db.get('documents', id);
 }
 
+export async function getAllDocuments() {
+  const db = await getDB();
+  const docs = await db.getAll('documents');
+  return (docs || []).sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0));
+}
+
 export async function deleteDocument(id) {
   const db = await getDB();
   await db.delete('documentMindMaps', id).catch(() => {}); // best-effort, may not exist

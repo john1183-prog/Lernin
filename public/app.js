@@ -11,11 +11,12 @@ import {
   exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument, saveDocument,
   getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
   localDayKey,
-  getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck
+  getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck,
+  getAllDocuments
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
-import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord } from './sound.js';
+import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
 import { renderMindMap } from './mind-map.js';
 import { renderDocumentMindMap } from './mind-map-doc.js';
 import { generateMindMap } from './mind-map-doc-api.js';
@@ -246,6 +247,207 @@ async function maybePlayIdentityChime() {
   playIdentityChord();
 }
 
+/* ---------- Feature Grid Tile Art & Chooser (§3.5) ---------- */
+function getTileSvg(tileKey) {
+  if (tileKey === 'map') {
+    return `
+      <svg viewBox="0 0 100 54" width="100%" height="54" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="mapShoreGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#7EA66C" />
+            <stop offset="100%" stop-color="#4B7443" />
+          </linearGradient>
+          <linearGradient id="mapOchreGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#D89B4E" />
+            <stop offset="100%" stop-color="#BC7E32" />
+          </linearGradient>
+          <linearGradient id="mapSandGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#EDE4D0" />
+            <stop offset="100%" stop-color="#D7C8A9" />
+          </linearGradient>
+        </defs>
+        <path d="M6 46 C30 44 70 48 94 46" stroke="currentColor" stroke-opacity="0.12" stroke-width="1.5" stroke-linecap="round" />
+        <path d="M36 26 C46 22 56 16 68 18" stroke="#8B6F47" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M36 26 C46 22 56 16 68 18" stroke="#C4A265" stroke-width="1" stroke-linecap="round" />
+        <path d="M68 18 C72 26 78 30 82 34" stroke="#8B6F47" stroke-width="2" stroke-linecap="round" />
+        <path d="M68 18 C72 26 78 30 82 34" stroke="#C4A265" stroke-width="0.8" stroke-linecap="round" />
+        <path d="M16 28 C14 20 22 14 30 16 C38 18 42 24 38 34 C34 40 22 42 16 34 Z" fill="url(#mapShoreGrad)" stroke="#3B5C35" stroke-width="1.2" />
+        <path d="M60 18 C58 12 66 8 72 10 C78 12 80 18 76 22 C72 25 62 24 60 18 Z" fill="url(#mapOchreGrad)" stroke="#9A6628" stroke-width="1" />
+        <path d="M78 34 C76 30 82 28 86 30 C89 32 89 36 86 38 C82 39 79 38 78 34 Z" fill="url(#mapSandGrad)" stroke="#B3A280" stroke-width="0.8" />
+        <circle cx="26" cy="24" r="1" fill="#3B5C35" opacity="0.6" />
+        <circle cx="31" cy="28" r="1.2" fill="#3B5C35" opacity="0.6" />
+        <circle cx="68" cy="14" r="0.9" fill="#9A6628" opacity="0.6" />
+      </svg>
+    `;
+  }
+  if (tileKey === 'mind-map') {
+    return `
+      <svg viewBox="0 0 100 54" width="100%" height="54" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <radialGradient id="mmNodeMoss" cx="40%" cy="40%" r="60%">
+            <stop offset="0%" stop-color="#7EA66C" />
+            <stop offset="60%" stop-color="#4B7443" />
+            <stop offset="100%" stop-color="#3B5C35" />
+          </radialGradient>
+          <radialGradient id="mmNodeOchre" cx="40%" cy="40%" r="60%">
+            <stop offset="0%" stop-color="#E4A95B" />
+            <stop offset="60%" stop-color="#BC7E32" />
+            <stop offset="100%" stop-color="#9A6628" />
+          </radialGradient>
+          <radialGradient id="mmNodeSand" cx="40%" cy="40%" r="60%">
+            <stop offset="0%" stop-color="#F2EBDA" />
+            <stop offset="60%" stop-color="#D7C8A9" />
+            <stop offset="100%" stop-color="#B3A280" />
+          </radialGradient>
+        </defs>
+        <path d="M26 28 C38 18 52 14 66 18" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M26 28 C40 38 60 42 76 36" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M66 18 C72 24 74 28 76 36" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" stroke-linecap="round" />
+        <path d="M16 28 C15 20 22 17 28 20 C34 22 36 28 33 34 C30 38 19 39 16 28 Z" fill="url(#mmNodeMoss)" stroke="#3B5C35" stroke-width="1.2" />
+        <path d="M58 18 C56 12 64 9 70 12 C75 14 76 20 73 24 C69 27 60 25 58 18 Z" fill="url(#mmNodeOchre)" stroke="#9A6628" stroke-width="1" />
+        <path d="M70 36 C68 31 74 28 79 30 C84 32 85 38 82 41 C78 44 71 42 70 36 Z" fill="url(#mmNodeSand)" stroke="#B3A280" stroke-width="1" />
+      </svg>
+    `;
+  }
+  if (tileKey === 'motion') {
+    return `
+      <svg viewBox="0 0 100 54" width="100%" height="54" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <radialGradient id="motionOrbitGrad" cx="35%" cy="35%" r="65%">
+            <stop offset="0%" stop-color="#E4A95B" />
+            <stop offset="70%" stop-color="#BC7E32" />
+            <stop offset="100%" stop-color="#9A6628" />
+          </radialGradient>
+        </defs>
+        <ellipse cx="50" cy="27" rx="38" ry="17" stroke="currentColor" stroke-opacity="0.18" stroke-width="1.2" stroke-dasharray="4 3" transform="rotate(-12 50 27)" />
+        <path d="M22 38 C34 45 68 44 80 32" stroke="currentColor" stroke-opacity="0.3" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M42 27 C41 19 48 16 54 18 C60 20 62 26 59 32 C56 36 46 37 42 27 Z" fill="url(#motionOrbitGrad)" stroke="#9A6628" stroke-width="1.2" />
+        <polygon points="49,22 55,26 49,30" fill="#FFFFFF" opacity="0.92" />
+        <circle cx="76" cy="18" r="3.2" fill="#4B7443" />
+        <circle cx="26" cy="36" r="2.2" fill="#D7C8A9" />
+      </svg>
+    `;
+  }
+  if (tileKey === 'documents') {
+    return `
+      <svg viewBox="0 0 100 54" width="100%" height="54" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="36" y="10" width="34" height="36" rx="4" fill="#EDE4D0" stroke="#C4A265" stroke-width="1" transform="rotate(6 53 28)" />
+        <rect x="28" y="8" width="34" height="38" rx="4" fill="#F7F3E9" stroke="#B3A280" stroke-width="1.2" />
+        <line x1="34" y1="16" x2="52" y2="16" stroke="#8B6F47" stroke-width="1.5" stroke-linecap="round" opacity="0.75" />
+        <line x1="34" y1="21" x2="56" y2="21" stroke="#8B6F47" stroke-width="1.2" stroke-linecap="round" opacity="0.45" />
+        <line x1="34" y1="26" x2="54" y2="26" stroke="#8B6F47" stroke-width="1.2" stroke-linecap="round" opacity="0.45" />
+        <line x1="34" y1="31" x2="48" y2="31" stroke="#8B6F47" stroke-width="1.2" stroke-linecap="round" opacity="0.45" />
+        <path d="M52 34 C50 31 54 29 57 30 C60 31 61 35 59 38 C56 40 51 39 52 34 Z" fill="#BC7E32" stroke="#9A6628" stroke-width="0.8" />
+        <circle cx="55.5" cy="34" r="1.5" fill="#4B7443" />
+      </svg>
+    `;
+  }
+  return '';
+}
+
+async function openMindMapChooser(decks) {
+  if (!decks || decks.length === 0) {
+    showToast('No active decks yet. Create or import a deck first.');
+    return;
+  }
+  if (decks.length === 1) {
+    // Single active deck fast path per user decision
+    navigate(`/mind-map/${decks[0].id}`);
+    return;
+  }
+
+  let docs = [];
+  try {
+    docs = await getAllDocuments();
+  } catch (e) {
+    docs = [];
+  }
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  document.body.appendChild(backdrop);
+
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet mind-map-chooser-sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', 'Mind Map Chooser');
+
+  function close() {
+    backdrop.remove();
+    sheet.remove();
+  }
+  backdrop.addEventListener('click', close);
+
+  let html = `
+    <div class="sheet-handle"></div>
+    <div style="font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 4px;">
+      Explore Mind Map
+    </div>
+    <div style="font-size: 13px; color: var(--ink-muted); margin-bottom: var(--space-md);">
+      Choose a deck or document to map relationships
+    </div>
+
+    <div style="margin-bottom: var(--space-md);">
+      <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-secondary); margin-bottom: 6px;">
+        🎴 Decks (Card Connections)
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto;">
+  `;
+
+  for (const d of decks) {
+    html += `
+      <button class="chooser-item-btn" data-type="deck" data-id="${escapeHtml(d.id)}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); text-align: left; cursor: pointer; color: var(--ink);">
+        <span style="font-weight: 600; font-size: 14px;">${escapeHtml(d.title)}</span>
+        <span style="font-size: 12px; color: var(--ink-muted);">Cards →</span>
+      </button>
+    `;
+  }
+
+  html += `
+      </div>
+    </div>
+  `;
+
+  if (docs && docs.length > 0) {
+    html += `
+      <div>
+        <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-secondary); margin-bottom: 6px;">
+          📄 Documents (Topic Structure)
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;">
+    `;
+    for (const doc of docs) {
+      html += `
+        <button class="chooser-item-btn" data-type="doc" data-id="${escapeHtml(doc.id)}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); text-align: left; cursor: pointer; color: var(--ink);">
+          <span style="font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;">${escapeHtml(doc.filename || 'Document')}</span>
+          <span style="font-size: 12px; color: var(--ink-muted);">Outline →</span>
+        </button>
+      `;
+    }
+    html += `
+        </div>
+      </div>
+    `;
+  }
+
+  sheet.innerHTML = html;
+  document.body.appendChild(sheet);
+
+  sheet.querySelectorAll('.chooser-item-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.getAttribute('data-type');
+      const id = btn.getAttribute('data-id');
+      close();
+      if (type === 'deck') {
+        navigate(`/mind-map/${id}`);
+      } else {
+        navigate(`/document-mind-map/${id}`);
+      }
+    });
+  });
+}
+
 export async function renderDeckList() {
   root.innerHTML = '';
   root.style.padding = '0';
@@ -326,8 +528,95 @@ export async function renderDeckList() {
     });
   }
 
+  // Feature Grid (§3.5)
+  const grid = document.createElement('div');
+  grid.className = 'feature-grid';
+  grid.setAttribute('role', 'region');
+  grid.setAttribute('aria-label', 'Study exploration features');
+
+  const tiles = [
+    {
+      id: 'map',
+      title: 'Territory Map',
+      desc: 'Explore your knowledge landscape',
+      action: () => navigate('/map')
+    },
+    {
+      id: 'mind-map',
+      title: 'Mind Map',
+      desc: 'Trace connected ideas & relations',
+      action: () => openMindMapChooser(decks)
+    },
+    {
+      id: 'motion',
+      title: 'Motion Studio',
+      desc: 'Watch visual concept explainers',
+      action: () => navigate('/motion')
+    },
+    {
+      id: 'documents',
+      title: 'Documents',
+      desc: 'Extract cards & study texts',
+      action: () => navigate('/documents')
+    }
+  ];
+
+  for (const t of tiles) {
+    const tileBtn = document.createElement('button');
+    tileBtn.type = 'button';
+    tileBtn.className = 'feature-tile';
+    tileBtn.setAttribute('data-tile', t.id);
+    tileBtn.setAttribute('aria-label', `${t.title}: ${t.desc}`);
+    tileBtn.innerHTML = `
+      <div class="feature-tile-art">${getTileSvg(t.id)}</div>
+      <div class="feature-tile-content">
+        <div class="feature-tile-title">${t.title}</div>
+        <div class="feature-tile-desc">${t.desc}</div>
+      </div>
+    `;
+
+    tileBtn.addEventListener('mouseenter', () => playTileHover(t.id));
+    tileBtn.addEventListener('focus', () => playTileHover(t.id));
+    tileBtn.addEventListener('touchstart', () => {
+      tileBtn.classList.add('is-active');
+      playTileHover(t.id);
+    }, { passive: true });
+    tileBtn.addEventListener('touchend', () => tileBtn.classList.remove('is-active'), { passive: true });
+    tileBtn.addEventListener('touchcancel', () => tileBtn.classList.remove('is-active'), { passive: true });
+
+    tileBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      t.action();
+    });
+
+    grid.appendChild(tileBtn);
+  }
+  root.appendChild(grid);
+
+  // Secondary Decks Section Header (§3.5)
+  const sectionHeader = document.createElement('div');
+  sectionHeader.className = 'deck-section-header';
+  sectionHeader.innerHTML = `
+    <div class="deck-section-title">Your Decks <span class="deck-section-count">(${decks.length})</span></div>
+    <div class="deck-section-actions">
+      <button class="view-toggle-btn" id="deckViewToggle" aria-label="Change view layout">
+        ${viewMode === 'grid' ? '⊞ Grid' : viewMode === 'horizontal' ? '↔ Strip' : '☰ List'}
+      </button>
+    </div>
+  `;
+  root.appendChild(sectionHeader);
+
+  sectionHeader.querySelector('#deckViewToggle').addEventListener('click', () => {
+    const modes = ['list', 'grid', 'horizontal'];
+    const current = localStorage.getItem('deckViewMode') || 'list';
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+    localStorage.setItem('deckViewMode', next);
+    renderDeckList();
+  });
+
   const list = document.createElement('div');
   list.className = 'deck-list';
+  root.appendChild(list);
 
   if (decks.length === 0) {
     if (archivedDecks.length > 0) {
@@ -383,8 +672,6 @@ export async function renderDeckList() {
     list.style.gap = 'var(--space-sm)';
     list.style.padding = '0 var(--space-md)';
   }
-
-  root.appendChild(list);
 
   if (archivedDecks.length > 0) {
     const archivedContainer = document.createElement('div');
@@ -3249,12 +3536,18 @@ async function renderCardDetailView(card, deck) {
 async function renderDocuments(deckId) {
   let deck, docs;
   try {
-    deck = await getDeck(deckId);
-    docs = await getDocumentsByDeck(deckId);
+    if (deckId) {
+      deck = await getDeck(deckId);
+      docs = await getDocumentsByDeck(deckId);
+    } else {
+      deck = { title: 'All Documents' };
+      docs = await getAllDocuments();
+    }
   } catch (err) {
     showToast('Failed to load documents.', 5000);
     return goBack();
   }
+  if (!deck) return goBack();
 
   root.innerHTML = '';
   root.style.padding = '0';
@@ -3543,3 +3836,12 @@ initGenerationListeners();
 initSoundSetting();
 handleRoute();
 checkAndShowStudyReminder();
+
+if (typeof window !== 'undefined') {
+  window.__homeDebug = {
+    openMindMapChooser,
+    getTileSvg,
+    renderDeckList
+  };
+}
+

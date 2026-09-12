@@ -2464,3 +2464,150 @@ input, textarea, select {
     transition: none;
   }
 }
+
+/* ---------- Feature Grid (Encarta-Kids Style, §3.5) ---------- */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+  padding: 0 var(--space-md);
+  margin: 0 0 var(--space-lg);
+  max-width: 800px;
+}
+
+@media (min-width: 640px) {
+  .feature-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.feature-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.2s ease,
+              background 0.2s ease;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}
+
+.feature-tile:hover,
+.feature-tile:focus-visible,
+.feature-tile.is-active {
+  transform: translateY(-3px) scale(1.02);
+  border-color: rgba(188, 126, 50, 0.5);
+  box-shadow: 0 8px 24px rgba(188, 126, 50, 0.18), 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .feature-tile:hover,
+[data-theme="dark"] .feature-tile:focus-visible,
+[data-theme="dark"] .feature-tile.is-active {
+  border-color: rgba(74, 160, 90, 0.6);
+  box-shadow: 0 8px 24px rgba(74, 160, 90, 0.25), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.feature-tile-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 54px;
+  width: 100%;
+  margin-bottom: var(--space-xs);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.feature-tile:hover .feature-tile-art,
+.feature-tile:focus-visible .feature-tile-art,
+.feature-tile.is-active .feature-tile-art {
+  transform: scale(1.05);
+}
+
+.feature-tile-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feature-tile-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.feature-tile-desc {
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.35;
+}
+
+/* Secondary Deck Section Header */
+.deck-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-md) var(--space-sm);
+  margin-top: var(--space-sm);
+  max-width: 800px;
+}
+
+.deck-section-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deck-section-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.view-toggle-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.view-toggle-btn:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+  border-color: var(--ink-muted);
+}
+
+/* Mind Map Chooser Items */
+.chooser-item-btn {
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+
+.chooser-item-btn:hover,
+.chooser-item-btn:focus-visible {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04)) !important;
+  border-color: var(--accent) !important;
+  transform: translateX(2px);
+  outline: none;
+}
+
