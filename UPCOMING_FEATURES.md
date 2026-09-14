@@ -907,7 +907,54 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Texture density confirmed scaling with card count (3 cards -> 2 dots; 30 cards -> 18 dots).
   - Light theme environment gradient verified via pixel sampling (sky #D0DEDE -> horizon #E8EDE9).
   - L2 view background verified completely flat (`MAP_BG`) across canvas bounds with no gradient bleed.
-  - Low-zoom LOD simple circle rendering (`drawIslandSimple`) verified unaffected.
+**Motion Studio Polish (UI/UX Architecture Brief §5, Step 7; §3.4)** —
+shipped Build Step 7 from `UI_UX_ARCHITECTURE_BRIEF.md`, completing the §5 build order with
+rich animated loading states, 16:9 explainer preview thumbnails, just-generated item highlighting,
+and an Option C hybrid post-watch call to action.
+- **Richer Animated Loading & Generating State** (`public/motion-studio.js`, `public/styles.css`):
+  Replaced static text with `.ms-generating-widget` containing 3 organic dots styled in the terrain
+  palette (`#D7C8A9` sand, `#BC7E32` ochre, `#4B7443` moss). The dots animate with gentle sinusoidal
+  breathing (`msDotPulse`) and idle vertical sway (`msDotSway`) matching the Territory Map idle motion.
+  Progressive reassurance copy cycles dynamically across phases ("Drafting visual concept & scene layout…",
+  "Synthesizing animations & mathematical curves…", "Polishing timing & harmonic motion cues…", and
+  "Refining visual script with model feedback…" when retrying).
+- **Stronger Post-Generation Moment & 16:9 Canvas Thumbnails** (`public/motion-player.js`, `public/motion-studio.js`):
+  * Exported `renderScriptThumbnail(canvas, script, targetTime)` in `motion-player.js` to draw a crisp,
+    scaled vector frame of any script onto an 88×50px canvas (`.ms-script-thumb`), giving every saved
+    explainer an immediate visual identity instead of a plain text row.
+  * When a script is generated, the item in the saved explainers list is emphasized with `.ms-item-just-generated`
+    (accent border and ambient glow) and an animated, pulsing `"✨ New"` pill badge (`.ms-badge-new`).
+- **"Wanting to Make More" Post-Watch CTA — Option C Hybrid** (`public/motion-player.js`, `public/motion-studio.js`):
+  * Added `onLoopComplete` (and `onEnded`) callbacks to `createPlayer` in `motion-player.js`, triggering when
+    forward playback crosses duration.
+  * In `motion-studio.js`, completing an explainer reveals a warm post-watch card (`.ms-post-watch-card`)
+    directly below the player controls:
+    * Title: *"Watched to the end! ✨"*
+    * Prompt: Warm contextual prompt (*"Explain another part of <Deck Title>?"* when deck-scoped;
+      *"Ready to explore further? Explain another concept or dive deeper."* when global).
+    * Primary CTA: *"Explain another topic"* smoothly scrolls up, clears, and highlights the topic input.
+    * Replay button: *"↺ Replay"* seeks to 0 and restarts playback.
+    * Option C Secondary Affordance: When scoped to a deck, a gentle secondary button
+      (`"💡 Suggest a concept from this deck’s tricky cards"`) inspects the deck's cards on tap,
+      ranks them by lowest stability and highest lapses, and renders 1–2 quick-tap suggestion chips.
+      Tapping a chip pre-fills the topic input and focuses it ready to generate.
+    * Global view (`#/motion` without a deck) strictly preserves the honesty principle: no unsolicited
+      card links or fake suggestions are rendered.
+- **Verified via automated headless Chrome CDP test (`scratch/verify_step7_motion.py`)**:
+  - Header title confirms deck-scoped context (`Motion Studio · Quantum Physics`).
+  - Saved explainers render 16:9 canvas thumbnails with non-empty rendered vector graphics.
+  - Generating widget renders 3 terrain dots with sinusoidal pulse and sway keyframes and progressive copy.
+  - Newly generated script highlights with pulsing "✨ New" badge; older items do not.
+  - Deck-scoped post-watch CTA card renders title, deck prompt, primary button, and secondary suggest button.
+  - Clicking suggest button ranks cards by stability and reveals top weakest concepts as clickable chips.
+  - Clicking a chip pre-fills and focuses topic input.
+  - Global `/motion` post-watch CTA confirmed purely reactive with zero unsolicited suggestion buttons.
+  - Screenshots captured in Light and Dark themes (`motion_generating_state_light.png`,
+    `motion_saved_thumbnails_light.png`, `motion_post_watch_deck_scoped.png`, `motion_post_watch_global.png`,
+    `motion_studio_dark.png`).
+  - Player audio regression suite (`test_motion_player_audio.mjs`) passing: ALL CHECKS PASSED.
+  - Python test suite (`test_*.py`): 64 tests passing, OK.
+
 **Home Restructure & Hover Grid (UI/UX Architecture Brief §5, Step 6; §3.5)** —
 shipped Build Step 6 from `UI_UX_ARCHITECTURE_BRIEF.md`, restructuring the Home screen into an
 exploratory Encarta-Kids-style discovery hub while keeping core study urgency clear.

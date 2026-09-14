@@ -434,8 +434,15 @@ export function createPlayer(canvas, script, opts = {}) {
         if (t > scene.duration) {
           // Fire whatever's left before the end, then wrap (or stop).
           fireCuesUpTo(scene.duration);
+          if (opts.onLoopComplete) {
+            try { opts.onLoopComplete(); } catch (err) { console.error(err); }
+          }
           if (opts.loop === false) {
             t = scene.duration;
+            playing = false;
+            if (opts.onEnded) {
+              try { opts.onEnded(); } catch (err) { console.error(err); }
+            }
           } else {
             t = 0;
             audioCueIdx = 0; // next pass can fire the same cues again
@@ -483,3 +490,47 @@ export function createPlayer(canvas, script, opts = {}) {
     },
   };
 }
+
+/**
+ * Renders a static preview frame of a resolved Motion Studio script onto a target canvas.
+ * Used for compact 16:9 thumbnails in the saved explainers list.
+ */
+export function renderScriptThumbnail(canvas, script, targetTime = null) {
+  if (!canvas || !script || !script.scene) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const scene = script.scene;
+  const layers = script.layers || [];
+  const camera = script.camera;
+  canvas.width = scene.width || 800;
+  canvas.height = scene.height || 450;
+
+  const duration = typeof scene.duration === 'number' && scene.duration > 0 ? scene.duration : 4;
+  const t = targetTime != null
+    ? targetTime
+    : Math.min(duration, Math.max(0.5, duration * 0.3));
+
+  ctx.fillStyle = scene.background || '#161616';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+
+  let cx = (scene.width || 800) / 2, cy = (scene.height || 450) / 2, zoom = 1, rotDeg = 0;
+  if (camera) {
+    cx = valueAt(camera, 'x', t);
+    cy = valueAt(camera, 'y', t);
+    zoom = valueAt(camera, 'zoom', t) || 1;
+    rotDeg = valueAt(camera, 'rotation', t) || 0;
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((rotDeg * Math.PI) / 180);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-cx, -cy);
+  }
+
+  const roots = rootLayers(layers);
+  const dummyOverlay = { place() {}, hide() {} };
+  for (const l of roots) {
+    drawLayer(ctx, layers, l, t, 1, 0, dummyOverlay);
+  }
+  ctx.restore();
+}
+

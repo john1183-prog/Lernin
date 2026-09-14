@@ -19,10 +19,10 @@
    ever put in the hash -- sessionStorage sidesteps both problems for what
    is genuinely a one-time handoff between two views. */
 
-import { createPlayer } from './motion-player.js';
+import { createPlayer, renderScriptThumbnail } from './motion-player.js';
 import { generateMotion } from './motion-api.js';
 import { renderMotionManualImport } from './motion-manual-import.js';
-import { getApiConfig, getMotionScripts, getMotionScript, getDeck } from './db.js';
+import { getApiConfig, getMotionScripts, getMotionScript, getDeck, getCardsByDeck } from './db.js';
 import { playMotionCue } from './sound.js';
 
 export const MOTION_PREFILL_KEY = 'lernin:motionStudioPrefillTopic';
@@ -55,7 +55,7 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
       <div class="app-header-title">Motion Studio${deck ? ` · ${escapeHtmlLocal(deck.title)}` : ''}</div>
       <div style="width:48px;"></div>
     </div>
-    <div class="ms-body" style="padding: var(--space-md);">
+    <div class="ms-body" style="padding: var(--space-md); max-width: 640px; margin: 0 auto;">
       <div class="ms-row" style="display:flex; gap:var(--space-sm); align-items:flex-start; margin-bottom:var(--space-md);">
         <input class="ms-topic-input" id="msTopicInput" type="text" placeholder="e.g. how a capacitor charges"
                style="flex:1; padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--ink-secondary); font-size:15px; background:var(--surface); color:var(--ink);" />
@@ -72,6 +72,8 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
         <input type="range" id="msSeekSlider" min="0" max="100" value="0" style="flex:1;" />
         <span id="msTimeLabel" style="font-size:12px; color:var(--ink-muted); white-space:nowrap;">0.0s</span>
       </div>
+
+      <div id="msPostWatchArea"></div>
 
       <div class="ms-scripts" style="margin-top:var(--space-lg);">
         <div class="ms-scripts-title" style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:8px;">Saved explainers${deck ? ` for ${escapeHtmlLocal(deck.title)}` : ''}</div>
@@ -97,16 +99,195 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
   const topicInput = wrap.querySelector('#msTopicInput');
   const generateBtn = wrap.querySelector('#msGenerateBtn');
   const scriptList = wrap.querySelector('#msScriptList');
+  const postWatchArea = wrap.querySelector('#msPostWatchArea');
 
   let player = null;
   let seekRaf = null;
+  let generatingTimer = null;
+  let hasShownPostWatchForCurrent = false;
+
+  function setGenerating(isGen, retryOfError = null) {
+    if (generatingTimer) {
+      clearInterval(generatingTimer);
+      generatingTimer = null;
+    }
+
+    if (!isGen) {
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate';
+      const widget = statusArea.querySelector('.ms-generating-widget');
+      if (widget) widget.remove();
+      return;
+    }
+
+    generateBtn.disabled = true;
+    generateBtn.textContent = retryOfError ? 'Retrying…' : 'Generating…';
+
+    const phrases = retryOfError
+      ? [
+          'Refining visual script with model feedback…',
+          'Recalibrating motion parameters & formulas…',
+          'Verifying layout & timings…'
+        ]
+      : [
+          'Drafting visual concept & scene layout…',
+          'Synthesizing animations & mathematical curves…',
+          'Polishing timing & harmonic motion cues…'
+        ];
+
+    let phraseIdx = 0;
+    statusArea.innerHTML = `
+      <div class="ms-generating-widget">
+        <div class="ms-generating-dots" aria-hidden="true">
+          <span class="ms-dot ms-dot-1"></span>
+          <span class="ms-dot ms-dot-2"></span>
+          <span class="ms-dot ms-dot-3"></span>
+        </div>
+        <div class="ms-generating-text">${escapeHtmlLocal(phrases[0])}</div>
+      </div>
+    `;
+
+    const textEl = statusArea.querySelector('.ms-generating-text');
+    const startTime = Date.now();
+    generatingTimer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      let nextIdx = 0;
+      if (elapsed >= 8000) nextIdx = 2;
+      else if (elapsed >= 4000) nextIdx = 1;
+      if (nextIdx !== phraseIdx && textEl) {
+        phraseIdx = nextIdx;
+        textEl.style.opacity = '0';
+        setTimeout(() => {
+          if (textEl) {
+            textEl.textContent = phrases[phraseIdx];
+            textEl.style.opacity = '1';
+          }
+        }, 150);
+      }
+    }, 1000);
+  }
 
   function setStatus(text, isError = false) {
+    if (generatingTimer) {
+      clearInterval(generatingTimer);
+      generatingTimer = null;
+    }
+    statusArea.innerHTML = '';
     statusArea.textContent = text || '';
     statusArea.style.color = isError ? 'var(--danger)' : 'var(--ink-muted)';
   }
 
-  async function playScript(script) {
+  async function showPostWatchCard(watchedTopic = '') {
+    postWatchArea.innerHTML = '';
+
+    const card = document.createElement('div');
+    card.className = 'ms-post-watch-card';
+
+    const isDeckScoped = !!deck && !!deckId;
+    const deckTitle = deck ? deck.title : '';
+
+    card.innerHTML = `
+      <div class="ms-post-watch-title">Watched to the end! ✨</div>
+      <div class="ms-post-watch-prompt">
+        ${isDeckScoped
+          ? `Explain another part of <strong>${escapeHtmlLocal(deckTitle)}</strong>?`
+          : `Ready to explore further? Explain another concept or dive deeper.`}
+      </div>
+      <div class="ms-post-watch-actions">
+        <button class="btn-primary ms-post-watch-cta" id="msPostWatchExplainBtn">Explain another topic</button>
+        ${isDeckScoped ? `<button class="ms-suggest-btn" id="msSuggestBtn">💡 Suggest a concept from this deck’s tricky cards</button>` : ''}
+        <button class="btn-secondary" id="msReplayBtn" style="font-size:12px; padding:6px 10px;">↺ Replay</button>
+      </div>
+      <div class="ms-suggestion-chips" id="msSuggestionChips" style="display:none;"></div>
+    `;
+
+    postWatchArea.appendChild(card);
+
+    // Primary action: focus topic input and scroll up smoothly
+    card.querySelector('#msPostWatchExplainBtn').addEventListener('click', () => {
+      topicInput.value = '';
+      topicInput.focus();
+      topicInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      topicInput.style.borderColor = 'var(--accent)';
+      setTimeout(() => { topicInput.style.borderColor = ''; }, 1200);
+    });
+
+    // Replay button
+    card.querySelector('#msReplayBtn').addEventListener('click', () => {
+      if (player) {
+        player.seek(0);
+        player.play();
+        playPauseBtn.textContent = '⏸️';
+      }
+    });
+
+    // Secondary affordance (Option C): reveal tricky cards suggestions on click
+    if (isDeckScoped) {
+      const suggestBtn = card.querySelector('#msSuggestBtn');
+      const chipsContainer = card.querySelector('#msSuggestionChips');
+
+      suggestBtn.addEventListener('click', async () => {
+        suggestBtn.disabled = true;
+        suggestBtn.textContent = 'Finding tricky concepts…';
+
+        let cards = [];
+        try {
+          cards = await getCardsByDeck(deckId);
+        } catch (e) {
+          cards = [];
+        }
+
+        if (!cards || !cards.length) {
+          chipsContainer.style.display = 'flex';
+          chipsContainer.innerHTML = `<div style="font-size:12px; color:var(--ink-muted); padding:6px 0;">No cards in this deck yet. Type any topic above!</div>`;
+          suggestBtn.style.display = 'none';
+          return;
+        }
+
+        // Sort by weakest/lowest stability first, then lapses descending
+        const sorted = cards.slice().sort((a, b) => {
+          const sa = typeof a.stability === 'number' ? a.stability : 0;
+          const sb = typeof b.stability === 'number' ? b.stability : 0;
+          if (sa !== sb) return sa - sb;
+          return (b.lapses || 0) - (a.lapses || 0);
+        });
+
+        const chosen = sorted.slice(0, 2);
+        chipsContainer.style.display = 'flex';
+        chipsContainer.innerHTML = chosen.map((c) => {
+          const clean = (c.front || '')
+            .replace(/\$\$?[^\$]+\$\$?/g, '')
+            .replace(/[#*`_]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 48);
+          const topicSuggestion = clean || 'Key concept from card';
+          return `
+            <button class="ms-suggestion-chip" data-topic="${escapeHtmlLocal(topicSuggestion)}">
+              <span>💡</span>
+              <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Explain: "${escapeHtmlLocal(topicSuggestion)}"</span>
+              <span style="font-size:11px; opacity:0.6;">Tap to set</span>
+            </button>
+          `;
+        }).join('');
+
+        chipsContainer.querySelectorAll('.ms-suggestion-chip').forEach((chip) => {
+          chip.addEventListener('click', () => {
+            const topic = chip.dataset.topic;
+            topicInput.value = topic;
+            topicInput.focus();
+            topicInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            topicInput.style.borderColor = 'var(--accent)';
+            setTimeout(() => { topicInput.style.borderColor = ''; }, 1200);
+          });
+        });
+
+        suggestBtn.style.display = 'none';
+      });
+    }
+  }
+
+  async function playScript(script, topicName = '') {
     manualImportArea.innerHTML = '';
     if (player) player.destroy();
     await waitForKatex();
@@ -114,11 +295,18 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     stage.style.display = '';
     playerControls.style.display = 'flex';
     stage.style.aspectRatio = `${script.scene.width} / ${script.scene.height}`;
+    hasShownPostWatchForCurrent = false;
 
-    // onAudioCue just delegates to sound.js's named-tone player -- it
-    // already no-ops silently when sound is off (see sound.js), so no
-    // extra gating needed here.
-    player = createPlayer(canvas, script, { onAudioCue: (tone) => playMotionCue(tone) });
+    player = createPlayer(canvas, script, {
+      onAudioCue: (tone) => playMotionCue(tone),
+      onLoopComplete: () => {
+        if (!hasShownPostWatchForCurrent) {
+          hasShownPostWatchForCurrent = true;
+          showPostWatchCard(topicName || script.scene?.name || topicInput.value);
+        }
+      }
+    });
+
     seekSlider.max = String(script.scene.duration);
     seekSlider.value = '0';
     timeLabel.textContent = `0.0s / ${script.scene.duration.toFixed(1)}s`;
@@ -129,6 +317,10 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
       if (player && player.playing) {
         seekSlider.value = String(player.currentTime);
         timeLabel.textContent = `${player.currentTime.toFixed(1)}s / ${script.scene.duration.toFixed(1)}s`;
+        if (!hasShownPostWatchForCurrent && player.currentTime >= script.scene.duration * 0.96) {
+          hasShownPostWatchForCurrent = true;
+          showPostWatchCard(topicName || script.scene?.name || topicInput.value);
+        }
       }
       seekRaf = requestAnimationFrame(tick);
     }
@@ -149,21 +341,54 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     timeLabel.textContent = `${player.currentTime.toFixed(1)}s / ${player.duration.toFixed(1)}s`;
   });
 
-  async function refreshScriptList() {
+  async function refreshScriptList(justGeneratedId = null) {
     const scripts = await getMotionScripts(deckId || null);
     if (!scripts.length) {
       scriptList.innerHTML = '<p style="font-size:13px; color:var(--ink-muted);">Nothing saved yet.</p>';
       return;
     }
-    scriptList.innerHTML = scripts.map((s) => `
-      <div class="ms-script-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border, rgba(0,0,0,0.08)); gap:8px;">
-        <strong style="font-size:14px; color:var(--ink); font-weight:600;">${escapeHtmlLocal(s.topic)}</strong>
-        <button class="btn-secondary" data-play-id="${s.id}" style="flex-shrink:0;">Play</button>
-      </div>`).join('');
+
+    scriptList.innerHTML = scripts.map((s) => {
+      const isNew = justGeneratedId && s.id === justGeneratedId;
+      const duration = s.script?.scene?.duration ? `${s.script.scene.duration.toFixed(1)}s` : '';
+      return `
+        <div class="ms-script-item ${isNew ? 'ms-item-just-generated' : ''}" data-script-id="${s.id}">
+          <div class="ms-script-thumb-wrap">
+            <canvas class="ms-script-thumb" id="thumb-${s.id}" width="160" height="90"></canvas>
+          </div>
+          <div class="ms-script-info">
+            <div class="ms-script-title">
+              <span>${escapeHtmlLocal(s.topic)}</span>
+              ${isNew ? '<span class="ms-badge-new">✨ New</span>' : ''}
+            </div>
+            <div class="ms-script-meta">${duration ? `${duration} explainer` : 'Explainer'}</div>
+          </div>
+          <button class="btn-secondary ms-play-btn" data-play-id="${s.id}" style="flex-shrink:0;">Play</button>
+        </div>
+      `;
+    }).join('');
+
+    // Draw preview thumbnail on each canvas
+    for (const s of scripts) {
+      const canvasEl = scriptList.querySelector(`#thumb-${s.id}`);
+      if (canvasEl && s.script) {
+        try {
+          renderScriptThumbnail(canvasEl, s.script);
+        } catch (err) {
+          console.warn('Failed to render thumbnail for script', s.id, err);
+        }
+      }
+    }
+
     scriptList.querySelectorAll('[data-play-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const rec = await getMotionScript(btn.dataset.playId);
-        if (rec) { topicInput.value = rec.topic; playScript(rec.script); stage.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        if (rec) {
+          topicInput.value = rec.topic;
+          postWatchArea.innerHTML = '';
+          await playScript(rec.script, rec.topic);
+          stage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       });
     });
   }
@@ -175,8 +400,9 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
       async (r) => {
         manualImportArea.innerHTML = '';
         setStatus('');
-        await playScript(r.script);
-        await refreshScriptList();
+        await playScript(r.script, topic);
+        await refreshScriptList(r.id);
+        stage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       },
       () => { manualImportArea.innerHTML = ''; setStatus(''); },
       deckId || null
@@ -188,22 +414,18 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     if (!topic) return;
 
     manualImportArea.innerHTML = '';
-    generateBtn.disabled = true;
-    generateBtn.textContent = retryOfError ? 'Retrying…' : 'Generating…';
-    setStatus(retryOfError ? 'Retrying with the error sent back to the model…' : 'Generating…');
+    postWatchArea.innerHTML = '';
+    setGenerating(true, retryOfError);
 
     const result = await generateMotion(topic, deckId || null, retryOfError);
 
-    generateBtn.disabled = false;
-    generateBtn.textContent = 'Generate';
+    setGenerating(false);
 
     if (result.queued) {
       setStatus('Offline — queued. Will retry automatically once back online.');
       return;
     }
     if (result.retryable && !retryOfError) {
-      // Same convention as the harness this replaces: one confirmed retry,
-      // never automatic — a second generation is a second real cost.
       const wantsRetry = window.confirm(
         `The AI's script didn't come out right:\n\n${result.error}\n\n` +
         `Ask it to try again with that error as feedback? This uses a second generation.`
@@ -219,15 +441,14 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     }
 
     setStatus('');
-    await playScript(result.script);
-    await refreshScriptList();
+    await playScript(result.script, topic);
+    await refreshScriptList(result.id);
+    stage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   generateBtn.addEventListener('click', () => handleGenerate());
   topicInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleGenerate(); });
 
-  // One-shot pre-fill from a mind-map node's "Explain with motion" action —
-  // consumed and cleared immediately so navigating back here later starts blank.
   const prefill = sessionStorage.getItem(MOTION_PREFILL_KEY);
   if (prefill) {
     sessionStorage.removeItem(MOTION_PREFILL_KEY);
@@ -247,8 +468,20 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     topicInput.focus();
   }
 
+  if (typeof window !== 'undefined') {
+    window.__motionDebug = {
+      setGenerating,
+      showPostWatchCard,
+      refreshScriptList,
+      playScript,
+      getPlayer: () => player
+    };
+  }
+
   return function destroy() {
+    if (generatingTimer) clearInterval(generatingTimer);
     if (player) player.destroy();
     cancelAnimationFrame(seekRaf);
   };
 }
+
