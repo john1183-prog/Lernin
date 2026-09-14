@@ -468,29 +468,99 @@ export async function renderDeckList() {
   }
 
   const viewMode = localStorage.getItem('deckViewMode') || 'list';
+  const viewIcon = viewMode === 'grid' ? '⊞' : viewMode === 'horizontal' ? '↔' : '☰';
 
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
     <div class="app-header-title">Lernin</div>
     <div class="app-header-actions">
-      <button class="icon-btn" id="viewToggle" aria-label="Change view">☰</button>
-      <button class="icon-btn" id="importBtn" aria-label="Import deck">📥</button>
-      <button class="icon-btn" id="mapBtn" aria-label="Map view">🗺️</button>
-      <button class="icon-btn" id="helpBtn" aria-label="Help">❓</button>
+      <button class="icon-btn" id="viewToggle" aria-label="Change view">${viewIcon}</button>
       <button class="icon-btn" id="themeToggle" aria-label="Toggle theme">🌓</button>
-      <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
+      <div class="header-overflow-wrap">
+        <button class="icon-btn" id="overflowBtn" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋮</button>
+        <div class="header-overflow-menu" id="headerOverflowMenu" role="menu" hidden>
+          <button class="header-overflow-item" id="overflowImport" role="menuitem">
+            <span class="overflow-item-icon">📥</span>
+            <span>Import deck</span>
+          </button>
+          <button class="header-overflow-item" id="overflowHelp" role="menuitem">
+            <span class="overflow-item-icon">❓</span>
+            <span>Help</span>
+          </button>
+          <button class="header-overflow-item" id="overflowSettings" role="menuitem">
+            <span class="overflow-item-icon">⚙️</span>
+            <span>Settings</span>
+          </button>
+        </div>
+      </div>
     </div>
   `;
   root.appendChild(header);
 
-  header.querySelector('#helpBtn').addEventListener('click', () => navigate('/help'));
   header.querySelector('#themeToggle').addEventListener('click', cycleTheme);
-  header.querySelector('#settingsBtn').addEventListener('click', () => navigate('/settings'));
-  header.querySelector('#importBtn').addEventListener('click', triggerDeckImport);
-  header.querySelector('#mapBtn').addEventListener('click', () => navigate('/map'));
+
+  const overflowBtn = header.querySelector('#overflowBtn');
+  const overflowMenu = header.querySelector('#headerOverflowMenu');
+
+  const closeOverflow = () => {
+    if (overflowMenu && !overflowMenu.hasAttribute('hidden')) {
+      overflowMenu.setAttribute('hidden', '');
+      overflowBtn.setAttribute('aria-expanded', 'false');
+    }
+  };
+
+  overflowBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isClosed = overflowMenu.hasAttribute('hidden');
+    if (isClosed) {
+      overflowMenu.removeAttribute('hidden');
+      overflowBtn.setAttribute('aria-expanded', 'true');
+    } else {
+      closeOverflow();
+    }
+  });
+
+  header.querySelector('#overflowImport').addEventListener('click', () => {
+    closeOverflow();
+    triggerDeckImport();
+  });
+  header.querySelector('#overflowHelp').addEventListener('click', () => {
+    closeOverflow();
+    navigate('/help');
+  });
+  header.querySelector('#overflowSettings').addEventListener('click', () => {
+    closeOverflow();
+    navigate('/settings');
+  });
+
+  const onDocClick = (e) => {
+    if (!header.isConnected) {
+      document.removeEventListener('pointerdown', onDocClick);
+      document.removeEventListener('keydown', onDocKeydown);
+      return;
+    }
+    if (!header.contains(e.target)) {
+      closeOverflow();
+    }
+  };
+  const onDocKeydown = (e) => {
+    if (!header.isConnected) {
+      document.removeEventListener('pointerdown', onDocClick);
+      document.removeEventListener('keydown', onDocKeydown);
+      return;
+    }
+    if (e.key === 'Escape' && !overflowMenu.hasAttribute('hidden')) {
+      closeOverflow();
+      overflowBtn.focus();
+    }
+  };
+  document.addEventListener('pointerdown', onDocClick);
+  document.addEventListener('keydown', onDocKeydown);
 
   header.querySelector('#viewToggle').addEventListener('click', () => {
+    document.removeEventListener('pointerdown', onDocClick);
+    document.removeEventListener('keydown', onDocKeydown);
     const modes = ['list', 'grid', 'horizontal'];
     const current = localStorage.getItem('deckViewMode') || 'list';
     const next = modes[(modes.indexOf(current) + 1) % modes.length];
@@ -761,13 +831,13 @@ async function buildDeckTile(deck) {
   tile.innerHTML = `
     <div class="deck-tile-header">
       <div class="deck-tile-title">${escapeHtml(deck.title)}</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        ${deck.archived ? `<span class="deck-tile-badge is-archived-badge">📦 Archived</span>` : (due > 0 ? `<span class="deck-tile-badge">${due} due</span>` : '')}
-        <button class="deck-menu-btn" aria-label="Open actions">⋮</button>
-      </div>
+      <button class="deck-menu-btn" aria-label="Open actions">⋮</button>
     </div>
-    <div class="deck-tile-bar">
-      <div class="deck-tile-bar-fill" style="width:${masteryPct}%"></div>
+    <div class="deck-tile-metrics">
+      <div class="deck-tile-bar" role="progressbar" aria-valuenow="${masteryPct}" aria-valuemin="0" aria-valuemax="100" aria-label="Mastery: ${masteryPct}%">
+        <div class="deck-tile-bar-fill" style="width:${masteryPct}%"></div>
+      </div>
+      ${deck.archived ? `<span class="deck-tile-badge is-archived-badge">📦 Archived</span>` : (due > 0 ? `<span class="deck-tile-badge">${due} due</span>` : '')}
     </div>
   `;
 

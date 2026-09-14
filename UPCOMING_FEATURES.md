@@ -906,7 +906,39 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Silhouette determinism and pixel stability verified across browser reload (exact match on all coordinates).
   - Texture density confirmed scaling with card count (3 cards -> 2 dots; 30 cards -> 18 dots).
   - Light theme environment gradient verified via pixel sampling (sky #D0DEDE -> horizon #E8EDE9).
-  - L2 view background verified completely flat (`MAP_BG`) across canvas bounds with no gradient bleed.
+**Home Screen Residual Polish (Dark Hero Contrast, Deck Progress Meter & Header Consolidation)** —
+shipped residual Home-screen polish fixes following the UI/UX architecture build order:
+- **Dark-Mode Hero Contrast** (`public/styles.css`):
+  * Replaced low-contrast light-sage gradient in dark theme with a deep, saturated pine / forest green
+    gradient (`linear-gradient(135deg, #14351C 0%, #0D2313 100%)`) with a subtle green border
+    (`rgba(102, 187, 106, 0.28)`) and elevated shadow.
+  * Title text rendered in crisp pure white (`#FFFFFF`, ~12.2:1 contrast), subtitle in soft sage
+    (`#A3C4A8`, ~7.5:1 contrast), and CTA button in vibrant mint (`#66BB6A` with `#08160B` dark text,
+    ~10.4:1 contrast). Light theme remains untouched with deep forest green gradient and white text.
+- **Deck Progress Meter Trough & Alignment** (`public/app.js`, `public/styles.css`):
+  * Replaced the thin 4px hairline under the header with a dedicated metric row (`.deck-tile-metrics`).
+  * Progress bar (`.deck-tile-bar`) given a 6px height with fully rounded pill ends (`border-radius: 999px`)
+    and a clear muted trough background (`rgba(0, 0, 0, 0.08)` in light theme, `rgba(255, 255, 255, 0.12)`
+    in dark theme) so low progress never reads as an accidental border.
+  * Aligned the progress meter and "N due" badge together on the metric row, keeping the header clean
+    with only the deck title and action menu button (`⋮`).
+- **Header Icon Consolidation & Overflow Menu** (`public/app.js`, `public/styles.css`):
+  * Reduced top header buttons from 6 to 3 directly visible controls: view-mode toggle (`viewToggle`),
+    theme toggle (`themeToggle`), and overflow menu button (`overflowBtn`, `⋮`).
+  * Retired the redundant map icon from the top bar so the Territory Map feature tile in the grid
+    remains the primary entry point.
+  * Added an accessible anchored overflow dropdown menu (`.header-overflow-menu`) housing Import (`📥`),
+    Help (`❓`), and Settings (`⚙️`), complete with click-away dismiss, Escape key dismiss, and aria-expanded state.
+- **Verified via automated headless Chrome CDP test**:
+  - Dark mode hero contrast verified: pine background, white title, sage subtitle, high-contrast CTA button.
+  - Light mode hero verified: deep forest green, white text.
+  - Deck progress meter verified: 6px height, rounded ends, subtle background trough, badge aligned on metric row.
+  - Header actions verified: exactly 3 visible icon buttons; map icon absent; Territory Map tile present in grid.
+  - Overflow menu verified: opens on click, closes on Escape, closes on click-away, navigates to Help and Settings.
+  - Real screenshots captured: `home_polish_light.png`, `home_polish_dark.png`, `home_overflow_open.png`.
+  - Audio regression suite (`node public/test_motion_player_audio.mjs`): ALL CHECKS PASSED.
+  - Python backend unit test suite (`python -m unittest discover -s api -p "test_*.py"`): 64 tests passing, OK.
+
 **Motion Studio Polish (UI/UX Architecture Brief §5, Step 7; §3.4)** —
 shipped Build Step 7 from `UI_UX_ARCHITECTURE_BRIEF.md`, completing the §5 build order with
 rich animated loading states, 16:9 explainer preview thumbnails, just-generated item highlighting,
