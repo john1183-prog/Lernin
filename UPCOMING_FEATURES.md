@@ -905,7 +905,36 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
   - Dark theme environment gradient verified via pixel sampling (sky #0A0D10 -> horizon #1E2830).
   - Silhouette determinism and pixel stability verified across browser reload (exact match on all coordinates).
   - Texture density confirmed scaling with card count (3 cards -> 2 dots; 30 cards -> 18 dots).
-  - Light theme environment gradient verified via pixel sampling (sky #D0DEDE -> horizon #E8EDE9).
+**Streak Display Bug Fix & Streak Freeze Wiring (`useStreakFreeze`)** —
+fixed the streak display calculation on Home and wired up the streak freeze system:
+- **Streak Display Fix** (`public/app.js`):
+  * Fixed `stats.currentStreak` (undefined) → `stats.streakDays` in the Home render path so streaks
+    accurately reflect consecutive review days (previously was always `0-day streak`).
+  * Fixed `stats.totalReviews` (undefined on `getReviewStats()`) → `stats.weekTotal` so the Home stats
+    strip remains visible on zero-due days when a streak > 0 is active (previously disappeared completely
+    when all cards were finished).
+- **Streak Freeze Wiring** (`public/app.js`, `public/db.js`, `public/styles.css`):
+  * Surfaced `freezesAvailable` on the Home stats strip with an interactive pill button (`.stat-freeze-btn`,
+    `#homeFreezeBtn`) when freezes > 0.
+  * Surfaced `Streak freezes` (X / 3) in the `/stats` metrics grid (completing the grid to 6 balanced cards)
+    and added a dedicated "Streak Protection" card with a "Protect today" action button.
+  * In `public/db.js`, enhanced `useStreakFreeze()` to guard against spending a freeze if today is already
+    reviewed or frozen, returning `false` (no freeze wasted).
+  * Wired warm, supportive toast messaging matching the "not shame" voice:
+    - Success: *"Streak protected for today 🧊 Take the rest you need — your momentum is safe."*
+    - Already covered: *"Today is already protected! Save your freeze for when you need a rest day."*
+    - Zero available: *"No streak freezes left right now — you earn a new freeze every 7 streak days."*
+  * Refreshes stats strip immediately upon spending, decrements count, and persists across page reload.
+- **Verified via automated headless Chrome CDP test**:
+  - Non-zero streak (`🔥 4-day streak`) correctly rendered in hero banner and stats strip.
+  - Zero-due day with active streak confirmed to keep stats strip visible.
+  - Spending freeze decrements `freezesAvailable` (2 → 1) and marks today as protected.
+  - Reload persistence verified: 1 freeze remains available, streak includes frozen day (5 days).
+  - Double-spend guard verified: attempting a second freeze on the same day returns false with supportive toast.
+  - `/stats` view verified displaying `1 / 3 Streak freezes` and Streak Protection card.
+  - Screenshots captured: `streak_home_with_due.png`, `streak_home_zero_due.png`, `stats_view_streak_freeze.png`.
+  - Audio tests (`test_motion_player_audio.mjs`) & backend tests (`test_*.py`): ALL CHECKS PASSED, OK.
+
 **Home Screen Residual Polish (Dark Hero Contrast, Deck Progress Meter & Header Consolidation)** —
 shipped residual Home-screen polish fixes following the UI/UX architecture build order:
 - **Dark-Mode Hero Contrast** (`public/styles.css`):

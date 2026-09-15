@@ -864,6 +864,8 @@ export async function getDashboardStats(now) {
     }
   }
 
+  const freezeState = await getStreakFreezeState();
+
   return {
     retention30d,
     dailyCounts30d,
@@ -871,7 +873,8 @@ export async function getDashboardStats(now) {
     totalReviewsLifetime,
     totalCardsStudied,
     leechCount,
-    perDeck
+    perDeck,
+    freezesAvailable: freezeState.freezesAvailable
   };
 }
 
@@ -909,8 +912,17 @@ async function saveStreakFreezeState(state) {
  */
 export async function useStreakFreeze() {
   const state = await getStreakFreezeState();
-  const todayKey = localDayKey(Date.now());
+  const nowMs = Date.now();
+  const todayKey = localDayKey(nowMs);
   if (state.freezesAvailable <= 0 || state.frozenDayKeys.includes(todayKey)) return false;
+
+  const db = await getDB();
+  const todayStart = startOfLocalDay(nowMs);
+  const entriesToday = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(todayStart));
+  if (entriesToday.some((e) => localDayKey(e.reviewedAt) === todayKey)) {
+    return false;
+  }
+
   await saveStreakFreezeState({
     ...state,
     freezesAvailable: state.freezesAvailable - 1,

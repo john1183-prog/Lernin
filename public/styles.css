@@ -442,6 +442,38 @@ body {
   text-decoration: underline;
 }
 
+.stat-freeze-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(46, 125, 50, 0.2);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s, border-color 0.15s;
+}
+
+[data-theme="dark"] .stat-freeze-btn {
+  border-color: rgba(102, 187, 106, 0.3);
+}
+
+.stat-freeze-btn:hover {
+  background: rgba(46, 125, 50, 0.15);
+}
+
+[data-theme="dark"] .stat-freeze-btn:hover {
+  background: rgba(102, 187, 106, 0.2);
+}
+
+.stat-freeze-btn:active {
+  transform: scale(0.96);
+}
+
 /* ---------- Deck Tiles ---------- */
 .deck-list {
   padding: 0 var(--space-md);

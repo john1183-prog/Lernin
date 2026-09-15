@@ -2,7 +2,7 @@
    Home screen, bottom sheet, theme, view routing */
 
 import {
-  getDecks, getCardsDueTodayOrEarlier, getReviewStats,
+  getDecks, getCardsDueTodayOrEarlier, getReviewStats, useStreakFreeze,
   getTheme, saveTheme, addDeck, getCardsByDeck,
   getRelationshipsFrom, getRelationshipsTo, addRelationship,
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
@@ -448,6 +448,25 @@ async function openMindMapChooser(decks) {
   });
 }
 
+async function handleUseStreakFreeze(onSuccess) {
+  const stats = await getReviewStats();
+  if (stats.freezesAvailable <= 0) {
+    showToast("No streak freezes left right now — you earn a new freeze every 7 streak days.", 3600);
+    return;
+  }
+  if (stats.studiedToday) {
+    showToast("Today is already protected! Save your freeze for when you need a rest day.", 3600);
+    return;
+  }
+  const ok = await useStreakFreeze();
+  if (ok) {
+    showToast("Streak protected for today 🧊 Take the rest you need — your momentum is safe.", 3600);
+    if (onSuccess) await onSuccess();
+  } else {
+    showToast("Today is already protected! Save your freeze for when you need a rest day.", 3600);
+  }
+}
+
 export async function renderDeckList() {
   root.innerHTML = '';
   root.style.padding = '0';
@@ -569,7 +588,8 @@ export async function renderDeckList() {
   });
 
   const dueToday = dueCards.length;
-  const streak = stats.currentStreak || 0;
+  const streak = stats.streakDays || 0;
+  const freezes = stats.freezesAvailable || 0;
 
   if (dueToday > 0) {
     const hero = document.createElement('div');
@@ -583,12 +603,13 @@ export async function renderDeckList() {
     hero.querySelector('#heroStudy').addEventListener('click', () => navigate('/study/all'));
   }
 
-  if (dueToday > 0 || streak > 0 || stats.totalReviews > 0) {
+  if (dueToday > 0 || streak > 0 || (stats.weekTotal || 0) > 0) {
     const strip = document.createElement('div');
     strip.className = 'stats-strip';
     strip.innerHTML = `
       <div class="stat-item"><span class="stat-value">🔥${streak}</span>day streak</div>
       <div class="stat-item"><span class="stat-value">📚${dueToday}</span>due</div>
+      ${freezes > 0 ? `<button class="stat-freeze-btn" id="homeFreezeBtn" title="Use a streak freeze to protect today"><span class="stat-value">🧊${freezes}</span> freeze${freezes !== 1 ? 's' : ''}</button>` : ''}
       <a href="#" class="stat-link" id="viewStats">View full statistics →</a>
     `;
     root.appendChild(strip);
@@ -596,6 +617,10 @@ export async function renderDeckList() {
       e.preventDefault();
       navigate('/stats');
     });
+    const freezeBtn = strip.querySelector('#homeFreezeBtn');
+    if (freezeBtn) {
+      freezeBtn.addEventListener('click', () => handleUseStreakFreeze(renderDeckList));
+    }
   }
 
   // Feature Grid (§3.5)
@@ -2249,7 +2274,8 @@ async function renderStats() {
     { label: 'Longest streak', value: `${stats.longestStreak365d}d` },
     { label: 'Total reviews', value: (stats.totalReviewsLifetime || 0).toLocaleString() },
     { label: 'Cards studied', value: (stats.totalCardsStudied || 0).toLocaleString() },
-    { label: 'Leeches', value: (stats.leechCount || 0).toLocaleString() }
+    { label: 'Leeches', value: (stats.leechCount || 0).toLocaleString() },
+    { label: 'Streak freezes', value: `${stats.freezesAvailable || 0} / 3` }
   ];
 
   for (const m of metrics) {
@@ -2262,6 +2288,21 @@ async function renderStats() {
     metricsGrid.appendChild(card);
   }
   wrap.appendChild(metricsGrid);
+
+  const freezeCard = document.createElement('div');
+  freezeCard.className = 'stats-freeze-card';
+  freezeCard.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:var(--space-md); margin:0 var(--space-md) var(--space-md); box-shadow:var(--shadow-sm); display:flex; align-items:center; justify-content:space-between; gap:var(--space-md);';
+  freezeCard.innerHTML = `
+    <div>
+      <div style="font-weight:600; font-size:15px; color:var(--ink);">Streak Protection</div>
+      <div style="font-size:13px; color:var(--ink-muted); margin-top:2px;">${stats.freezesAvailable || 0} of 3 freezes available · Auto-earned every 7-day milestone</div>
+    </div>
+    <button class="btn-secondary" id="statsFreezeBtn" style="padding:8px 14px; font-size:13px; white-space:nowrap;" ${(stats.freezesAvailable || 0) <= 0 ? 'disabled' : ''}>
+      🧊 Protect today
+    </button>
+  `;
+  wrap.appendChild(freezeCard);
+  freezeCard.querySelector('#statsFreezeBtn').addEventListener('click', () => handleUseStreakFreeze(renderStats));
 
   const chartHeading = document.createElement('h3');
   chartHeading.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); padding:0 var(--space-md); margin:var(--space-md) 0 8px;';
