@@ -121,8 +121,10 @@ Confirmed shape: **due-cards hero stays exactly where it is, unchanged, at the t
   7. Motion Studio polish (§3.4).
 - **Verification standard, matching this project's established practice:** anything rendered gets a real Playwright screenshot at multiple states, not just a code read. Anything with a seeded/procedural element gets checked for stability (same island, reloaded, must look the same — verify the seed actually produces deterministic output, don't assume). Anything touching `canvas.js`'s existing physics/render loop gets checked against a realistic-scale deck (the existing card mind map had a real, previously-invisible physics bug that only appeared at ~97 nodes — don't assume a small test case is representative).
 
-## 6. Open questions, not decided here — resolve before or during build, don't guess
+## 6. Resolved questions (finalized during build)
 
-- Exact feature-grid tile set (§3.5) — listed candidates above, not finalized.
-- Whether "Mind Map" on Home routes to the card-based or document-based version, or is itself a small chooser.
-- Whether Motion Studio's "make more" prompt should ever proactively suggest a topic (e.g., from a deck's weakest cards) or stay purely reactive to what the person just watched.
+All three open questions were decided and shipped during the Step 1–7 build:
+
+- **Feature-grid tile set (§3.5)** → Finalized at exactly 4 tiles: Territory Map, Mind Map, Motion Studio, Documents. Study and Stats were deliberately excluded (the hero banner and stats-strip already own them). Shipped in `41f03f6`.
+- **Mind Map routing on Home (§3.5)** → Resolved as a chooser bottom sheet (deck cards vs. document outline) when multiple active decks/documents exist; a single-active-deck fast path bypasses the chooser entirely to jump straight into that deck's card mind map. Shipped in `41f03f6`.
+- **Motion Studio proactive suggestions (§3.4)** → Resolved as a hybrid (Option C): the deck-scoped entry point gets an opt-in "💡 Suggest a concept from this deck’s tricky cards" button that reveals 1–2 weakest-card topic chips on click; the global `/motion` entry stays purely reactive with zero unsolicited suggestions to preserve honesty across surfaces. Shipped in `acd7165`.
