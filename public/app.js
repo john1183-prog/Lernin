@@ -2344,9 +2344,12 @@ async function renderStats() {
     deckList.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:8px;';
     for (const d of stats.perDeck) {
       const row = document.createElement('div');
-      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:12px 14px; box-shadow:var(--shadow-sm);';
+      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:12px 14px; box-shadow:var(--shadow-sm);' + (d.archived ? ' opacity:0.82; border:1px dashed var(--border);' : '');
       row.innerHTML = `
-        <div style="font-weight:600; color:var(--ink); margin-bottom:2px;">${escapeHtml(d.title)}</div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:2px;">
+          <span style="font-weight:600; color:var(--ink);">${escapeHtml(d.title)}</span>
+          ${d.archived ? '<span class="deck-tile-badge is-archived-badge" style="font-size:11px; padding:2px 8px; font-weight:600;">📦 Archived</span>' : ''}
+        </div>
         <div style="font-size:13px; color:var(--ink-muted);">${d.total} card${d.total === 1 ? '' : 's'} · ${d.mastered} mastered · ${d.dueToday} due today</div>
       `;
       deckList.appendChild(row);

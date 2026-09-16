@@ -904,7 +904,21 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
 - **Verified via automated headless Chrome CDP test**:
   - Dark theme environment gradient verified via pixel sampling (sky #0A0D10 -> horizon #1E2830).
   - Silhouette determinism and pixel stability verified across browser reload (exact match on all coordinates).
-  - Texture density confirmed scaling with card count (3 cards -> 2 dots; 30 cards -> 18 dots).
+**Archived Deck Differentiation in Statistics (`getDashboardStats`)** —
+distinguished archived decks from active decks in `/stats` while preserving lifetime aggregate statistics:
+- **Database Model** (`public/db.js`):
+  * Updated `getDashboardStats()` to include `archived: !!deck.archived` on each `perDeck` entry.
+  * Lifetime totals (`totalReviewsLifetime`, `totalCardsStudied`, `leechCount`) continue to include archived decks to preserve full historical study records.
+- **User Interface** (`public/app.js`):
+  * In `renderStats()`, archived decks in the "By deck" breakdown now render with an explicit `📦 Archived` badge (`.deck-tile-badge.is-archived-badge`).
+  * Archived deck rows are visually distinguished with dashed border and subtle muted opacity (`opacity: 0.82; border: 1px dashed var(--border);`), making them immediately identifiable from active study decks.
+- **Verified via automated headless Chrome CDP test**:
+  * Seeded active and archived test decks into IndexedDB.
+  * Verified `getDashboardStats()` returns `archived: false` for active decks and `archived: true` for archived decks.
+  * Verified `/stats` renders both decks, with the active deck displayed cleanly and the archived deck clearly badged with `📦 Archived`.
+  * Screenshots captured in both Light and Dark themes (`stats_archived_deck_light.png`, `stats_archived_deck_dark.png`).
+  * Audio test suite and Python backend test suite passed with 100% success.
+
 **Streak Display Bug Fix & Streak Freeze Wiring (`useStreakFreeze`)** —
 fixed the streak display calculation on Home and wired up the streak freeze system:
 - **Streak Display Fix** (`public/app.js`):

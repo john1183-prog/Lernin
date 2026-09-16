@@ -822,7 +822,7 @@ export async function getDashboardStats(now) {
   const perDeck = await Promise.all(decks.map(async (deck) => {
     const counts = await getDeckStateCounts(deck.id);
     const due = await getCardsDueTodayOrEarlier({ deckId: deck.id, now: nowMs });
-    return { deckId: deck.id, title: deck.title, ...counts, dueToday: due.length };
+    return { deckId: deck.id, title: deck.title, archived: !!deck.archived, ...counts, dueToday: due.length };
   }));
 
   const totalCardsStudied = allCards.filter((c) => (c.reps || 0) > 0).length;
