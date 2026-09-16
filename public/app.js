@@ -1763,10 +1763,10 @@ function renderHelp() {
       body: `
         <p>Home lists your decks with due counts and mastery. Long-press (or use the sheet) a deck for actions.</p>
         <ul>
-          <li><strong>Study</strong> — classic queue of due cards for that deck (or study everything due from the global flow).</li>
-          <li><strong>Map (🗺️)</strong> in the header — territory view of all decks as islands.</li>
-          <li><strong>Import (📥)</strong> — load a previously exported deck backup.</li>
-          <li><strong>Stats / Settings / Help</strong> — top icons. Settings is where you pick AI mode and theme.</li>
+          <li><strong>Study</strong> — classic queue of due cards for that deck (or study everything due from the global hero banner).</li>
+          <li><strong>Territory Map (🗺️)</strong> — explore all your decks as spatial islands from the feature grid below your decks.</li>
+          <li><strong>Header controls</strong> — theme and view toggles stay front and center in the top bar.</li>
+          <li><strong>More options (⋮)</strong> — tap the header overflow menu for Import (📥) to restore a deck backup, Settings (⚙️) to configure AI and preferences, and Help (❓).</li>
         </ul>
         <p><em>What actually helps:</em> keep decks small and thematic — one course unit per deck. A giant mixed deck just makes the Memory Palace messy.</p>
       `
