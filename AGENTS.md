@@ -1,4 +1,4 @@
-﻿# Lernin Development Rules & Architectural Invariants
+# Lernin Development Rules & Architectural Invariants
 
 Universal guidelines, constraints, and operational standards for agents working in the Lernin codebase.
 
@@ -6,6 +6,7 @@ Universal guidelines, constraints, and operational standards for agents working 
 - **Zero-Dependency Vanilla JS**: The app runs directly from `/public` as an offline-first PWA with no bundler, no framework, and no build step. Never introduce npm build dependencies, external raster assets, or remote font/audio libraries.
 - **2D Canvas & Procedural SVG Only**: All visual surfaces (Territory Map, Mind Maps, Feature Grid) use Canvas 2D and inline programmatic SVGs. No 3D WebGL or heavy external graphic runtimes.
 - **Synthesis-Only Audio**: Sound effects must use Web Audio API oscillators directly in `sound.js`. Never introduce audio sound files (`.mp3`, `.wav`, `.ogg`). All audio cues must respect user sound settings and be properly throttled/debounced.
+- **Module Dependency Hierarchy**: `app.js` acts as the top-level SPA router and coordinator that imports subordinate modules (`canvas.js`, `db.js`, `study.js`, `sound.js`). `canvas.js` must remain strictly self-contained and never import from `app.js` to prevent circular dependencies; visual feedback (such as toasts or text prompts) on the canvas must use self-contained helpers that operate directly on standard DOM containers (`.toast-container`) or render self-contained overlay dialogs.
 
 ## 2. Visual Language & Domain Semantics
 - **Size**: Tracks card count (for deck islands) or stability/retrieval strength (for card nodes).
@@ -31,7 +32,9 @@ Universal guidelines, constraints, and operational standards for agents working 
   - In PowerShell commands, use `;` to chain statements. Never use `&&`, which fails on Windows PowerShell 5.1.
   - In Python test/verification scripts, always configure `sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)` to prevent `cp1252` encoding crashes when printing unicode or emoji characters.
   - In CDP `Runtime.evaluate` blocks, import modules using root-relative paths (`await import('/db.js')`), not relative paths (`./db.js`), to guarantee resolution from any page location.
+  - In headless Chrome CDP verification scripts, always pass `--disable-extensions` on the Chrome command line, and filter `/json` targets for `type === 'page'` (`[t for t in tabs if t.get('type') == 'page']`) to guarantee the CDP WebSocket attaches to the active page rather than an extension background worker.
 - **Full Regression Integrity**: Ensure both the Node audio test suite (`node public/test_motion_player_audio.mjs`) and the Python backend tests (`python -m unittest discover -s api -p "test_*.py"`) pass with exit code 0 before concluding.
 
 ## 7. Git & Security Hygiene
 - **PAT Hygiene**: If embedding a Personal Access Token (PAT) into a git remote URL to push, embed it only for the duration of the push command, and immediately scrub the remote back to plain HTTPS (`https://github.com/john1183-prog/lernin`) afterwards. Never persist credentials in git config or remote URLs.
+- **Schannel Revocation Resilience**: If Windows schannel halts git network operations with `CRYPT_E_REVOCATION_OFFLINE` (0x80092013) due to slow or unreachable OCSP/CRL endpoints, pass `-c http.schannelCheckRevoke=false` for the command.
