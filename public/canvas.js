@@ -606,7 +606,10 @@ function renderL1() {
   }
   if (isNearMapSecret(camera.x, camera.y, camera.zoom)) {
     drawMapSecret();
-    if (!hasFoundMapSecret()) markMapSecretFound();
+    if (!hasFoundMapSecret()) {
+      markMapSecretFound();
+      showMapToast('You found the quiet corner. Every mastered card starts here. 🌱', 4500);
+    }
   }
 }
 
@@ -654,6 +657,27 @@ function drawMapSecret() {
     ctx.textAlign = 'center';
     ctx.fillText('every mastered card starts here', s.x, s.y + 34);
   }
+}
+
+/**
+ * Lightweight, self-contained toast for map discovery moments.
+ * Appends to the global .toast-container without introducing a circular module import from app.js.
+ */
+function showMapToast(message, duration = 4500) {
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('is-leaving');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, duration);
 }
 
 function renderL2() {
@@ -1894,6 +1918,9 @@ if (typeof window !== 'undefined') {
     getWorldTerritories: () => worldTerritories,
     getCrossDeckPairs: () => crossDeckPairs,
     getCamera: () => camera,
+    getTargetCamera: () => targetCamera,
+    setCamera: (c) => { Object.assign(camera, c); Object.assign(targetCamera, c); scheduleFrame(0); },
+    renderFrame: () => renderLoop(),
     worldToScreen,
     getCanvas: () => canvasEl,
     getZoomLevel: () => zoomLevel

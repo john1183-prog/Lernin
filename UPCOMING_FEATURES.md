@@ -904,6 +904,22 @@ Map from abstract geometric data dots into rich, textured memory palace islands.
 - **Verified via automated headless Chrome CDP test**:
   - Dark theme environment gradient verified via pixel sampling (sky #0A0D10 -> horizon #1E2830).
   - Silhouette determinism and pixel stability verified across browser reload (exact match on all coordinates).
+
+**Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
+wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
+- **Spatial Map Integration** (`public/canvas.js`):
+  * In `renderL1()`, reads `hasFoundMapSecret()` when the camera reaches `MAP_SECRET_SPOT` at zoom > 2.8.
+  * On initial discovery, marks the secret found (`markMapSecretFound()`, persisted via `localStorage.getItem('lernin:foundMapSecret') === '1'`) and fires a quiet, warm toast: *"You found the quiet corner. Every mastered card starts here. 🌱"*.
+  * Built a lightweight, self-contained `showMapToast()` helper in `canvas.js` appending to `.toast-container`, avoiding circular module imports between `app.js` and `canvas.js`.
+  * Anti-spam guaranteed: subsequent frames, repeated visits, and navigation away/back check `hasFoundMapSecret()` and never re-trigger the acknowledgment.
+- **Verified via automated headless Chrome CDP test**:
+  * Clean initial state confirmed (`hasFound: false`, `toasts: 0`).
+  * Camera fly-in to `(4000, -3000, 3.0)` verified triggering the sprout motif and exactly one acknowledgment toast.
+  * Verified `hasFound` flipped to `true` and `localStorage` saved `'1'`.
+  * Anti-spam verified: staying at coordinates for multiple frames produces no duplicate toast; moving away and returning produces no duplicate toast.
+  * Screenshot captured: `map_secret_found_toast.png`.
+  * Audio test suite (`test_motion_player_audio.mjs`) and Python backend test suite (`test_*.py`) pass cleanly.
+
 **Archived Deck Differentiation in Statistics (`getDashboardStats`)** —
 distinguished archived decks from active decks in `/stats` while preserving lifetime aggregate statistics:
 - **Database Model** (`public/db.js`):
