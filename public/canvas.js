@@ -11,7 +11,8 @@ import {
   getRelationshipsFrom, getRelationshipsTo, getCrossDeckRelationshipPairs,
   saveLandmark, getLandmarksForDeck, deleteLandmark,
   saveStudyPath, getStudyPathsForDeck, deleteStudyPath,
-  saveAnnotation, getAnnotationsForDeck, deleteAnnotation
+  saveAnnotation, getAnnotationsForDeck, deleteAnnotation,
+  MASTERY_STABILITY_DAYS
 } from './db.js';
 import { startStudySession } from './study.js';
 import { isNearMapSecret, hasFoundMapSecret, markMapSecretFound, MAP_SECRET_SPOT } from './secrets.js';
@@ -285,7 +286,7 @@ function computeActivityLevel(cards) {
 function computeMastery(cards) {
   if (!cards.length) return 0;
   const avg = cards.reduce((s, c) => s + (c.stability || 0), 0) / cards.length;
-  return Math.min(1, avg / 30);
+  return Math.min(1, avg / MASTERY_STABILITY_DAYS);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +336,7 @@ async function enterDeckView(deckId, { animate = true } = {}) {
   const unplaced = [];
   cardNodes = cards.filter(c => !c.suspended).map((c, i) => {
     const ov = overrides.get(c.id);
-    const mastery = Math.min(1, (c.stability || 0) / 30);
+    const mastery = Math.min(1, (c.stability || 0) / MASTERY_STABILITY_DAYS);
     let x, y;
     if (ov) {
       x = ov.x; y = ov.y;
@@ -1893,7 +1894,7 @@ async function startSpatialFromMap(opts = {}) {
         : 'rgba(200,160,40,0.7)';
       // Refresh mastery tint
       getCard(cardId).then(c => {
-        if (c && node) node.mastery = Math.min(1, (c.stability || 0) / 30);
+        if (c && node) node.mastery = Math.min(1, (c.stability || 0) / MASTERY_STABILITY_DAYS);
       });
     },
     onExit: () => {

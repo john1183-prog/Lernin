@@ -12,7 +12,8 @@ import {
   getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
   localDayKey,
   getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck,
-  getAllDocuments
+  getAllDocuments,
+  MASTERY_STABILITY_DAYS
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
@@ -844,7 +845,7 @@ async function buildDeckTile(deck) {
 
   const due = cards.filter(c => !c.suspended && new Date(c.due_date).getTime() <= now).length;
   const total = cards.length;
-  const mastered = cards.filter(c => c.state === 'review' && (c.stability || 0) >= 30).length;
+  const mastered = cards.filter(c => c.state === 'review' && (c.stability || 0) >= MASTERY_STABILITY_DAYS).length;
   const masteryPct = total > 0 ? Math.round((mastered / total) * 100) : 0;
 
   const tile = document.createElement('div');

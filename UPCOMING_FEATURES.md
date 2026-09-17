@@ -916,6 +916,22 @@ fixed formula card back rendering when variables use the `{symbol, meaning}` sha
   * Screenshots captured in both Light and Dark themes (`formula_card_back_light.png`, `formula_card_back_dark.png`).
   * Python backend (`test_*.py`) and Node audio regression suites pass with zero regressions.
 
+**Tier 1 #2 — Mastery Stability Threshold Standardization (`db.js`, `canvas.js`, `mind-map.js`, `app.js`)** —
+aligned the mastery threshold to 30 days everywhere across the app:
+- **Unified Single Source of Truth** (`public/db.js`):
+  * Changed `MASTERY_STABILITY_DAYS` from 21 to 30 and exported it so all surfaces share a single threshold representing ~1 month of FSRS stability.
+  * Updated `getDeckStateCounts(deckId)` to use `MASTERY_STABILITY_DAYS = 30`, ensuring a card is only counted as mastered once its stability reaches 30 days.
+  * Updated comments to accurately describe alignment with canvas and mind map coloring.
+- **Surface Audit & Alignment**:
+  * *Territory Map* (`public/canvas.js`): Imported `MASTERY_STABILITY_DAYS` and unified `computeMastery()`, `enterDeckView()`, and `onGrade` to divide card stability by `MASTERY_STABILITY_DAYS`.
+  * *Mind Map* (`public/mind-map.js`): Imported `MASTERY_STABILITY_DAYS` and updated node layout to divide stability by `MASTERY_STABILITY_DAYS`.
+  * *Home Deck Tiles* (`public/app.js`): Imported `MASTERY_STABILITY_DAYS` and updated `buildDeckTile()` to check `(c.stability || 0) >= MASTERY_STABILITY_DAYS`.
+- **Verified via automated headless Chrome CDP test**:
+  * Tested card stability boundary in IndexedDB: card with stability 25 correctly excluded from mastered count (classified as in-progress), while cards with stability >= 30 counted as mastered.
+  * Parity verified between `getDeckStateCounts`, `getDashboardStats`, and Home screen deck tile progress bar.
+  * Screenshots captured in both Light and Dark themes (`mastery_deck_tile_light.png`, `mastery_deck_tile_dark.png`).
+  * Python backend (`test_*.py`, 64/64 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):

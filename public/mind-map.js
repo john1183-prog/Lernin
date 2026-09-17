@@ -21,7 +21,7 @@
    nothing is persisted.
 */
 
-import { getCardsByDeck, getRelationshipsFrom, getDeck } from './db.js';
+import { getCardsByDeck, getRelationshipsFrom, getDeck, MASTERY_STABILITY_DAYS } from './db.js';
 import { cardQuickActions } from './study.js';
 
 const SAND_HSL = { h: 38, s: 28, l: 78 };
@@ -292,7 +292,7 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   // territory map's L1, a different, appropriately zoomed-out view).
   const cardIdSet = new Set(cards.map(c => c.id));
   nodes = cards.map(c => {
-    const mastery = Math.min(1, (c.stability || 0) / 30);
+    const mastery = Math.min(1, (c.stability || 0) / MASTERY_STABILITY_DAYS);
     return {
       id: c.id, card: c, mastery,
       x: (Math.random() - 0.5) * 400, y: (Math.random() - 0.5) * 400,

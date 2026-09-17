@@ -681,9 +681,10 @@ export async function clearQueuedGeneration(id) {
 // ---------------------------------------------------------------------------
 
 // A card counts as "mastered" for display purposes once FSRS stability
-// crosses ~3 weeks — matches the heuristic canvas.js uses for island color,
-// so a deck's mastery bar and its island's color always agree.
-const MASTERY_STABILITY_DAYS = 21;
+// crosses 30 days (~1 month) — matches the heuristic canvas.js and mind-map.js
+// use for node and island coloring, so a deck's mastery bar, its stats, and
+// its island's color always agree.
+export const MASTERY_STABILITY_DAYS = 30;
 
 /**
  * Buckets a deck's cards into new / in-progress / mastered for the
