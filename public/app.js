@@ -13,7 +13,8 @@ import {
   localDayKey,
   getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck,
   getAllDocuments,
-  MASTERY_STABILITY_DAYS
+  MASTERY_STABILITY_DAYS,
+  DEFAULT_DAILY_REVIEW_CAP
 } from './db.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
@@ -588,6 +589,7 @@ export async function renderDeckList() {
     renderDeckList();
   });
 
+  const reviewCap = (await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP;
   const dueToday = dueCards.length;
   const streak = stats.streakDays || 0;
   const freezes = stats.freezesAvailable || 0;
@@ -595,9 +597,14 @@ export async function renderDeckList() {
   if (dueToday > 0) {
     const hero = document.createElement('div');
     hero.className = 'hero-cta';
+    const isCapped = dueToday > reviewCap;
+    const titleText = isCapped ? `${reviewCap} cards to study today` : `${dueToday} card${dueToday !== 1 ? 's' : ''} due today`;
+    const streakPrefix = streak > 0 ? `🔥 ${streak}-day streak` : 'Start building your streak';
+    const subText = isCapped ? `${streakPrefix} · ${dueToday} total in backlog` : streakPrefix;
+
     hero.innerHTML = `
-      <div class="hero-cta-title">${dueToday} card${dueToday !== 1 ? 's' : ''} due today</div>
-      <div class="hero-cta-sub">${streak > 0 ? `🔥 ${streak}-day streak` : 'Start building your streak'}</div>
+      <div class="hero-cta-title">${titleText}</div>
+      <div class="hero-cta-sub">${subText}</div>
       <button class="hero-cta-btn" id="heroStudy">Study now</button>
     `;
     root.appendChild(hero);

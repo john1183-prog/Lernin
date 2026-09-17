@@ -1421,6 +1421,18 @@ body {
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.session-summary-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+}
+
+.session-summary-btn-secondary:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 
 /* ---------- Toast ---------- */

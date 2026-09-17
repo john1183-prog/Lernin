@@ -447,9 +447,9 @@ export async function updateCardAfterReview(cardId, fsrsUpdate, reviewLogEntry) 
  * @param {object} [opts]
  * @param {string} [opts.deckId] - restrict to one deck; omit for all decks
  * @param {number} [opts.now] - override "now" (epoch ms), mainly for testing
- * @param {number} [opts.limit] - cap on results (daily review cap enforcement
- *                                 lives in scheduler.js, but a hard limit here
- *                                 avoids pulling an unbounded result set)
+ * @param {number} [opts.limit] - optional upper bound on results returned from
+ *                                 the index (queue assembly and soft caps are
+ *                                 enforced by study.js)
  * @param {boolean} [opts.excludeSuspended] - skip leeched/suspended cards
  *                                 (default true). Filtered during the cursor
  *                                 walk so suspended cards never count against
@@ -685,6 +685,11 @@ export async function clearQueuedGeneration(id) {
 // use for node and island coloring, so a deck's mastery bar, its stats, and
 // its island's color always agree.
 export const MASTERY_STABILITY_DAYS = 30;
+
+// Default daily session caps for study queue assembly.
+// Prevents unbounded review backlogs from overwhelming learners.
+export const DEFAULT_DAILY_REVIEW_CAP = 50;
+export const DEFAULT_NEW_CARD_CAP = 20;
 
 /**
  * Buckets a deck's cards into new / in-progress / mastered for the

@@ -4,10 +4,12 @@
 */
 
 import {
-  getCardsDueForDeck, getCardsDueTodayOrEarlier, updateCardAfterReview, getCard
+  getCardsDueForDeck, getCardsDueTodayOrEarlier, updateCardAfterReview, getCard,
+  DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP, getSetting
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import { showToast } from './app.js';
+import { interleaveQueue } from './study.js';
 
 /**
  * @param {HTMLElement} container  map root (canvas lives inside)
@@ -25,7 +27,7 @@ import { showToast } from './app.js';
 export async function startSpatialReview(container, deckId, opts = {}) {
   let cards;
   if (opts.pathNodeIds?.length) {
-    // Path order, still filter to due (or show all with badge)
+    // Path order, still filter to due (or show all with badge) - NO cap
     const all = await Promise.all(opts.pathNodeIds.map(id => getCard(id)));
     const now = Date.now();
     cards = all.filter(Boolean).map(c => ({
@@ -35,6 +37,9 @@ export async function startSpatialReview(container, deckId, opts = {}) {
   } else {
     cards = await getCardsDueForDeck(deckId);
     cards = cards.filter(c => !c.suspended);
+    const reviewCap = (await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP;
+    const newCap = DEFAULT_NEW_CARD_CAP;
+    cards = interleaveQueue(cards, { reviewCap, newCap });
   }
 
   if (!cards.length) {

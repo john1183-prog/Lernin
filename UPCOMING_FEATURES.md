@@ -932,6 +932,32 @@ aligned the mastery threshold to 30 days everywhere across the app:
   * Screenshots captured in both Light and Dark themes (`mastery_deck_tile_light.png`, `mastery_deck_tile_dark.png`).
   * Python backend (`test_*.py`, 64/64 passing) and Node audio regression suites pass with zero regressions.
 
+**Tier 1 #3 — Daily Review Soft Cap & Overdue-First Ordering with Continue Loop (`db.js`, `study.js`, `spatial-study.js`, `app.js`, `styles.css`)** —
+implemented soft review cap (default 50) + new-card cap (default 20) with overdue-first ordering and completion continue loop:
+- **Single Source of Truth & Settings** (`public/db.js`):
+  * Corrected stale comment on `getCardsDueTodayOrEarlier()`: scheduler owns memory math while queue capping and overdue-first ordering live in `interleaveQueue()` (`study.js`).
+  * Exported `DEFAULT_DAILY_REVIEW_CAP = 50` and `DEFAULT_NEW_CARD_CAP = 20`.
+  * Allows user override via `getSetting('dailyReviewCap')`.
+- **Queue Assembly & Study Session Flow** (`public/study.js`):
+  * Updated `interleaveQueue(cards, { reviewCap, newCap })` to sort reviews by `due_date ASC` (oldest / most overdue first) and clamp reviews to `reviewCap` and new cards to `newCap`.
+  * In `startStudySession(container, opts)`: reads `reviewCap` (respecting `opts.reviewCap` and `dailyReviewCap` setting), ensures explicit `startCardId` (jump-to-card) is prepended to the queue even if cut off by the soft cap, and awaits `showCard()`.
+  * On session completion (`renderSessionSummary()`): checks if cards remain due (`getCardsDueForDeck` or `getCardsDueTodayOrEarlier`); if so, renders warm backlog messaging ("Daily focus target reached! N cards remain in your backlog.") with action buttons: `#continueStudyBtn` ("Study another N", where N = min(25, remaining due)) and `#finishTodayBtn` ("Finish for today").
+- **Spatial Review Parity** (`public/spatial-study.js`):
+  * Path-based spatial review (`pathNodeIds`) remains intentionally uncapped (respecting the user's explicit path selection).
+  * Non-path spatial deck review applies the same `interleaveQueue` soft cap (70 cards total = 50 reviews + 20 new) for parity with standard study mode.
+- **Home Framing & Honest Stats Strip** (`public/app.js`, `public/styles.css`):
+  * Home hero CTA displays focus framing when `dueToday > reviewCap`: title "50 cards to study today", subtitle note "... · N total in backlog". When `dueToday <= reviewCap`, displays exact count.
+  * Stats strip maintains honesty by reporting the true total due count (`📚 N due`).
+  * Added `.session-summary-btn-secondary` in `styles.css` for the secondary finish CTA.
+- **Verified via automated headless Chrome CDP test**:
+  * Tested with 80 overdue reviews and 30 new cards: verified `interleaveQueue` assembled exactly 70 cards (50 review + 20 new), reviews ordered strictly by `due_date ASC`, and `startCardId` rendered first at index 0.
+  * Spatial study verified: non-path capped at 70 ("1 / 70"), path uncapped at 60 ("1 / 60").
+  * Home screen verified: hero shows focus framing ("50 cards to study today" + "110 total in backlog"), stats strip shows true total (110 due).
+  * Completion screen verified: displays focus target message, "Study another 25", and "Finish for today".
+  * Continue loop verified: clicking "Study another 25" smoothly starts the next batch in the active study container.
+  * Screenshots captured in both Light and Dark themes (`study_completion_backlog_light.png`, `study_completion_backlog_dark.png`).
+  * Python backend tests (64/64 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):

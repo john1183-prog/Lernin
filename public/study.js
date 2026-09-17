@@ -4,7 +4,8 @@
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
   getReviewLogForCard, getDeck, removeLastReviewLogForCard,
-  getRelationshipsFrom, getSetting
+  getRelationshipsFrom, getSetting,
+  DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
 import {
@@ -14,21 +15,6 @@ import {
 import { renderMath, showToast } from './app.js';
 import { checkCleanSweep } from './secrets.js';
 
-let session = {
-  queue: [],
-  index: 0,
-  deckId: null,
-  startCardId: null,
-  results: { again: 0, hard: 0, good: 0, easy: 0 },
-  teachItQueue: [],
-  isActive: false,
-  currentCard: null,
-  isRevealed: false,
-  hintVisible: false,
-  touchStart: null,
-  keyboardHandler: null,
-  undoStack: []
-};
 
 const GRADE_MAP = { '1': 'again', '2': 'hard', '3': 'good', '4': 'easy' };
 
@@ -84,10 +70,44 @@ export function cardQuickActions({ cardId, deckId, container, onExit, onBeforeSt
 }
 
 /* ---------- Session Start ---------- */
+let session = {
+  container: null,
+  queue: [],
+  index: 0,
+  deckId: null,
+  startCardId: null,
+  results: { again: 0, hard: 0, good: 0, easy: 0 },
+  teachItQueue: [],
+  isActive: false,
+  currentCard: null,
+  isRevealed: false,
+  hintVisible: false,
+  touchStart: null,
+  keyboardHandler: null,
+  undoStack: [],
+  onExit: null
+};
+
+/**
+ * Start a study session inside the given container element.
+ *
+ * @param {HTMLElement} container
+ * @param {object} [opts]
+ * @param {string} [opts.deckId] - restrict to one deck; omit for "Study All"
+ * @param {string} [opts.startCardId] - prioritize a specific card (jump to study)
+ * @param {number} [opts.reviewCap] - override review cap for this session
+ * @param {number} [opts.newCap] - override new card cap for this session
+ * @param {function} [opts.onExit] - callback on session exit
+ * @returns {Promise<function>} teardown function
+ */
 export async function startStudySession(container, opts = {}) {
   await initSoundSetting();
 
+  const reviewCap = opts.reviewCap ?? ((await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP);
+  const newCap = opts.newCap ?? DEFAULT_NEW_CARD_CAP;
+
   session = {
+    container,
     queue: [],
     index: 0,
     deckId: opts.deckId || null,
@@ -141,8 +161,8 @@ export async function startStudySession(container, opts = {}) {
     return teardownStudySession;
   }
 
-  // Interleave new and review
-  session.queue = interleaveQueue(cards);
+  // Interleave new and review with soft caps and overdue-first ordering
+  session.queue = interleaveQueue(cards, { reviewCap, newCap });
 
   // Smart ordering: soft-reorder so prerequisites (dependsOn) come
   // before their dependents when both are already in today's queue.
@@ -157,24 +177,37 @@ export async function startStudySession(container, opts = {}) {
     // Non-fatal — study with the plain interleaved order if this fails.
   }
 
-  // Rotate to startCardId if specified
+  // Rotate to startCardId if specified — guaranteed to be at front even if outside soft cap
   if (session.startCardId) {
     const idx = session.queue.findIndex(c => c.id === session.startCardId);
     if (idx > 0) {
       const [card] = session.queue.splice(idx, 1);
       session.queue.unshift(card);
+    } else if (idx === -1) {
+      const specificCard = await getCard(session.startCardId);
+      if (specificCard && !specificCard.suspended) {
+        session.queue.unshift(specificCard);
+      }
     }
   }
 
   renderStudyUI(container);
-  showCard();
+  await showCard();
   attachKeyboard();
   return teardownStudySession;
 }
 
-function interleaveQueue(cards) {
-  const news = cards.filter(c => c.state === 'new').slice(0, 20);
-  const reviews = cards.filter(c => c.state !== 'new');
+export function interleaveQueue(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, newCap = DEFAULT_NEW_CARD_CAP } = {}) {
+  const news = cards.filter(c => c.state === 'new').slice(0, newCap);
+  const reviews = cards
+    .filter(c => c.state !== 'new')
+    .sort((a, b) => {
+      const timeA = a.due_date ? new Date(a.due_date).getTime() : 0;
+      const timeB = b.due_date ? new Date(b.due_date).getTime() : 0;
+      return timeA - timeB; // most overdue first (due_date ASC)
+    })
+    .slice(0, reviewCap);
+
   const result = [];
   let n = 0, r = 0;
   while (n < news.length || r < reviews.length) {
@@ -336,7 +369,7 @@ function getCardStatus(card) {
 /* ---------- Card Display ---------- */
 async function showCard() {
   if (session.index >= session.queue.length) {
-    renderSessionSummary();
+    await renderSessionSummary();
     return;
   }
 
@@ -874,7 +907,7 @@ function showShortcutsOverlay() {
 }
 
 /* ---------- Session Summary ---------- */
-function renderSessionSummary() {
+async function renderSessionSummary() {
   session.isActive = false;
   detachKeyboard();
   playSessionComplete();
@@ -887,6 +920,21 @@ function renderSessionSummary() {
   const circumference = 2 * Math.PI * 52;
   const offset = circumference - (accuracy / 100) * circumference;
   const cleanSweepMsg = checkCleanSweep(session.results);
+
+  let remainingCards = [];
+  try {
+    if (session.deckId) {
+      remainingCards = await getCardsDueForDeck(session.deckId);
+    } else {
+      remainingCards = await getCardsDueTodayOrEarlier();
+    }
+    remainingCards = remainingCards.filter(c => !c.suspended);
+  } catch (err) {
+    remainingCards = [];
+  }
+
+  const hasBacklog = remainingCards.length > 0;
+  const nextBatchCount = Math.min(25, remainingCards.length);
 
   container.innerHTML = `
     <div class="session-summary">
@@ -914,14 +962,48 @@ function renderSessionSummary() {
           <div class="session-summary-stat-label">Good+</div>
         </div>
       </div>
-      <button class="session-summary-btn" id="backHome">Back to decks</button>
+      ${hasBacklog ? `
+        <div class="session-backlog-wrap" style="margin:var(--space-md) 0; text-align:center; width:100%; max-width:320px;">
+          <p class="session-backlog-note" style="margin:0 0 14px; font-size:14px; color:var(--ink-secondary); line-height:1.5;">
+            Daily focus target reached! <strong>${remainingCards.length}</strong> card${remainingCards.length === 1 ? '' : 's'} remain in your backlog.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:10px; width:100%;">
+            <button class="session-summary-btn" id="continueStudyBtn">
+              Study another ${nextBatchCount}
+            </button>
+            <button class="session-summary-btn session-summary-btn-secondary" id="finishTodayBtn">
+              Finish for today
+            </button>
+          </div>
+        </div>
+      ` : `
+        <button class="session-summary-btn" id="backHome">Back to decks</button>
+      `}
     </div>
   `;
 
-  container.querySelector('#backHome').addEventListener('click', () => {
-    if (typeof session.onExit === 'function') session.onExit();
-    else import('./app.js').then(m => m.renderDeckList());
-  });
+  if (hasBacklog) {
+    const continueBtn = container.querySelector('#continueStudyBtn');
+    if (continueBtn) {
+      continueBtn.addEventListener('click', () => {
+        const host = session.container || container.parentElement || container;
+        startStudySession(host, {
+          deckId: session.deckId,
+          onExit: session.onExit,
+          reviewCap: 25
+        });
+      });
+    }
+    const finishBtn = container.querySelector('#finishTodayBtn');
+    if (finishBtn) {
+      finishBtn.addEventListener('click', leaveSession);
+    }
+  } else {
+    const backHomeBtn = container.querySelector('#backHome');
+    if (backHomeBtn) {
+      backHomeBtn.addEventListener('click', leaveSession);
+    }
+  }
 }
 
 /* ---------- Exit ---------- */
