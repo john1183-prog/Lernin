@@ -44,8 +44,9 @@ async function loadPdfjs() {
 
 /**
  * Extracts plain text from a PDF File object, page by page, entirely
- * client-side. Returns one joined string — chunk_text() on the backend
- * handles splitting it back up for the LLM call.
+ * client-side. Preserves explicit page markers (`--- Page N ---`) so
+ * the backend chunker and card generator can tag flashcards with their
+ * source page range.
  *
  * @param {File} file
  * @param {(progress: {page: number, totalPages: number}) => void} [onProgress]
@@ -67,8 +68,10 @@ export async function extractTextFromPdf(file, onProgress) {
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-    const pageText = content.items.map((item) => item.str).join(' ');
-    pageTexts.push(pageText);
+    const pageText = content.items.map((item) => item.str).join(' ').trim();
+    if (pageText) {
+      pageTexts.push(`--- Page ${pageNum} ---\n${pageText}`);
+    }
 
     if (onProgress) onProgress({ page: pageNum, totalPages: pdf.numPages });
 

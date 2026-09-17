@@ -107,8 +107,9 @@ export async function generateCards(text, deckId) {
     const data = await response.json();
     const deduped = await dedupeAgainstDeck(data.cards, deckId);
     const summary = data.summary || '';
-    emit('recall:generation-success', { deckId, cards: deduped, summary });
-    return { cards: deduped, summary, error: null };
+    const warning = data.warning || null;
+    emit('recall:generation-success', { deckId, cards: deduped, summary, warning });
+    return { cards: deduped, summary, warning, error: null };
   } catch (err) {
     // Network failure — queue for retry rather than a dead end.
     if (err instanceof TypeError) {
@@ -194,13 +195,19 @@ const DUPLICATE_SIMILARITY_THRESHOLD = 0.8;
 export async function dedupeAgainstDeck(cards, deckId) {
   const existing = await getCardsByDeck(deckId);
   const existingTokenSets = existing.map((c) => tokenSet(c.front));
+  const seenTokenSets = [...existingTokenSets];
 
   return cards.filter((c) => {
     const candidateTokens = tokenSet(c.front);
-    return !existingTokenSets.some(
+    const isDup = seenTokenSets.some(
       (set) =>
         jaccardSimilarity(candidateTokens, set) >= DUPLICATE_SIMILARITY_THRESHOLD
     );
+    if (!isDup) {
+      seenTokenSets.push(candidateTokens);
+      return true;
+    }
+    return false;
   });
 }
 

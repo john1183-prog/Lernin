@@ -958,6 +958,31 @@ implemented soft review cap (default 50) + new-card cap (default 20) with overdu
   * Screenshots captured in both Light and Dark themes (`study_completion_backlog_light.png`, `study_completion_backlog_dark.png`).
   * Python backend tests (64/64 passing) and Node audio regression suites pass with zero regressions.
 
+**Tier 1 #4 — Document / PDF Text Chunking with Per-Card Provenance (`api/text_chunker.py`, `api/index.py`, `pdf-extract.js`, `api.js`, `db.js`, `app.js`)** —
+implemented authoritative backend text chunking for long documents and PDFs with per-card provenance:
+- **Zero-Dependency Backend Chunker** (`api/text_chunker.py`, `api/index.py`):
+  * Authoritative server-side chunking: splits text into ~14,000-character chunks with ~800-character overlap, prioritizing paragraph boundaries (`\n\n`), newlines, and sentence breaks.
+  * Extracted page markers (`--- Page N ---` or `[Page N]`) into formatted ranges (`p. 3` or `pp. 1–5`).
+  * Enforces `MAX_CHUNKS = 5` and hard stop of 40 cards total per upload (`MAX_CARDS_PER_UPLOAD = 40`).
+  * When text exceeds 5 chunks, generates from the first 5 and returns a warm, encouraging warning: *"This document is extensive! We turned the first 5 sections into bite-sized cards so you can master them without overwhelm."*
+  * Attaches optional `sourceInfo: { chunkIndex, totalChunks, pageRange }` to each generated card.
+  * Shared generator helper `_generate_cards_from_text` unified across standard `/api/generate-cards` and PowerPoint extraction in `/api/generate-cards-vision`.
+- **Client Extraction & Page Marker Preservation** (`public/pdf-extract.js`):
+  * Preserves explicit page markers (`--- Page ${pageNum} ---\n${pageText}`) during client-side PDF extraction so the backend chunker can tag cards with their source page range.
+  * Removed phantom "backend chunk_text()" comment in favor of accurate documentation.
+- **Intra-Batch & Cross-Deck Deduplication** (`public/api.js`):
+  * Extended `dedupeAgainstDeck` with `seenTokenSets` tracking to simultaneously eliminate duplicate concepts generated across overlapping chunks within the same batch.
+  * Surfaces backend `warning` on `generateCards` return payload and emits in `recall:generation-success` event.
+- **Card Persistence & Provenance Display** (`public/db.js`, `public/app.js`):
+  * Persists `sourceInfo` in IndexedDB (`cards` store) in both `saveNewCards` and `saveManualCard` without requiring a schema version bump.
+  * In `handleExtractedText`, displays warm server warning toast for 6s when present.
+  * In PDF extraction, displays soft preliminary notice for substantial texts (>100,000 chars) without blocking.
+  * In card review step (`renderEditStep`), renders clean `.card-provenance-tag` badges (`pp. 1–3 · Section 1 of 3` or `Section 1 of 2`) above the card front in both Light and Dark themes.
+- **Verified via automated unit & headless Chrome CDP tests**:
+  * Added 11 comprehensive unit tests in `api/test_text_chunker.py` verifying single/multi-chunk splitting, overlap preservation, paragraph boundary preference, page range detection, 40-card hard cap, and truncation warnings (all 75 backend tests passing).
+  * Headless Chrome CDP verified: IndexedDB `sourceInfo` persistence, intra-batch deduplication, and card edit step provenance badge rendering in both Light and Dark themes (`card_provenance_edit_light.png`, `card_provenance_edit_dark.png`).
+  * Node audio test suite (`test_motion_player_audio.mjs`) and Python backend test suite (`test_*.py`) pass cleanly with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):

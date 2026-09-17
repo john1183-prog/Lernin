@@ -29,6 +29,12 @@ from motion_schema import MotionScript, MOTION_SCRIPT_SCHEMA
 from mind_map_schema import MindMapScript, MIND_MAP_SCRIPT_SCHEMA
 from mind_map_engine import expand_mind_map, MindMapEngineError
 from motion_engine import expand_script, MotionEngineError
+from text_chunker import (
+    split_text_into_chunks,
+    find_page_range,
+    build_chunked_cards,
+    MAX_CARDS_PER_UPLOAD,
+)
 
 logger = logging.getLogger("lernin.motion")
 
@@ -73,6 +79,11 @@ class CardVariable(BaseModel):
     symbol: Optional[str] = None
     meaning: Optional[str] = None
 
+class CardSourceInfo(BaseModel):
+    chunkIndex: int
+    totalChunks: int
+    pageRange: Optional[str] = None
+
 class Card(BaseModel):
     front: str = Field(..., min_length=1)
     back: str = Field(..., min_length=1)
@@ -82,6 +93,7 @@ class Card(BaseModel):
     assumptions: Optional[str] = None
     commonMistakes: Optional[str] = None
     applications: Optional[str] = None
+    sourceInfo: Optional[CardSourceInfo] = None
 
 class CardBatch(BaseModel):
     summary: str = Field(..., min_length=1)
@@ -90,10 +102,12 @@ class CardBatch(BaseModel):
 class GenerateResponse(BaseModel):
     cards: List[Card]
     summary: str
+    warning: Optional[str] = None
 
 # ---------- Prompts & Tools ----------
 SYSTEM_PROMPT = (
-    "You are a flashcard generator. Extract key concepts from the user's document "
+    "You are a flashcard generator. Extract 6 to 10 key concepts from the user's document "
+    "(focusing on the most critical definitions, principles, or formulas) "
     "and return ONLY a valid JSON object matching the submit_cards tool schema. "
     "Do not wrap the JSON in markdown fences. Do not add commentary."
 )
@@ -944,6 +958,31 @@ def _call_gemini_mind_map(text: str, api_key: str, retry_note: str = None) -> Mi
         parsed = json.loads(text_out)
         return MindMapScript.model_validate(parsed)
 
+def _generate_cards_from_text(text: str, provider: str, api_key: str) -> GenerateResponse:
+    if not text or len(text.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Text too short or missing.")
+
+    def call_llm(chunk: str):
+        try:
+            if provider == "claude":
+                return _call_claude(chunk, provider, api_key)
+            else:
+                return _call_gemini(chunk, provider, api_key)
+        except anthropic.AuthenticationError:
+            raise HTTPException(status_code=401, detail="Invalid Claude API key.")
+        except anthropic.RateLimitError:
+            raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="Card generation failed. Please try again."
+            )
+
+    cards, summary, warning = build_chunked_cards(text, call_llm)
+    return GenerateResponse(cards=cards, summary=summary, warning=warning)
+
 # ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
 async def generate_cards(request: Request):
@@ -955,25 +994,7 @@ async def generate_cards(request: Request):
     if not text or len(text.strip()) < 10:
         raise HTTPException(status_code=400, detail="Text too short or missing.")
 
-    try:
-        if provider == "claude":
-            cards, summary = _call_claude(text, provider, api_key)
-        else:
-            cards, summary = _call_gemini(text, provider, api_key)
-    except anthropic.AuthenticationError:
-        raise HTTPException(status_code=401, detail="Invalid Claude API key.")
-    except anthropic.RateLimitError:
-        raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
-    except Exception:
-        # Never send internal details to clients.
-        raise HTTPException(
-            status_code=500,
-            detail="Card generation failed. Please try again."
-        )
-
-    return GenerateResponse(cards=cards, summary=summary)
+    return _generate_cards_from_text(text, provider, api_key)
 
 @app.post("/api/generate-cards-vision", response_model=GenerateResponse)
 async def generate_cards_vision(
@@ -999,23 +1020,7 @@ async def generate_cards_vision(
     if ext in ('ppt', 'pptx'):
         text = _extract_ppt_text(content)
         if text and len(text.strip()) > 50:
-            try:
-                if provider == "claude":
-                    cards, summary = _call_claude(text, provider, api_key)
-                else:
-                    cards, summary = _call_gemini(text, provider, api_key)
-                return GenerateResponse(cards=cards, summary=summary)
-            except anthropic.AuthenticationError:
-                raise HTTPException(status_code=401, detail="Invalid Claude API key.")
-            except anthropic.RateLimitError:
-                raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
-            except httpx.HTTPStatusError as e:
-                raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
-            except Exception:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Card generation failed. Please try again."
-                )
+            return _generate_cards_from_text(text, provider, api_key)
         raise HTTPException(
             status_code=400,
             detail="Could not extract text from this PowerPoint. Use the manual paste flow, or export slides as PDF/images."

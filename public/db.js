@@ -323,6 +323,9 @@ export async function saveNewCards(deckId, newCards) {
         record.commonMistakes = card.commonMistakes || '';
         record.applications = card.applications || '';
       }
+      if (card.sourceInfo) {
+        record.sourceInfo = card.sourceInfo;
+      }
       await store.put(record);
     }
     await tx.done;
@@ -379,6 +382,9 @@ export async function saveManualCard(card) {
     record.assumptions = card.assumptions || '';
     record.commonMistakes = card.commonMistakes || '';
     record.applications = card.applications || '';
+  }
+  if (card.sourceInfo) {
+    record.sourceInfo = card.sourceInfo;
   }
 
   await db.put('cards', record);

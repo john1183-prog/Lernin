@@ -2652,6 +2652,10 @@ async function renderImportView(deckId) {
         progressFill.style.width = '100%';
         statusText.textContent = 'Extraction complete.';
 
+        if (text.length > 100000) {
+          showToast("Substantial reading detected — we'll create cards from the first few sections to keep your session bite-sized.", 5000);
+        }
+
         if (text.trim().length < 50) {
           showToast('PDF appears to be scanned. Using AI vision...');
           if (isByok) {
@@ -2725,6 +2729,9 @@ async function handleExtractedText(text, deckId, config, filename) {
   if (isByok) {
     const result = await generateCards(text, deckId);
     if (result && result.cards && result.cards.length > 0) {
+      if (result.warning) {
+        showToast(result.warning, 6000);
+      }
       // Was silently dropped before: generateCards() returns a summary as
       // a byproduct, but nothing ever persisted it, so the Documents and
       // Course Recap views were effectively empty for this — the most
@@ -2826,9 +2833,12 @@ async function uploadVisionFile(file, deckId, config) {
   }
 }
 
-function renderEditStep(cards, deckId) {
-  root.innerHTML = '';
-  root.style.padding = '0';
+export function renderEditStep(cards, deckId) {
+  const container = root || document.getElementById('root');
+  if (container) {
+    container.innerHTML = '';
+    container.style.padding = '0';
+  }
 
   const approved = [...cards];
   let discardedCount = 0;
@@ -2865,6 +2875,17 @@ function renderEditStep(cards, deckId) {
       typeBadge.style.cssText = 'position:absolute; top:10px; right:44px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
       typeBadge.textContent = card.type || 'basic';
       row.appendChild(typeBadge);
+
+      if (card.sourceInfo) {
+        const provTag = document.createElement('div');
+        provTag.className = 'card-provenance-tag';
+        provTag.style.cssText = 'font-size:11px; color:var(--ink-muted); margin-bottom:4px; font-weight:500;';
+        const label = card.sourceInfo.pageRange
+          ? `${card.sourceInfo.pageRange} · Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`
+          : `Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`;
+        provTag.textContent = label;
+        row.appendChild(provTag);
+      }
 
       const front = document.createElement('div');
       front.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:60px;';
@@ -2958,7 +2979,7 @@ function renderEditStep(cards, deckId) {
   });
   wrap.appendChild(importBtn);
 
-  root.appendChild(wrap);
+  if (container) container.appendChild(wrap);
   renderCards();
 }
 
