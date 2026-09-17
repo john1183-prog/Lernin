@@ -424,7 +424,7 @@ function renderBack(card) {
     html += `<div style="margin-top:var(--space-lg);">$$${escapeHtml(card.formula)}$$</div>`;
     if (card.variables && card.variables.length) {
       html += `<div class="formula-extras">`;
-      html += renderFormulaExtra('Variables', card.variables.map(v => `${v.name}: ${v.description}`).join(' · '));
+      html += renderFormulaExtra('Variables', card.variables.map(v => `${v.symbol || v.name}: ${v.meaning || v.description}`).join(' · '));
       if (card.assumptions) html += renderFormulaExtra('Assumptions', card.assumptions);
       if (card.commonMistakes) html += renderFormulaExtra('Common Mistakes', card.commonMistakes);
       if (card.applications) html += renderFormulaExtra('Applications', card.applications);
