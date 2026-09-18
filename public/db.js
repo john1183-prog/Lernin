@@ -1678,24 +1678,164 @@ export async function addDeck({ title, courseTerritoryId = 'uncategorized' }) {
   return id;
 }
 
-/** Delete a deck and all its cards */
+/**
+ * Delete a deck and cascade-delete all associated deck- and card-scoped
+ * records across all stores in a single atomic transaction:
+ * - decks (deck record)
+ * - cards (all cards belonging to the deck)
+ * - documents (all documents belonging to the deck)
+ * - reviewLog (all review history entries for cards in this deck)
+ * - cardRelationships (all relationships where either fromCardId or toCardId belongs to this deck)
+ * - documentMindMaps (all mind maps for documents in this deck)
+ * - motionScripts (all motion scripts associated with this deck)
+ * - studyPaths (spatial study paths for this deck)
+ * - landmarks (spatial landmarks for this deck)
+ * - annotations (spatial annotations for this deck)
+ * - territoryLayout (island position override on the Territory Map)
+ * - conceptLayouts (concept position overrides for cards in this deck)
+ * - genQueue & motionGenQueue (queued offline requests for this deck)
+ */
 export async function deleteDeck(deckId) {
   const db = await getDB();
-  const cards = await db.getAllFromIndex('cards', 'by_deckId', deckId);
-  const tx = db.transaction(['decks', 'cards', 'documents'], 'readwrite');
-  await tx.objectStore('decks').delete(deckId);
-  for (const card of cards) {
-    await tx.objectStore('cards').delete(card.id);
-  }
-  const docs = await db.getAllFromIndex('documents', 'by_deckId', deckId);
-  for (const doc of docs) {
-    await tx.objectStore('documents').delete(doc.id);
-  }
-  await tx.done;
-  if (db.objectStoreNames.contains('territoryLayout')) {
-    try {
-      await db.delete('territoryLayout', deckId);
-    } catch (_) {}
+
+  const targetStoreNames = [
+    'decks',
+    'cards',
+    'documents',
+    'reviewLog',
+    'cardRelationships',
+    'documentMindMaps',
+    'motionScripts',
+    'studyPaths',
+    'landmarks',
+    'annotations',
+    'territoryLayout',
+    'conceptLayouts',
+    'genQueue',
+    'motionGenQueue'
+  ];
+  const activeStores = targetStoreNames.filter((name) => db.objectStoreNames.contains(name));
+
+  // Pre-fetch deck-scoped card IDs and document IDs before opening the write transaction
+  const cards = db.objectStoreNames.contains('cards')
+    ? await db.getAllFromIndex('cards', 'by_deckId', deckId)
+    : [];
+  const cardIds = cards.map((c) => c.id);
+
+  const docs = db.objectStoreNames.contains('documents')
+    ? await db.getAllFromIndex('documents', 'by_deckId', deckId)
+    : [];
+  const docIds = docs.map((d) => d.id);
+
+  try {
+    const tx = db.transaction(activeStores, 'readwrite');
+
+    // 1. decks
+    if (activeStores.includes('decks')) {
+      await tx.objectStore('decks').delete(deckId);
+    }
+
+    // 2. cards
+    if (activeStores.includes('cards') && cardIds.length > 0) {
+      const store = tx.objectStore('cards');
+      await Promise.all(cardIds.map((id) => store.delete(id)));
+    }
+
+    // 3. documents
+    if (activeStores.includes('documents') && docIds.length > 0) {
+      const store = tx.objectStore('documents');
+      await Promise.all(docIds.map((id) => store.delete(id)));
+    }
+
+    // 4. reviewLog (delete entries for cards belonging to this deck)
+    if (activeStores.includes('reviewLog') && cardIds.length > 0) {
+      const store = tx.objectStore('reviewLog');
+      const idx = store.index('by_cardId');
+      const keyArrays = await Promise.all(cardIds.map((cid) => idx.getAllKeys(cid)));
+      const logKeys = keyArrays.flat();
+      await Promise.all(logKeys.map((k) => store.delete(k)));
+    }
+
+    // 5. cardRelationships (delete edges where either fromCardId or toCardId belongs to this deck)
+    if (activeStores.includes('cardRelationships') && cardIds.length > 0) {
+      const store = tx.objectStore('cardRelationships');
+      const fromIdx = store.index('by_fromCardId');
+      const toIdx = store.index('by_toCardId');
+      const [fromArrays, toArrays] = await Promise.all([
+        Promise.all(cardIds.map((cid) => fromIdx.getAllKeys(cid))),
+        Promise.all(cardIds.map((cid) => toIdx.getAllKeys(cid)))
+      ]);
+      const relKeys = new Set([...fromArrays.flat(), ...toArrays.flat()]);
+      await Promise.all(Array.from(relKeys).map((k) => store.delete(k)));
+    }
+
+    // 6. documentMindMaps (keyed by documentId)
+    if (activeStores.includes('documentMindMaps')) {
+      const store = tx.objectStore('documentMindMaps');
+      await Promise.all([
+        ...docIds.map((did) => store.delete(did)),
+        store.delete(deckId)
+      ]);
+    }
+
+    // 7. motionScripts (indexed by by_deckId)
+    if (activeStores.includes('motionScripts')) {
+      const store = tx.objectStore('motionScripts');
+      const keys = await store.index('by_deckId').getAllKeys(deckId);
+      await Promise.all(keys.map((k) => store.delete(k)));
+    }
+
+    // 8. studyPaths (indexed by by_deckId)
+    if (activeStores.includes('studyPaths')) {
+      const store = tx.objectStore('studyPaths');
+      const keys = await store.index('by_deckId').getAllKeys(deckId);
+      await Promise.all(keys.map((k) => store.delete(k)));
+    }
+
+    // 9. landmarks (indexed by by_deckId)
+    if (activeStores.includes('landmarks')) {
+      const store = tx.objectStore('landmarks');
+      const keys = await store.index('by_deckId').getAllKeys(deckId);
+      await Promise.all(keys.map((k) => store.delete(k)));
+    }
+
+    // 10. annotations (indexed by by_deckId)
+    if (activeStores.includes('annotations')) {
+      const store = tx.objectStore('annotations');
+      const keys = await store.index('by_deckId').getAllKeys(deckId);
+      await Promise.all(keys.map((k) => store.delete(k)));
+    }
+
+    // 11. territoryLayout (keyed by islandId = deckId)
+    if (activeStores.includes('territoryLayout')) {
+      await tx.objectStore('territoryLayout').delete(deckId);
+    }
+
+    // 12. conceptLayouts (keyed by cardId)
+    if (activeStores.includes('conceptLayouts') && cardIds.length > 0) {
+      const store = tx.objectStore('conceptLayouts');
+      await Promise.all(cardIds.map((cid) => store.delete(cid)));
+    }
+
+    // 13. genQueue (indexed by by_deckId)
+    if (activeStores.includes('genQueue')) {
+      const store = tx.objectStore('genQueue');
+      const keys = await store.index('by_deckId').getAllKeys(deckId);
+      await Promise.all(keys.map((k) => store.delete(k)));
+    }
+
+    // 14. motionGenQueue (unindexed deckId filter)
+    if (activeStores.includes('motionGenQueue')) {
+      const store = tx.objectStore('motionGenQueue');
+      const allQueued = await store.getAll();
+      const toDelete = allQueued.filter((q) => q.deckId === deckId).map((q) => q.id);
+      await Promise.all(toDelete.map((id) => store.delete(id)));
+    }
+
+    await tx.done;
+  } catch (err) {
+    console.error(`deleteDeck: failed to delete deck ${deckId} and cascade orphans:`, err);
+    throw err;
   }
 }
 

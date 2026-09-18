@@ -983,6 +983,34 @@ implemented authoritative backend text chunking for long documents and PDFs with
   * Headless Chrome CDP verified: IndexedDB `sourceInfo` persistence, intra-batch deduplication, and card edit step provenance badge rendering in both Light and Dark themes (`card_provenance_edit_light.png`, `card_provenance_edit_dark.png`).
   * Node audio test suite (`test_motion_player_audio.mjs`) and Python backend test suite (`test_*.py`) pass cleanly with zero regressions.
 
+**Tier 1 #5 — Deck Cascade Deletion Across Orphan Stores (`public/db.js`)** —
+extended `deleteDeck(deckId)` to cascade-delete all deck-scoped and card-scoped records across all associated IndexedDB stores in a single atomic transaction:
+- **Full Store Coverage & Atomic Single-Transaction Guarantee** (`public/db.js`):
+  * Previously, `deleteDeck()` only deleted records from `decks`, `cards`, and `documents` (plus a best-effort, detached `territoryLayout` delete), leaving orphan rows in 7+ other stores that permanently inflated stats queries and relationship lookups.
+  * Extended `deleteDeck()` to operate across all 14 stores within a single atomic `readwrite` transaction:
+    - `decks`: removes the deck record.
+    - `cards`: removes all cards belonging to the deck (`by_deckId`).
+    - `documents`: removes all uploaded document summaries for the deck (`by_deckId`).
+    - `reviewLog`: deletes all review history entries for cards in this deck (`by_cardId`), preventing permanent lifetime review and leech count inflation.
+    - `cardRelationships`: deletes all incoming and outgoing prerequisite and related edges (`by_fromCardId` and `by_toCardId`) pointing to or from any card in the deck, eliminating dangling graph pointers.
+    - `documentMindMaps`: deletes all document mind maps belonging to this deck's documents (and direct deckId key fallback).
+    - `motionScripts`: deletes all motion graphics scripts belonging to the deck (`by_deckId`).
+    - `studyPaths`: deletes all spatial study paths scoped to the deck (`by_deckId`).
+    - `landmarks`: deletes all spatial landmarks for the deck (`by_deckId`).
+    - `annotations`: deletes all text and freehand canvas annotations for the deck (`by_deckId`).
+    - `territoryLayout`: deletes user-dragged island positions on the Territory Map (`islandId = deckId`), now cleanly part of the atomic transaction rather than silently swallowed.
+    - `conceptLayouts`: deletes concept graph node position overrides for all cards in the deck.
+    - `genQueue` & `motionGenQueue`: clears pending offline card and motion generation requests scoped to the deck.
+  * Preserved `archiveDeck` / `unarchiveDeck` semantics: archiving strictly toggles the `archived` boolean flag without deleting records.
+  * Preserved global device settings: `settings` store is untouched.
+- **Verified via automated headless Chrome CDP test**:
+  * Seeded sample rows across all 14 stores for a test deck (`deck-to-delete`), a preserved deck (`deck-to-keep`), and an archive test deck (`deck-to-archive`).
+  * Confirmed `archiveDeck()` toggles `archived: true` while preserving 100% of cards and review logs.
+  * Confirmed `deleteDeck()` reduces rows to exactly 0 across all 14 stores for `deck-to-delete`, with zero dangling card relationships.
+  * Confirmed all rows for `deck-to-keep` remain completely intact.
+  * Captured UI screenshots in both Light and Dark themes (`deck_deleted_decklist_light.png`, `deck_deleted_decklist_dark.png`).
+  * Python backend tests (75/75 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):
