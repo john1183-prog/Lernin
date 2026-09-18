@@ -280,39 +280,41 @@ async function applyPrerequisiteOrdering(queue) {
 
 /* ---------- UI Rendering ---------- */
 function renderStudyUI(container) {
-  container.innerHTML = '';
-  container.className = 'study-session';
+  const target = container || document.getElementById('root');
+  if (!target) return;
+  target.innerHTML = '';
+  target.className = 'study-session';
 
   // Header with counter, undo, help
   const header = document.createElement('div');
   header.className = 'study-header';
   header.id = 'studyHeader';
-  container.appendChild(header);
+  target.appendChild(header);
 
   // Context bar
   const contextBar = document.createElement('div');
   contextBar.className = 'study-context-bar';
   contextBar.id = 'studyContext';
-  container.appendChild(contextBar);
+  target.appendChild(contextBar);
 
   // Card area
   const cardArea = document.createElement('div');
   cardArea.className = 'study-card-area';
   cardArea.id = 'cardArea';
-  container.appendChild(cardArea);
+  target.appendChild(cardArea);
 
   // Controls
   const controls = document.createElement('div');
   controls.className = 'study-controls';
   controls.id = 'studyControls';
-  container.appendChild(controls);
+  target.appendChild(controls);
 
   // Live region for screen readers
   const live = document.createElement('div');
   live.className = 'sr-only';
   live.setAttribute('aria-live', 'polite');
   live.id = 'studyLive';
-  container.appendChild(live);
+  target.appendChild(live);
 }
 
 function updateHeader() {
@@ -599,8 +601,11 @@ async function handleGrade(grade) {
   const card = session.currentCard;
 
   // Save for undo (pre-grade snapshot)
+  const snapshotCard = JSON.parse(JSON.stringify(card));
+  snapshotCard.suspended = snapshotCard.suspended ?? false;
+  snapshotCard.leech = snapshotCard.leech ?? false;
   session.undoStack.push({
-    card: JSON.parse(JSON.stringify(card)), // deep copy
+    card: snapshotCard,
     grade,
     index: session.index
   });
@@ -687,7 +692,8 @@ async function undoLastGrade() {
       lapses: card.lapses,
       last_review: card.last_review,
       due_date: card.due_date,
-      suspended: card.suspended
+      suspended: card.suspended ?? false,
+      leech: card.leech ?? false
     }, null);
 
     // Remove the last review log entry

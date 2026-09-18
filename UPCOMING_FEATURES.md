@@ -1011,6 +1011,23 @@ extended `deleteDeck(deckId)` to cascade-delete all deck-scoped and card-scoped 
   * Captured UI screenshots in both Light and Dark themes (`deck_deleted_decklist_light.png`, `deck_deleted_decklist_dark.png`).
   * Python backend tests (75/75 passing) and Node audio regression suites pass with zero regressions.
 
+**Tier 1 #6 — Leech Flag Restoration on Undo (`public/study.js`)** —
+restored the `leech` flag alongside `suspended` in `undoLastGrade()`, ensuring cards undone after triggering a leech state cleanly revert back to unleeched, active status:
+- **Consistent Leech Reversion on Undo** (`public/study.js`):
+  * Previously, `handleGrade()` snapshotted only `{ card: JSON.parse(JSON.stringify(card)), grade, index }` and `undoLastGrade()` restored `state`, `difficulty`, `stability`, `reps`, `lapses`, `last_review`, `due_date`, and `suspended`, but omitted `leech`.
+  * If a grade (e.g. 4th lapse on "Again") triggered leech banishment, `gradeCard()` set both `suspended: true` and `leech: true`. Calling `undoLastGrade()` then set `suspended: false`, but left `leech: true` permanently in IndexedDB. As a result, the card looked like a leech in queries and views while continuing to study normally as an unsuspended card.
+  * Explicitly captured `snapshotCard.suspended = snapshotCard.suspended ?? false` and `snapshotCard.leech = snapshotCard.leech ?? false` in the pre-grade snapshot before any grading or leech mutations run.
+  * Extended `undoLastGrade()` to pass `{ suspended: card.suspended ?? false, leech: card.leech ?? false }` into `updateCardAfterReview(card.id, ...)`.
+  * Preserved all leech detection thresholds (`LEECH_LAPSE_THRESHOLD = 4`), banishment animations, Teach-It flows, and normal review queue behavior.
+- **Verified via automated headless Chrome CDP test**:
+  * Real-path study flow verified: card with 3 lapses graded "Again" transitioned to 4 lapses, `suspended: true`, and `leech: true` with banishment animation.
+  * Undoing the grade restored the card to 3 lapses, `suspended: false`, and `leech: false` in IndexedDB.
+  * Confirmed the undone card returned immediately to the study queue and was active/studyable on screen.
+  * Confirmed query `getSuspendedCards()` returned 0 cards after undo.
+  * Verified non-leech review undo regression (grading "Good" and undoing cleanly preserves card state with `suspended: false, leech: false`).
+  * Captured UI screenshots in both Light and Dark themes (`undo_leech_restored_light.png`, `undo_leech_restored_dark.png`).
+  * Python backend test suite (75/75 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):
