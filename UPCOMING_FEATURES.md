@@ -1070,6 +1070,25 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 1 #9 — Teach-It Grade Persistence Before Sheet Display (`public/db.js`, `public/study.js`)** —
+persisted grades and review log records to IndexedDB immediately upon grading, before opening the Teach-It explanation sheet, so dismissing the session via Escape or navigating away cannot silently drop reviews:
+- **Root Cause & Behavior** (`public/study.js`):
+  * `handleGrade()` in `study.js` previously incremented `session.results[grade]` in memory before displaying the Teach-It sheet for "Good" or "Easy" grades, but deferred `persistGrade()` (the IndexedDB write to `cards` and `reviewLog`) to the sheet's Skip/Continue button click handlers.
+  * If a user pressed Escape while the Teach-It sheet was open (or navigated away), the global Escape handler triggered `endStudySession()`, exiting the session with the in-memory results incremented but without writing the card state or review log to IndexedDB. The grade was silently dropped.
+- **Immediate Persistence Fix** (`public/study.js`, `public/db.js`):
+  * In `handleGrade()`: moved `await persistGrade(card, fsrsUpdate, reviewLogEntry)` immediately before the `if (grade === 'good' || grade === 'easy')` check. The card's updated FSRS parameters and reviewLog record are written to IndexedDB before `showTeachIt()` opens.
+  * In `public/db.js`: added and exported `updateLastReviewLogTeachingNote(cardId, teachingNote)`, which looks up the most recent reviewLog record for the card using a cursor on the `by_cardId` index and updates its `teachingNote` in place.
+  * In `showTeachIt()`: Skip now removes the sheet and proceeds to card exit without calling `persistGrade()`, eliminating duplicate reviewLog entries. Continue updates `teachingNote` via `updateLastReviewLogTeachingNote` only if the user entered an explanation, then exits cleanly without double-persisting.
+  * In `undoLastGrade()`, `leaveSession()`, and `teardownStudySession()`: ensure any active `.teach-it-sheet` is cleanly removed from the DOM. Exported `undoLastGrade` from `study.js`.
+  * In `attachKeyboard()`: Escape key continues to end the study session from any focused element (including inputs/textareas), while all other study shortcuts (? / U / space / numbers) are prevented from firing while the user is actively typing in a textarea or input.
+- **Verified via Automated Headless Chrome CDP**:
+  * Escape test: Graded "Good" → verified Teach-It sheet opened → pressed Escape → verified card FSRS state was saved in IndexedDB (`reps === 1`, state updated) and reviewLog recorded the review (`grade: 'good'`) without silent drops.
+  * Skip test: Graded "Good" → clicked Skip → verified card persisted with exactly 1 reviewLog entry (`teachingNote === null`), confirming no double persistence.
+  * Continue test: Graded "Easy" → typed custom explanation → clicked Continue → verified card persisted with exactly 1 reviewLog entry and `teachingNote` set to the entered text.
+  * Undo test: Invoked `undoLastGrade()` → verified card state restored to pre-grade snapshot (`reps === 0`) and reviewLog record removed.
+  * Captured UI screenshots in both Light and Dark themes (`teach_it_sheet_light.png`, `teach_it_sheet_dark.png`).
+  * Python backend test suite (78/78 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):

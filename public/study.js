@@ -3,7 +3,7 @@
 
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
-  getReviewLogForCard, getDeck, removeLastReviewLogForCard,
+  getReviewLogForCard, getDeck, removeLastReviewLogForCard, updateLastReviewLogTeachingNote,
   getRelationshipsFrom, getSetting,
   DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP
 } from './db.js';
@@ -627,13 +627,15 @@ async function handleGrade(grade) {
 
   session.results[grade]++;
 
+  // Persist the grade to IndexedDB before opening Teach-It so Escape or session exit cannot drop it
+  await persistGrade(card, fsrsUpdate, reviewLogEntry);
+
   // Teach It for Good/Easy
   if (grade === 'good' || grade === 'easy') {
     showTeachIt(card, fsrsUpdate, reviewLogEntry, result.leech);
     return;
   }
 
-  await persistGrade(card, fsrsUpdate, reviewLogEntry);
   animateCardExit(result.leech);
 }
 
@@ -658,16 +660,17 @@ function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false) {
   const textarea = sheet.querySelector('textarea');
   textarea.focus();
 
-  sheet.querySelector('.teach-it-skip').addEventListener('click', async () => {
+  sheet.querySelector('.teach-it-skip').addEventListener('click', () => {
     sheet.remove();
-    await persistGrade(card, fsrsUpdate, reviewLogEntry);
     animateCardExit(isLeech);
   });
 
   sheet.querySelector('.teach-it-continue').addEventListener('click', async () => {
-    reviewLogEntry.teachingNote = textarea.value.trim() || null;
+    const note = textarea.value.trim() || null;
+    if (note) {
+      await updateLastReviewLogTeachingNote(card.id, note);
+    }
     sheet.remove();
-    await persistGrade(card, fsrsUpdate, reviewLogEntry);
     animateCardExit(isLeech);
   });
 }
@@ -676,8 +679,11 @@ async function persistGrade(card, fsrsUpdate, reviewLogEntry) {
   await updateCardAfterReview(card.id, fsrsUpdate, reviewLogEntry);
 }
 
-async function undoLastGrade() {
+export async function undoLastGrade() {
   if (session.undoStack.length === 0) return;
+
+  const sheet = document.querySelector('.teach-it-sheet');
+  if (sheet) sheet.remove();
 
   const lastAction = session.undoStack.pop();
   const card = lastAction.card;
@@ -819,17 +825,21 @@ function attachKeyboard() {
   session.keyboardHandler = (e) => {
     if (!session.isActive) return;
 
+    // Escape ends session (even from inside an input/textarea)
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      endStudySession();
+      return;
+    }
+
+    // Don't intercept study shortcuts when typing in a textarea or input
+    const tag = e.target && e.target.tagName;
+    if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+
     // ? key shows shortcuts
     if (e.key === '?' || e.key === 'Slash') {
       e.preventDefault();
       showShortcutsOverlay();
-      return;
-    }
-
-    // Escape ends session
-    if (e.code === 'Escape') {
-      e.preventDefault();
-      endStudySession();
       return;
     }
 
@@ -1014,6 +1024,8 @@ async function renderSessionSummary() {
 
 /* ---------- Exit ---------- */
 function leaveSession() {
+  const sheet = document.querySelector('.teach-it-sheet');
+  if (sheet) sheet.remove();
   session.isActive = false;
   detachKeyboard();
   if (typeof session.onExit === 'function') {
@@ -1028,6 +1040,8 @@ function leaveSession() {
  * Safe to call multiple times.
  */
 export function teardownStudySession() {
+  const sheet = document.querySelector('.teach-it-sheet');
+  if (sheet) sheet.remove();
   session.isActive = false;
   detachKeyboard();
 }

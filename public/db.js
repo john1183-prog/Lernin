@@ -1923,6 +1923,27 @@ export async function removeLastReviewLogForCard(cardId) {
   return false;
 }
 
+export async function updateLastReviewLogTeachingNote(cardId, teachingNote) {
+  const db = await getDB();
+  const tx = db.transaction('reviewLog', 'readwrite');
+  const index = tx.store.index('by_cardId');
+
+  const range = IDBKeyRange.only(cardId);
+  let cursor = await index.openCursor(range, 'prev');
+
+  if (cursor) {
+    cursor.update({
+      ...cursor.value,
+      teachingNote: teachingNote || null
+    });
+    await tx.done;
+    return true;
+  }
+
+  await tx.done;
+  return false;
+}
+
 
 /* =========================================================================
    Spatial learning stores (v8) — landmarks, study paths, annotations
