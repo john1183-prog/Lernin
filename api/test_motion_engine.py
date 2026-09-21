@@ -261,6 +261,75 @@ class TestEmphasisExpansion(unittest.TestCase):
         exit_opacity_time = sorted(p["time"] for p in l["keyframes"]["opacity"])[-1]
         self.assertAlmostEqual(exit_opacity_time, at + 0.9 + 0.25)
 
+    def test_late_emphasis_exit_clamped_to_scene_duration(self):
+        # Reproduces the bug where an emphasis layer appearing late in the scene
+        # (at=4.0 with default hold=0.9 on duration=5.0) would have its exit fade
+        # finish at 5.15s (> 5.0s). Because the player clamps at scene.duration,
+        # the element froze on screen at opacity ~0.94 instead of fading out.
+        s = script(
+            scene={"name": "Test", "duration": 5.0, "fps": 30},
+            markers=[{"name": "late", "time": 4.0}],
+            layers=[{
+                "name": "e", "type": "emphasis", "text": "CLIMAX",
+                "at": {"marker": "late", "offset": 0}, "style": "pop",
+            }]
+        )
+        l = expand_script(s)["layers"][0]
+        opacity_kfs = l["keyframes"]["opacity"]
+        scale_kfs = l["keyframes"]["scale"]
+
+        # All keyframe times must not exceed scene duration
+        self.assertLessEqual(max(p["time"] for p in opacity_kfs), 5.0)
+        self.assertLessEqual(max(p["time"] for p in scale_kfs), 5.0)
+
+        # Exit should finish at scene duration with opacity 0
+        last_opacity = max(opacity_kfs, key=lambda p: p["time"])
+        self.assertAlmostEqual(last_opacity["time"], 5.0)
+        self.assertEqual(last_opacity["value"], 0)
+
+        # Exit start should be clamped to 5.0 - 0.25 = 4.75
+        exit_start_opacity = [p for p in opacity_kfs if p["time"] == 4.75]
+        self.assertTrue(len(exit_start_opacity) > 0)
+        self.assertEqual(exit_start_opacity[0]["value"], 1)
+
+    def test_late_emphasis_explicit_large_hold_clamped(self):
+        # An explicit large hold (hold=2.0 at at=4.2 on duration=5.0) must be clamped
+        # so hold becomes 5.0 - 4.2 - 0.25 = 0.55s, exiting by 5.0s.
+        s = script(
+            scene={"name": "Test", "duration": 5.0, "fps": 30},
+            layers=[{
+                "name": "e", "type": "emphasis", "text": "FINAL",
+                "at": {"offset": 4.2}, "hold": 2.0, "style": "fade",
+            }]
+        )
+        l = expand_script(s)["layers"][0]
+        opacity_kfs = l["keyframes"]["opacity"]
+
+        self.assertLessEqual(max(p["time"] for p in opacity_kfs), 5.0)
+        last_opacity = max(opacity_kfs, key=lambda p: p["time"])
+        self.assertAlmostEqual(last_opacity["time"], 5.0)
+        self.assertEqual(last_opacity["value"], 0)
+
+    def test_very_late_emphasis_exit_shortened_within_duration(self):
+        # When available time is less than 0.25s (at=4.85 on duration=5.0),
+        # hold is 0 and exit sequence is shortened so it finishes at 5.0s.
+        s = script(
+            scene={"name": "Test", "duration": 5.0, "fps": 30},
+            layers=[{
+                "name": "e", "type": "emphasis", "text": "END",
+                "at": {"offset": 4.85}, "hold": 0.5, "style": "pop",
+            }]
+        )
+        l = expand_script(s)["layers"][0]
+        opacity_kfs = l["keyframes"]["opacity"]
+        scale_kfs = l["keyframes"]["scale"]
+
+        self.assertLessEqual(max(p["time"] for p in opacity_kfs), 5.0)
+        self.assertLessEqual(max(p["time"] for p in scale_kfs), 5.0)
+        last_opacity = max(opacity_kfs, key=lambda p: p["time"])
+        self.assertAlmostEqual(last_opacity["time"], 5.0)
+        self.assertEqual(last_opacity["value"], 0)
+
 
 class TestCamera(unittest.TestCase):
     def test_camera_defaults_to_scene_center_when_unset(self):

@@ -1049,8 +1049,26 @@ completed the offline shell asset list and implemented the standard waiting-serv
   * Cache inspection (`lernin-shell-v26`): all 32 precached entries confirmed present; `/concept-graph.js` confirmed absent.
   * Update prompt: element rendered with correct warm text, both "Later" (dismiss with animation) and "Refresh" (skipWaiting called, button disabled, `__swUserApprovedRefresh` set) flows verified.
   * Offline cold-start smoke: with `Network.emulateNetworkConditions offline=true`, navigation to `#/motion/:deckId` rendered the Motion Studio topic-input (`#msTopicInput`), navigation to `#/mind-map-doc/:docId` handled gracefully; dynamic imports of `motion-player.js`, `motion-api.js`, `motion-manual-import.js`, `secrets.js`, and `json-repair.js` all resolved from cache without network.
-  * Screenshots captured in Light and Dark themes (`sw_update_prompt_light.png`, `sw_update_prompt_dark.png`).
+  * Screenshots captured in both Light and Dark themes (`sw_update_prompt_light.png`, `sw_update_prompt_dark.png`).
   * Python backend test suite (75/75 passing) and Node audio regression suites pass with zero regressions.
+
+**Tier 1 #8 — Motion Studio Emphasis Exit Timing Clamped (`api/motion_engine.py`, `api/test_motion_engine.py`)** —
+clamped emphasis layer exit timing to ensure late-appearing emphasis elements complete their fade-out at or before `scene.duration` instead of freezing on screen:
+- **Root Cause & Behavior** (`api/motion_engine.py`):
+  * `motion_engine.py` computed an emphasis layer's exit fade at `at + hold + 0.25s` via `_add_point()` directly, bypassing the duration boundary checks applied to manual keyframes.
+  * In `motion-player.js`, playback stops/clamps at `scene.duration`. When an emphasis layer appeared late in a scene (such as `at = 4.0s` with default `hold = 0.9s` on a 5.0s scene, pushing the exit fade to `5.15s`), the entrance animation ran, but playback froze at `t = 5.0s` while the element was still at 94%–100% opacity, causing it to freeze permanently on screen.
+- **Timing Clamping Fix** (`api/motion_engine.py`):
+  * When `at + hold + 0.25 > scene.duration`, clamp `hold = max(0.0, scene.duration - at - 0.25)`, scheduling `exit_start = at + hold` and `exit_end = min(scene.duration, exit_start + 0.25)`.
+  * If `exit_end > exit_start`, opacity smoothly fades from 1.0 down to 0.0 (and scale to 0.85) reaching completion exactly at `exit_end <= scene.duration`. If `exit_end <= exit_start`, final opacity 0.0 and scale 0.85 are applied at `exit_end`.
+  * Added `add_point(prop, t, val, easing)` helper that caps all emphasis keyframe points at `min(scene.duration, t)`, preventing any entrance or exit beat from ever overrunning `scene.duration`.
+- **Verified via Unit Tests & Headless Chrome CDP**:
+  * Added 3 unit tests in `TestEmphasisExpansion` (`api/test_motion_engine.py`):
+    - `test_late_emphasis_exit_clamped_to_scene_duration`: verifies `at=4.0`, default `hold=0.9` on 5.0s scene clamps hold to 0.75s, exits at 5.0s, opacity reaches 0.
+    - `test_late_emphasis_explicit_large_hold_clamped`: verifies explicit `hold=2.0` at `at=4.2` clamps hold to 0.55s, exits by 5.0s with opacity 0.
+    - `test_very_late_emphasis_exit_shortened_within_duration`: verifies `at=4.85` on 5.0s scene sets hold to 0.0s, exit completes within 5.0s with opacity 0.
+  * Full Python backend test suite passed: 78/78 tests passing (up from 75).
+  * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
+  * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:

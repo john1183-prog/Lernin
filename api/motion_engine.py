@@ -85,32 +85,44 @@ def _apply_emphasis(layer: Layer, keyframes: dict, scene, markers: dict) -> dict
     y = scene.height * _EMPHASIS_SLOT_Y.get(layer.slot, _EMPHASIS_SLOT_Y["center"])
     font_size = round(scene.height * _EMPHASIS_SIZE_SCALE.get(layer.size, _EMPHASIS_SIZE_SCALE["large"]))
 
+    exit_duration = 0.25
+    if at + hold + exit_duration > scene.duration:
+        hold = max(0.0, scene.duration - at - exit_duration)
+
     exit_start = at + hold
+    exit_end = min(scene.duration, exit_start + exit_duration)
+
+    def add_point(prop, t, val, easing="linear"):
+        _add_point(keyframes, prop, min(scene.duration, t), val, easing)
 
     if style == "slideup":
-        _add_point(keyframes, "y", at, y + scene.height * 0.06, "linear")
-        _add_point(keyframes, "y", at + 0.28, y, "easeOut")
-        _add_point(keyframes, "opacity", at, 0, "linear")
-        _add_point(keyframes, "opacity", at + 0.22, 1, "easeOut")
+        add_point("y", at, y + scene.height * 0.06, "linear")
+        add_point("y", at + 0.28, y, "easeOut")
+        add_point("opacity", at, 0, "linear")
+        add_point("opacity", at + 0.22, 1, "easeOut")
     elif style == "fade":
-        _add_point(keyframes, "opacity", at, 0, "linear")
-        _add_point(keyframes, "opacity", at + 0.25, 1, "easeOut")
+        add_point("opacity", at, 0, "linear")
+        add_point("opacity", at + 0.25, 1, "easeOut")
     elif style == "zoom":
-        _add_point(keyframes, "scale", at, 2.4, "linear")
-        _add_point(keyframes, "scale", at + 0.3, 1, "easeOut")
-        _add_point(keyframes, "opacity", at, 0, "linear")
-        _add_point(keyframes, "opacity", at + 0.12, 1, "easeOut")
+        add_point("scale", at, 2.4, "linear")
+        add_point("scale", at + 0.3, 1, "easeOut")
+        add_point("opacity", at, 0, "linear")
+        add_point("opacity", at + 0.12, 1, "easeOut")
     else:  # "pop", and the fallback if something slips past schema validation
-        _add_point(keyframes, "scale", at, 0.3, "linear")
-        _add_point(keyframes, "scale", at + 0.18, 1.12, "back")
-        _add_point(keyframes, "scale", at + 0.32, 1, "easeInOut")
-        _add_point(keyframes, "opacity", at, 0, "linear")
-        _add_point(keyframes, "opacity", at + 0.08, 1, "easeOut")
+        add_point("scale", at, 0.3, "linear")
+        add_point("scale", at + 0.18, 1.12, "back")
+        add_point("scale", at + 0.32, 1, "easeInOut")
+        add_point("opacity", at, 0, "linear")
+        add_point("opacity", at + 0.08, 1, "easeOut")
 
-    _add_point(keyframes, "opacity", exit_start, 1, "linear")
-    _add_point(keyframes, "opacity", exit_start + 0.25, 0, "easeIn")
-    _add_point(keyframes, "scale", exit_start, 1, "linear")
-    _add_point(keyframes, "scale", exit_start + 0.25, 0.85, "easeIn")
+    if exit_end > exit_start:
+        add_point("opacity", exit_start, 1, "linear")
+        add_point("opacity", exit_end, 0, "easeIn")
+        add_point("scale", exit_start, 1, "linear")
+        add_point("scale", exit_end, 0.85, "easeIn")
+    else:
+        add_point("opacity", exit_end, 0, "linear")
+        add_point("scale", exit_end, 0.85, "linear")
 
     for prop in keyframes:
         keyframes[prop].sort(key=lambda p: p["time"])
