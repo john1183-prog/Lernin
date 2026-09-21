@@ -6,29 +6,44 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'lernin-shell-v25';
+const CACHE_VERSION = 'lernin-shell-v26';
 
-// Bump CACHE_VERSION on every deploy that changes any of these files, or
-// returning users will keep serving a stale shell from cache. Wiring this
-// bump into your CI push step (e.g. injecting a build hash) is worth doing
-// once this stabilizes — for now it's a manual version string.
+// Bump CACHE_VERSION on every release that changes app code, assets, or styles.
+// When bumped, the browser installs the new shell in the background into a fresh
+// cache and holds the worker in a 'waiting' state. The active page detects the
+// waiting worker and presents a warm update prompt ("New version ready — refresh?").
+// When the user confirms, the client posts SKIP_WAITING to this worker, which then
+// activates, clears old caches, and claims clients, triggering a smooth reload.
 const SHELL_ASSETS = [
   '/',
   '/index.html',
+  '/manifest.json',
+  '/styles.css',
   '/app.js',
   '/db.js',
   '/scheduler.js',
   '/study.js',
   '/sound.js',
+  '/canvas.js',
   '/mind-map.js',
   '/spatial-study.js',
   '/api.js',
-  '/canvas.js',
-  '/concept-graph.js',
   '/manual-json-import.js',
   '/pdf-extract.js',
-  '/manifest.json',
-  '/styles.css',
+  '/secrets.js',
+  '/json-repair.js',
+  '/motion-studio.js',
+  '/motion-player.js',
+  '/motion-api.js',
+  '/motion-manual-import.js',
+  '/mind-map-doc.js',
+  '/mind-map-doc-api.js',
+  '/mind-map-doc-manual-import.js',
+  '/onboarding-script.json',
+  '/onboarding-script-light.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
   '/vendor/idb.js',
   '/vendor/ts-fsrs.js'
 ];
@@ -58,7 +73,15 @@ self.addEventListener('install', (event) => {
       }
     })()
   );
-  self.skipWaiting();
+  // Deliberately do NOT call self.skipWaiting() here. The new service worker
+  // waits until the user confirms the update prompt on the active page.
+});
+
+// Activate only when the user confirms the update prompt or on natural restart
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {

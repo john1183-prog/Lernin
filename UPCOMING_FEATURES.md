@@ -1028,6 +1028,30 @@ restored the `leech` flag alongside `suspended` in `undoLastGrade()`, ensuring c
   * Captured UI screenshots in both Light and Dark themes (`undo_leech_restored_light.png`, `undo_leech_restored_dark.png`).
   * Python backend test suite (75/75 passing) and Node audio regression suites pass with zero regressions.
 
+**Tier 1 #7 — Service Worker Offline Shell Completeness and Waiting-Worker Update Prompt (`public/sw.js`, `public/app.js`, `public/styles.css`, `public/index.html`)** —
+completed the offline shell asset list and implemented the standard waiting-service-worker update prompt so returning users get notified when a new version is ready rather than silently serving stale cache:
+- **Shell Asset Completeness (`public/sw.js`)** — `SHELL_ASSETS` bumped from 17 entries to 38, covering every app module required for a true offline cold start:
+  * Added (previously missing): `secrets.js`, `json-repair.js`, `motion-studio.js`, `motion-player.js`, `motion-api.js`, `motion-manual-import.js`, `mind-map-doc.js`, `mind-map-doc-api.js`, `mind-map-doc-manual-import.js`, `onboarding-script.json`, `onboarding-script-light.json`, `icons/icon-192.png`, `icons/icon-512.png`, `icons/icon-maskable-512.png`.
+  * Removed: `/concept-graph.js` (file is a deprecated stub with a comment saying "DEPRECATED — functionality absorbed into canvas.js L2/L3"; no live imports reference it from routing code; kept in the tree for Tier 2 #6 removal decision).
+  * Reordered: HTML/CSS/manifest moved to top of list for visual clarity; `styles.css` and `manifest.json` moved earlier.
+  * `vendor/pdf.min.mjs` and `vendor/pdf.worker.min.mjs` deliberately excluded (~1.7 MB combined): `pdf-extract.js` itself documents this choice — most installs never import a PDF; the SW's opportunistic same-origin cache handler precaches them on first actual use.
+  * KaTeX vendor files (CSS, JS, fonts, `auto-render.min.js`) deliberately excluded: KaTeX is loaded via `<script defer>` tags in `index.html` with cross-origin fonts from `fonts.gstatic.com`; the fetch handler already caches both same-origin and `fonts.gstatic.com` responses opportunistically; inclusion in `cache.addAll` would require managing 20+ font files explicitly.
+- **CACHE_VERSION bump** — `'lernin-shell-v25'` → `'lernin-shell-v26'`. Comment updated to accurately describe the new bump-and-prompt workflow rather than the old manual-bump-only note.
+- **Waiting Worker Update Prompt** (`public/sw.js`, `public/app.js`, `public/styles.css`):
+  * `self.skipWaiting()` removed from the `install` event — new workers now wait rather than immediately taking over.
+  * Added `message` event listener: when the active page posts `{ type: 'SKIP_WAITING' }`, the worker activates and claims clients.
+  * `initServiceWorker()` added to `app.js`: registers `/sw.js`, wires `controllerchange` → page reload (only if `__swUserApprovedRefresh` is set), and handles both the "already waiting" and "updatefound → installed" cases.
+  * `showUpdatePrompt(waitingWorker)` added to `app.js`: injects a `.toast.update-prompt` element into the `.toast-container` with text *"New version ready — refresh?"*, a green "Refresh" button (posts `SKIP_WAITING`, disables itself, triggers controlled reload), and a muted "Later" link that dismisses cleanly with the existing `toastOut` animation.
+  * `@keyframes toastIn` / `@keyframes toastOut` added to `styles.css` (they were referenced by the toast classes but never defined — a pre-existing gap surfaced by the new prompt's dismiss animation).
+  * All new prompt styles in `.update-prompt`, `.update-prompt-text`, `.update-prompt-actions`, `.update-prompt-btn`, `.update-prompt-dismiss` added to `styles.css`.
+  * SW registration script removed from `index.html` (was inline `<script>`); registration now lives exclusively in `initServiceWorker()` inside the module graph, keeping SW lifecycle in one place.
+- **Verified via automated headless Chrome CDP test**:
+  * Cache inspection (`lernin-shell-v26`): all 32 precached entries confirmed present; `/concept-graph.js` confirmed absent.
+  * Update prompt: element rendered with correct warm text, both "Later" (dismiss with animation) and "Refresh" (skipWaiting called, button disabled, `__swUserApprovedRefresh` set) flows verified.
+  * Offline cold-start smoke: with `Network.emulateNetworkConditions offline=true`, navigation to `#/motion/:deckId` rendered the Motion Studio topic-input (`#msTopicInput`), navigation to `#/mind-map-doc/:docId` handled gracefully; dynamic imports of `motion-player.js`, `motion-api.js`, `motion-manual-import.js`, `secrets.js`, and `json-repair.js` all resolved from cache without network.
+  * Screenshots captured in Light and Dark themes (`sw_update_prompt_light.png`, `sw_update_prompt_dark.png`).
+  * Python backend test suite (75/75 passing) and Node audio regression suites pass with zero regressions.
+
 **Map Secret Discovery Acknowledgment (`hasFoundMapSecret`)** —
 wired up a one-time, in-voice acknowledgment toast when the secret sprout motif on the Territory Map is first discovered:
 - **Spatial Map Integration** (`public/canvas.js`):

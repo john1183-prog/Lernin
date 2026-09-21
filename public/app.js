@@ -3971,12 +3971,122 @@ async function checkAndShowStudyReminder() {
   }
 }
 
+/* ---------- Service Worker & Update Prompt ---------- */
+export function showUpdatePrompt(waitingWorker) {
+  if (document.getElementById('swUpdatePrompt')) return;
+
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const prompt = document.createElement('div');
+  prompt.className = 'toast update-prompt';
+  prompt.id = 'swUpdatePrompt';
+  prompt.setAttribute('role', 'alert');
+
+  const text = document.createElement('span');
+  text.className = 'update-prompt-text';
+  text.textContent = 'New version ready — refresh?';
+
+  const actions = document.createElement('div');
+  actions.className = 'update-prompt-actions';
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'update-prompt-btn update-prompt-refresh';
+  refreshBtn.textContent = 'Refresh';
+
+  refreshBtn.addEventListener('click', () => {
+    window.__swUserApprovedRefresh = true;
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing…';
+
+    if (waitingWorker) {
+      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    }
+
+    // Fallback reload if controllerchange doesn't fire within 1000ms
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'update-prompt-dismiss';
+  dismissBtn.textContent = 'Later';
+
+  dismissBtn.addEventListener('click', () => {
+    prompt.classList.add('is-leaving');
+    const remove = () => prompt.remove();
+    prompt.addEventListener('animationend', remove, { once: true });
+    setTimeout(remove, 350);
+  });
+
+  actions.appendChild(refreshBtn);
+  actions.appendChild(dismissBtn);
+  prompt.appendChild(text);
+  prompt.appendChild(actions);
+  container.appendChild(prompt);
+}
+
+export function initServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing || !window.__swUserApprovedRefresh) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  const attachRegistration = (reg) => {
+    if (!reg) return;
+
+    // Case 1: A service worker is already waiting
+    if (reg.waiting) {
+      showUpdatePrompt(reg.waiting);
+      return;
+    }
+
+    // Case 2: A new service worker installs while the page is open
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (!newWorker) return;
+
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdatePrompt(newWorker);
+        }
+      });
+    });
+  };
+
+  const register = () => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      attachRegistration(reg);
+    }).catch((err) => {
+      console.error('Service worker registration failed:', err);
+    });
+  };
+
+  if (document.readyState === 'complete') {
+    register();
+  } else {
+    window.addEventListener('load', register);
+  }
+}
+
 /* ---------- Init ---------- */
 window.addEventListener('hashchange', handleRoute);
 initTheme();
 initFont();
 initGenerationListeners();
 initSoundSetting();
+initServiceWorker();
 handleRoute();
 checkAndShowStudyReminder();
 
@@ -3984,7 +4094,8 @@ if (typeof window !== 'undefined') {
   window.__homeDebug = {
     openMindMapChooser,
     getTileSvg,
-    renderDeckList
+    renderDeckList,
+    showUpdatePrompt
   };
 }
 
