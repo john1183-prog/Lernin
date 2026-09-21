@@ -744,33 +744,83 @@ export async function getDeckStateCounts(deckId) {
  * @returns {Promise<{ streakDays: number, weekCounts: number[], weekTotal: number }>}
  *   weekCounts is 7 entries, oldest to newest, ending with today.
  */
+/**
+ * Walks backward day-by-day from today through the reviewLog index `by_reviewedAt`
+ * in descending order until a gap is encountered or an outer bound is reached.
+ *
+ * @param {IDBDatabase} db
+ * @param {number} nowMs - anchor timestamp (ms)
+ * @param {Set<string>} frozenDayKeys - set of day keys covered by streak freezes
+ * @param {number} [maxDays=730] - outer safety bound (default 2 years / 730 days)
+ * @returns {Promise<number>} streak length in days
+ */
+export async function computeStreakDays(db, nowMs, frozenDayKeys, maxDays = 730) {
+  const tx = db.transaction('reviewLog', 'readonly');
+  const index = tx.store.index('by_reviewedAt');
+
+  // Upper bound at the very end of today local time so future records (e.g. clock skew) are ignored
+  const endOfToday = endOfLocalDay(nowMs);
+  const range = IDBKeyRange.upperBound(endOfToday);
+  let cursor = await index.openCursor(range, 'prev');
+
+  let streakDays = 0;
+  let currentDayMs = startOfLocalDay(nowMs);
+  const todayKey = localDayKey(nowMs);
+
+  // Walk backward until a gap is found or the outer safety bound (maxDays) is reached
+  while (streakDays < maxDays) {
+    const currentKey = localDayKey(currentDayMs);
+    const cursorKey = cursor ? localDayKey(cursor.key) : null;
+
+    if (cursorKey === currentKey) {
+      streakDays++;
+      // Skip past all other reviews on this same calendar day by jumping to 1 ms before the day's start
+      const beforeThisDay = startOfLocalDay(cursor.key) - 1;
+      try {
+        cursor = await cursor.continue(beforeThisDay);
+      } catch {
+        cursor = null;
+      }
+    } else if (frozenDayKeys && frozenDayKeys.has(currentKey)) {
+      streakDays++;
+      // Day was protected by a freeze — keep cursor positioned to match earlier days
+    } else if (currentKey === todayKey) {
+      // Unstudied today does not increment the streak, but does not break it either
+    } else {
+      // Unprotected gap in streak: stop walking
+      break;
+    }
+
+    currentDayMs = stepBackOneDay(currentDayMs);
+  }
+
+  return streakDays;
+}
+
+/**
+ * Streak + weekly review activity, read from reviewLog via its indexed
+ * `by_reviewedAt` field. Used by app.js's home stats card.
+ *
+ * Streak counts consecutive calendar days (local time) with at least one
+ * review, walking backward from today until a gap or outer bound (730d).
+ * A day with zero reviews breaks the streak UNLESS it's today itself (so
+ * the streak doesn't visibly reset to 0 the moment midnight passes,
+ * before the user has had a chance to study).
+ *
+ * @param {number} [now] - override "now" (epoch ms), mainly for testing
+ * @returns {Promise<{ streakDays: number, weekCounts: number[], weekTotal: number, studiedToday: boolean, freezesAvailable: number }>}
+ *   weekCounts is 7 entries, oldest to newest, ending with today.
+ */
 export async function getReviewStats(now) {
   const db = await getDB();
   const nowMs = now ?? Date.now();
+  const todayKey = localDayKey(nowMs);
 
-  // Pull the last 60 days of review log entries — enough to compute any
-  // realistic streak without scanning the entire lifetime log.
-  const lookbackStart = startOfLocalDay(nowMs - 60 * 24 * 60 * 60 * 1000);
-  const range = IDBKeyRange.lowerBound(lookbackStart);
-  const entries = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', range);
-
-  const reviewedDayKeys = new Set(entries.map((e) => localDayKey(e.reviewedAt)));
   const freezeState = await getStreakFreezeState();
   const frozenDayKeys = new Set(freezeState.frozenDayKeys);
 
-  let streakDays = 0;
-  let cursor = startOfLocalDay(nowMs);
-  const todayKey = localDayKey(nowMs);
-
-  while (true) {
-    const key = localDayKey(cursor);
-    if (reviewedDayKeys.has(key) || frozenDayKeys.has(key)) {
-      streakDays++;
-    } else if (key !== todayKey) {
-      break;
-    }
-    cursor -= 24 * 60 * 60 * 1000;
-  }
+  // Compute streak by walking backward through reviewLog until a gap or outer bound (730d)
+  const streakDays = await computeStreakDays(db, nowMs, frozenDayKeys);
 
   // Auto-award: +1 freeze (capped) every 7-day streak milestone reached,
   // tracked via lastAwardedMilestone so this doesn't re-award every time
@@ -787,16 +837,21 @@ export async function getReviewStats(now) {
     await saveStreakFreezeState(currentFreezeState);
   }
 
+  // Last 7 days review counts for the weekly activity strip
+  const weekLookbackStart = startOfLocalDay(nowMs - 6 * 24 * 60 * 60 * 1000);
+  const weekRange = IDBKeyRange.lowerBound(weekLookbackStart);
+  const weekEntries = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', weekRange);
+
   const weekCounts = [];
   for (let i = 6; i >= 0; i--) {
     const dayStart = startOfLocalDay(nowMs - i * 24 * 60 * 60 * 1000);
     const key = localDayKey(dayStart);
-    const count = entries.filter((e) => localDayKey(e.reviewedAt) === key).length;
+    const count = weekEntries.filter((e) => localDayKey(e.reviewedAt) === key).length;
     weekCounts.push(count);
   }
 
   const weekTotal = weekCounts.reduce((a, b) => a + b, 0);
-  const studiedToday = reviewedDayKeys.has(todayKey) || frozenDayKeys.has(todayKey);
+  const studiedToday = weekEntries.some((e) => localDayKey(e.reviewedAt) === todayKey) || frozenDayKeys.has(todayKey);
 
   return {
     streakDays,
@@ -945,6 +1000,19 @@ export async function useStreakFreeze() {
 
 function startOfLocalDay(ms) {
   const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function endOfLocalDay(ms) {
+  const d = new Date(ms);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+function stepBackOneDay(ms) {
+  const d = new Date(ms);
+  d.setDate(d.getDate() - 1);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }

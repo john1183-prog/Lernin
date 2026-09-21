@@ -1070,6 +1070,31 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 1 #10 — Streak Computation Beyond 60 Days with Descending Index Cursor (`public/db.js`)** —
+computed streaks accurately beyond 60 days by walking backward through `reviewLog` using an indexed cursor on `by_reviewedAt` until a gap or outer bound (730 days) is encountered, eliminating the fixed 60-day fetch window:
+- **Root Cause & Behavior** (`public/db.js`):
+  * `getReviewStats()` previously fetched `reviewLog` entries bounded by `lookbackStart = startOfLocalDay(nowMs - 60 * 24 * 60 * 60 * 1000)`.
+  * For users with unbroken streaks exceeding 60 days, older days were excluded from the fetched set; the backward day-by-day walk encountered a false gap at day 60, permanently freezing the streak counter at 60 days.
+- **Descending Index Walk with Outer Bound** (`public/db.js`):
+  * Added and exported `computeStreakDays(db, nowMs, frozenDayKeys, maxDays = 730)`.
+  * Opens an IDB cursor on `reviewLog` index `by_reviewedAt` with direction `'prev'` bounded by `endOfLocalDay(nowMs)`.
+  * Steps calendar days backward from `nowMs` using local calendar day arithmetic (`Date.prototype.setDate()`).
+  * Fast-skips multiple reviews on the same calendar day via `cursor.continue(startOfLocalDay(cursor.key) - 1)`, jumping directly to earlier dates in a single IDB step.
+  * Preserved freeze-day behavior (`frozenDayKeys` covered days increment `streakDays` and preserve cursor position for earlier reviews).
+  * Preserved unstudied-today grace period (`currentKey === todayKey` does not reset or break the streak).
+  * Enforces an outer safety bound (`maxDays = 730`, 2 years) to prevent unbounded scans.
+  * Decoupled 7-day weekly activity query (`weekCounts`, `weekTotal`, `studiedToday`), which now fetches only the past 7 days instead of the previous 60-day block.
+  * Preserved milestone-based freeze auto-awarding (`Math.floor(streakDays / 7)`).
+- **Verified via Automated Headless Chrome CDP**:
+  * 75 consecutive days test: seeded 75 days of reviews across real IndexedDB; verified `stats.streakDays === 75` (exceeding the old 60-day limit).
+  * Gap detection test: removed Day -30 review; verified streak breaks cleanly at day 30 (`stats.streakDays === 30`).
+  * Streak freeze test: added Day -30 to `frozenDayKeys`; verified streak freeze bridges the gap, restoring the full 75-day streak (`stats.streakDays === 75`).
+  * Unstudied today test: removed today's review; verified streak reports 74 days and `studiedToday === false` without resetting.
+  * Outer safety bound test: verified `computeStreakDays` with `maxDays = 10` respects the bound.
+  * Live UI test: verified home screen stats badge renders `🔥 75-day streak`.
+  * Captured screenshots in Light and Dark themes (`streak_75d_home_light.png`, `streak_75d_home_dark.png`).
+  * Python backend test suite (78/78 passing) and Node audio test suite (`ALL CHECKS PASSED`) pass with zero regressions.
+
 **Tier 1 #9 — Teach-It Grade Persistence Before Sheet Display (`public/db.js`, `public/study.js`)** —
 persisted grades and review log records to IndexedDB immediately upon grading, before opening the Teach-It explanation sheet, so dismissing the session via Escape or navigating away cannot silently drop reviews:
 - **Root Cause & Behavior** (`public/study.js`):
