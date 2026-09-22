@@ -801,6 +801,11 @@ export async function computeStreakDays(db, nowMs, frozenDayKeys, maxDays = 730)
  * Streak + weekly review activity, read from reviewLog via its indexed
  * `by_reviewedAt` field. Used by app.js's home stats card.
  *
+ * PURE READ: computes streakDays, weekCounts, weekTotal, studiedToday,
+ * and reads freezesAvailable without performing database writes or state mutations.
+ * Safe to call repeatedly, cache, or read-replicate. Callers needing to auto-award
+ * freezes on milestone crossings explicitly call maybeAwardStreakFreezes(streakDays).
+ *
  * Streak counts consecutive calendar days (local time) with at least one
  * review, walking backward from today until a gap or outer bound (730d).
  * A day with zero reviews breaks the streak UNLESS it's today itself (so
@@ -821,21 +826,6 @@ export async function getReviewStats(now) {
 
   // Compute streak by walking backward through reviewLog until a gap or outer bound (730d)
   const streakDays = await computeStreakDays(db, nowMs, frozenDayKeys);
-
-  // Auto-award: +1 freeze (capped) every 7-day streak milestone reached,
-  // tracked via lastAwardedMilestone so this doesn't re-award every time
-  // getReviewStats() is called (which happens on basically every render,
-  // not just once a day).
-  const milestone = Math.floor(streakDays / 7);
-  let currentFreezeState = freezeState;
-  if (milestone > freezeState.lastAwardedMilestone) {
-    currentFreezeState = {
-      ...freezeState,
-      freezesAvailable: Math.min(MAX_STREAK_FREEZES, freezeState.freezesAvailable + 1),
-      lastAwardedMilestone: milestone
-    };
-    await saveStreakFreezeState(currentFreezeState);
-  }
 
   // Last 7 days review counts for the weekly activity strip
   const weekLookbackStart = startOfLocalDay(nowMs - 6 * 24 * 60 * 60 * 1000);
@@ -858,7 +848,7 @@ export async function getReviewStats(now) {
     weekCounts,
     weekTotal,
     studiedToday,
-    freezesAvailable: currentFreezeState.freezesAvailable
+    freezesAvailable: freezeState.freezesAvailable
   };
 }
 
@@ -968,6 +958,44 @@ async function getStreakFreezeState() {
 async function saveStreakFreezeState(state) {
   const db = await getDB();
   return db.put('settings', { ...state, key: STREAK_FREEZE_KEY });
+}
+
+/**
+ * Auto-award: +1 freeze (capped at MAX_STREAK_FREEZES) every 7-day streak milestone reached,
+ * tracked via lastAwardedMilestone so this doesn't re-award repeatedly.
+ * Explicit write operation, separated from pure-read getReviewStats().
+ *
+ * @param {number} [streakDays] - streak count; if omitted, computed via getReviewStats()
+ * @returns {Promise<{ awarded: boolean, freezesAvailable: number, lastAwardedMilestone: number }>}
+ */
+export async function maybeAwardStreakFreezes(streakDays) {
+  if (typeof streakDays !== 'number') {
+    const stats = await getReviewStats();
+    streakDays = stats.streakDays;
+  }
+
+  const freezeState = await getStreakFreezeState();
+  const milestone = Math.floor(Math.max(0, streakDays) / 7);
+
+  if (milestone > (freezeState.lastAwardedMilestone || 0)) {
+    const updated = {
+      ...freezeState,
+      freezesAvailable: Math.min(MAX_STREAK_FREEZES, (freezeState.freezesAvailable || 0) + 1),
+      lastAwardedMilestone: milestone
+    };
+    await saveStreakFreezeState(updated);
+    return {
+      awarded: true,
+      freezesAvailable: updated.freezesAvailable,
+      lastAwardedMilestone: milestone
+    };
+  }
+
+  return {
+    awarded: false,
+    freezesAvailable: freezeState.freezesAvailable || 0,
+    lastAwardedMilestone: freezeState.lastAwardedMilestone || 0
+  };
 }
 
 /**

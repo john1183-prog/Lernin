@@ -1070,6 +1070,28 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #1 — Explicit Read/Write Contract Separation for `getReviewStats()` (`public/db.js`, `public/app.js`)** —
+separated read and write responsibilities by making `getReviewStats()` a pure read query and extracting streak freeze milestone auto-awarding into an explicit `maybeAwardStreakFreezes()` mutation function:
+- **Contract Ambiguity & Hidden Side-Effect** (`public/db.js`):
+  * `getReviewStats()` was documented and treated as a read-only query for dashboard stats, but executed an implicit database write to the `settings` object store (`saveStreakFreezeState`) whenever a user's streak crossed a 7-day milestone (`Math.floor(streakDays / 7) > freezeState.lastAwardedMilestone`).
+  * While benign in simple single-user flows, this hidden write created a critical concurrency and correctness landmine for caching layers, read replication, service worker background checks, and test harnesses assuming read purity.
+- **Approach Chosen — Option A: Split the Write** (`public/db.js`, `public/app.js`):
+  * **Pure Read Contract** (`public/db.js`): stripped the `settings` write mutation from `getReviewStats()`. The function now purely reads `reviewLog` and `settings`, returning `{ streakDays, weekCounts, weekTotal, studiedToday, freezesAvailable }` without any side effects. Repeated calls against the same state execute zero writes to IndexedDB.
+  * **Explicit Write Operation** (`public/db.js`): added and exported `maybeAwardStreakFreezes(streakDays)`. Checks if `milestone = Math.floor(streakDays / 7)` exceeds `lastAwardedMilestone`. If so, increments `freezesAvailable` (capped at `MAX_STREAK_FREEZES = 3`), updates `lastAwardedMilestone`, persists to `settings`, and returns `{ awarded: true, freezesAvailable, lastAwardedMilestone }`. Otherwise returns `{ awarded: false, freezesAvailable, lastAwardedMilestone }`. Supports computing `streakDays` defensively if omitted.
+  * **Updated Call Sites** (`public/app.js`):
+    - `renderDeckList()`: reads `getReviewStats()`, then explicitly invokes `await maybeAwardStreakFreezes(stats.streakDays)`. If awarded, updates `stats.freezesAvailable` for immediate rendering of `#streakFreezeCard`.
+    - `handleUseStreakFreeze()`: reads `getReviewStats()`, then explicitly invokes `await maybeAwardStreakFreezes(stats.streakDays)` to ensure any newly earned freeze is awarded before validating availability.
+    - `maybeFireDailyStudyReminder()`: retained pure read `await getReviewStats()` without write side-effects during background reminder checks.
+- **Verified via Automated Headless Chrome CDP & Regression Suites**:
+  * **Pure Read Verification**: Seeded a 7-day streak fixture in `reviewLog`; invoked `getReviewStats()` 3 consecutive times; verified `settings.streakFreezeState` was never written (remained `undefined`/null) and `freezesAvailable` remained 0 before explicit award.
+  * **Explicit Write Verification**: Invoked `maybeAwardStreakFreezes(stats.streakDays)`; verified `{ awarded: true, freezesAvailable: 1, lastAwardedMilestone: 1 }`, verified `settings.streakFreezeState` was written to IndexedDB, and verified subsequent `getReviewStats()` calls read `freezesAvailable: 1`.
+  * **Milestone Idempotency Verification**: Invoked `maybeAwardStreakFreezes()` a second time at milestone 1; verified `{ awarded: false, freezesAvailable: 1 }` without duplicate awards.
+  * **Milestone Cap Verification**: Seeded 3 freezes (cap); crossed milestone 3; verified freeze count remained capped at 3 with `lastAwardedMilestone: 3`.
+  * **Freeze Usage UX Preserved**: Verified `useStreakFreeze()` spent 1 freeze, marked today as protected, and prevented double spend on the same day.
+  * **Live UI Dashboard Verification**: Rendered deck list in real headless Chrome; verified home dashboard rendered streak badge (`🔥 7 day streak`) and freeze badge (`🧊 2 freezes`); captured screenshots in both Light and Dark themes (`tier2_1_home_light.png`, `tier2_1_home_dark.png`).
+  * Full Python backend test suite passed: 92/92 tests passing (exit code 0).
+  * Node audio regression suite passed: `ALL CHECKS PASSED` (exit code 0).
+
 **Tier 1 #11 — Trusted Client IP Resolution and IP-Keyed Free-Tier Quota (`api/index.py`, `api/test_anti_abuse.py`)** —
 hardened client IP resolution against header spoofing and keyed free-tier generation quotas for Motion Studio and Mind Map on trusted client IP rather than attacker-controlled `X-Client-Id`:
 - **Root Cause & Vulnerabilities** (`api/index.py`):

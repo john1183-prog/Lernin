@@ -2,7 +2,7 @@
    Home screen, bottom sheet, theme, view routing */
 
 import {
-  getDecks, getCardsDueTodayOrEarlier, getReviewStats, useStreakFreeze,
+  getDecks, getCardsDueTodayOrEarlier, getReviewStats, maybeAwardStreakFreezes, useStreakFreeze,
   getTheme, saveTheme, addDeck, getCardsByDeck,
   getRelationshipsFrom, getRelationshipsTo, addRelationship,
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
@@ -452,6 +452,10 @@ async function openMindMapChooser(decks) {
 
 async function handleUseStreakFreeze(onSuccess) {
   const stats = await getReviewStats();
+  const award = await maybeAwardStreakFreezes(stats.streakDays);
+  if (award.awarded) {
+    stats.freezesAvailable = award.freezesAvailable;
+  }
   if (stats.freezesAvailable <= 0) {
     showToast("No streak freezes left right now — you earn a new freeze every 7 streak days.", 3600);
     return;
@@ -486,6 +490,11 @@ export async function renderDeckList() {
     showToast('Failed to load dashboard.', 5000);
     console.error(err);
     return;
+  }
+
+  const freezeAward = await maybeAwardStreakFreezes(stats.streakDays);
+  if (freezeAward.awarded) {
+    stats.freezesAvailable = freezeAward.freezesAvailable;
   }
 
   const viewMode = localStorage.getItem('deckViewMode') || 'list';
