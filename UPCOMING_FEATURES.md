@@ -1070,6 +1070,31 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 1 #11 — Trusted Client IP Resolution and IP-Keyed Free-Tier Quota (`api/index.py`, `api/test_anti_abuse.py`)** —
+hardened client IP resolution against header spoofing and keyed free-tier generation quotas for Motion Studio and Mind Map on trusted client IP rather than attacker-controlled `X-Client-Id`:
+- **Root Cause & Vulnerabilities** (`api/index.py`):
+  * `_client_ip(request)` previously parsed `X-Forwarded-For` by taking `split(",")[0].strip()` (the leftmost address). In HTTP proxy chaining, the leftmost hop is set by the client and trivially spoofed, allowing attackers to evade IP-based rate limiting by rotating fake IP headers.
+  * Free-tier generation quotas for both Motion Studio (`_motion_quota`) and Mind Map (`_mind_map_quota`) were keyed directly on the client-supplied `X-Client-Id` header. Attackers could generate unlimited scripts against John's server key (`MOTION_SERVER_CLAUDE_KEY`) by simply rotating or spoofing `X-Client-Id` values per request.
+- **Trusted IP Resolution & IP-Keyed Quota Enforcement** (`api/index.py`):
+  * Rewrote `_client_ip(request)` with strict proxy-aware priority:
+    1. `x-vercel-forwarded-for` (first value if comma-separated): set directly by Vercel's edge proxy infrastructure.
+    2. `x-real-ip`: set by reverse proxy hops.
+    3. `x-forwarded-for` rightmost non-empty token (`[p.strip() for p in forwarded.split(",") if p.strip()][-1]`): extracts the peer hop appended by the trusted intermediate proxy rather than the untrusted client-claimed leftmost token.
+    4. `request.client.host`: direct socket connection fallback (local development / testing).
+    5. `"unknown"`: safe fallback when no client address is observable.
+  * Keyed `_motion_quota` and `_mind_map_quota` strictly on `client_ip = _client_ip(request)`. Rotating or spoofing `X-Client-Id` from the same IP shares the same quota bucket and cannot multiply or reset free generations.
+  * Removed hard 400 error on missing `X-Client-Id`; `X-Client-Id` remains optional client telemetry and omitting it cannot bypass the IP-level quota.
+  * IP rate limiter (`_rate_limit`) automatically inherits the hardened, spoof-resistant `_client_ip` resolution.
+  * BYOK routes (`X-LLM-Api-Key` present) remain untouched and bypass server-side quotas.
+  * Explicitly documented in code and backlog that quota and rate-limit enforcement is in-memory and per-instance until Tier 3 Upstash Redis is provisioned.
+- **Verified via Unit Tests & Regression Suites**:
+  * Created `api/test_anti_abuse.py` with 14 unit tests:
+    - `TestClientIpResolution`: validates leftmost spoof rejection, rightmost extraction across multi-hop chains, whitespace/empty segment handling, `x-vercel-forwarded-for` precedence, `x-real-ip` precedence, direct client host fallback, and `"unknown"` fallback.
+    - `TestFreeTierQuotas`: validates quota sharing across multiple distinct client IDs from the same IP, 402 rejection on quota exhaustion, quota enforcement when `X-Client-Id` is omitted, and BYOK quota bypass for both Motion Studio and Mind Map.
+    - `TestRateLimiting`: validates rate limiting against the trusted rightmost IP despite leftmost spoofing.
+  * Full Python backend test suite passed: 92/92 tests passing (up from 78).
+  * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
+
 **Tier 1 #10 — Streak Computation Beyond 60 Days with Descending Index Cursor (`public/db.js`)** —
 computed streaks accurately beyond 60 days by walking backward through `reviewLog` using an indexed cursor on `by_reviewedAt` until a gap or outer bound (730 days) is encountered, eliminating the fixed 60-day fetch window:
 - **Root Cause & Behavior** (`public/db.js`):

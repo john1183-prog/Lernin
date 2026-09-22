@@ -8,7 +8,15 @@ import json
 import base64
 import logging
 import httpx
-import anthropic
+try:
+    import anthropic
+except ImportError:
+    class _AnthropicAuthError(Exception): pass
+    class _AnthropicRateLimitError(Exception): pass
+    class _MockAnthropic:
+        AuthenticationError = _AnthropicAuthError
+        RateLimitError = _AnthropicRateLimitError
+    anthropic = _MockAnthropic()
 
 # Vercel's runtime (_vendor/vercel_runtime/vc_init.py) loads this file
 # dynamically via importlib.import_module() rather than running it as a
@@ -56,11 +64,40 @@ RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 10
 
 def _client_ip(request: Request) -> str:
+    """Resolves the trusted client IP address.
+    Priority:
+    1. x-vercel-forwarded-for (first value if comma-separated): set by Vercel edge network
+    2. x-real-ip: set by reverse proxy/Vercel
+    3. x-forwarded-for rightmost non-empty value: in standard proxy chaining, the
+       rightmost IP is appended by the trusted intermediate proxy, while leftmost
+       values may be client-spoofed
+    4. request.client.host: direct socket connection (local development)
+    5. 'unknown' fallback
+    """
+    # 1. Prefer x-vercel-forwarded-for (first value if multi)
+    vercel_forwarded = request.headers.get("x-vercel-forwarded-for")
+    if vercel_forwarded:
+        parts = [p.strip() for p in vercel_forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[0]
+
+    # 2. Else x-real-ip
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
+
+    # 3. Else x-forwarded-for rightmost (split on comma, strip, last non-empty)
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+
+    # 4. Else request.client.host
+    if request.client and request.client.host:
         return request.client.host
+
+    # 5. Else "unknown"
     return "unknown"
 
 def _check_rate_limit(ip: str):
@@ -608,18 +645,15 @@ def build_motion_manual_prompt(topic: str) -> str:
         "- 1-40 layers, unique names"
     )
 
-# TEMPORARY: in-memory, same limitation as _rate_limit above -- this dict
-# does not survive a cold start and is not shared across concurrent
-# function instances, so it's a soft speed bump, not an enforced cap.
-# Fine for now while there's no real traffic; needs a real persistent
-# counter (Vercel Marketplace -> Upstash Redis is the natural fit, since
-# Vercel KV itself was sunset) before the server key is trusted with any
-# real volume. Swapping it in only touches the two functions below.
+# TEMPORARY: in-memory, same limitation as _rate_limit above -- enforcement
+# is strictly in-memory and per-instance until Tier 3 Upstash Redis is provisioned.
+# Quotas key on trusted client_ip only, so an attacker cycling X-Client-Id headers
+# from the same IP cannot reset or multiply their quota.
 _motion_quota = defaultdict(int)
 MOTION_FREE_LIMIT = int(os.environ.get("MOTION_FREE_LIMIT", "3"))
 
-def _check_and_increment_motion_quota(client_id: str):
-    if _motion_quota[client_id] >= MOTION_FREE_LIMIT:
+def _check_and_increment_motion_quota(client_ip: str):
+    if _motion_quota[client_ip] >= MOTION_FREE_LIMIT:
         raise HTTPException(
             status_code=402,
             detail=(
@@ -627,12 +661,13 @@ def _check_and_increment_motion_quota(client_id: str):
                 "Add a Claude or Gemini key in Settings to keep going."
             ),
         )
-    _motion_quota[client_id] += 1
+    _motion_quota[client_ip] += 1
 
 def _resolve_motion_credentials(request: Request):
     """BYOK header present -> use it, no quota touched, costs the server
     nothing. Otherwise -> fall back to Lernin's own key, gated by the
-    free-generation quota. Returns (provider, api_key, used_server_key)."""
+    free-generation quota keyed on trusted client_ip. Returns
+    (provider, api_key, used_server_key)."""
     provider = request.headers.get("x-llm-provider", "").lower()
     api_key = request.headers.get("x-llm-api-key", "")
     if api_key:
@@ -646,10 +681,8 @@ def _resolve_motion_credentials(request: Request):
             status_code=401,
             detail="Add a Claude or Gemini key in Settings to use Motion Studio.",
         )
-    client_id = request.headers.get("x-client-id", "")
-    if not client_id:
-        raise HTTPException(status_code=400, detail="Missing X-Client-Id header.")
-    _check_and_increment_motion_quota(client_id)
+    client_ip = _client_ip(request)
+    _check_and_increment_motion_quota(client_ip)
     return "claude", server_key, True
 
 def _call_claude_motion(topic: str, api_key: str, retry_note: str = None) -> MotionScript:
@@ -851,14 +884,14 @@ def build_mind_map_manual_prompt(text: str) -> str:
         "Document:\n\n" + text
     )
 
-# TEMPORARY: in-memory, same limitation as _motion_quota above -- see that
-# comment for the real fix (Vercel Marketplace -> Upstash Redis). Own
-# independent pool from Motion Studio's, not shared.
+# TEMPORARY: in-memory, same limitation as _motion_quota above -- enforcement
+# is strictly in-memory and per-instance until Tier 3 Upstash Redis. Own
+# independent pool from Motion Studio's, keyed on trusted client_ip.
 _mind_map_quota = defaultdict(int)
 MIND_MAP_FREE_LIMIT = int(os.environ.get("MIND_MAP_FREE_LIMIT", "3"))
 
-def _check_and_increment_mind_map_quota(client_id: str):
-    if _mind_map_quota[client_id] >= MIND_MAP_FREE_LIMIT:
+def _check_and_increment_mind_map_quota(client_ip: str):
+    if _mind_map_quota[client_ip] >= MIND_MAP_FREE_LIMIT:
         raise HTTPException(
             status_code=402,
             detail=(
@@ -866,13 +899,13 @@ def _check_and_increment_mind_map_quota(client_id: str):
                 "Add a Claude or Gemini key in Settings to keep going."
             ),
         )
-    _mind_map_quota[client_id] += 1
+    _mind_map_quota[client_ip] += 1
 
 def _resolve_mind_map_credentials(request: Request):
     """Identical shape to _resolve_motion_credentials above -- BYOK header
     present -> use it, no quota touched. Otherwise -> Lernin's own key,
-    gated by Mind Map's own free-generation quota. Returns
-    (provider, api_key, used_server_key)."""
+    gated by Mind Map's own free-generation quota keyed on trusted client_ip.
+    Returns (provider, api_key, used_server_key)."""
     provider = request.headers.get("x-llm-provider", "").lower()
     api_key = request.headers.get("x-llm-api-key", "")
     if api_key:
@@ -886,10 +919,8 @@ def _resolve_mind_map_credentials(request: Request):
             status_code=401,
             detail="Add a Claude or Gemini key in Settings to use Mind Map.",
         )
-    client_id = request.headers.get("x-client-id", "")
-    if not client_id:
-        raise HTTPException(status_code=400, detail="Missing X-Client-Id header.")
-    _check_and_increment_mind_map_quota(client_id)
+    client_ip = _client_ip(request)
+    _check_and_increment_mind_map_quota(client_ip)
     return "claude", server_key, True
 
 GENERATE_MIND_MAP_TOOL = {
