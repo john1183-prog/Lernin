@@ -1004,8 +1004,10 @@ def _generate_cards_from_text(text: str, provider: str, api_key: str) -> Generat
         except anthropic.RateLimitError:
             raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
         except httpx.HTTPStatusError as e:
+            logger.warning("Gemini error status %s: %s", e.response.status_code, e.response.text)
             raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
         except Exception:
+            logger.exception("Card generation failed unexpectedly")
             raise HTTPException(
                 status_code=500,
                 detail="Card generation failed. Please try again."
@@ -1017,15 +1019,21 @@ def _generate_cards_from_text(text: str, provider: str, api_key: str) -> Generat
 # ---------- Endpoints ----------
 @app.post("/api/generate-cards", response_model=GenerateResponse)
 async def generate_cards(request: Request):
-    _check_rate_limit(_client_ip(request))
-    provider, api_key = _resolve_credentials(request)
+    try:
+        _check_rate_limit(_client_ip(request))
+        provider, api_key = _resolve_credentials(request)
 
-    body = await request.json()
-    text = body.get("text", "")
-    if not text or len(text.strip()) < 10:
-        raise HTTPException(status_code=400, detail="Text too short or missing.")
+        body = await request.json()
+        text = body.get("text", "")
+        if not text or len(text.strip()) < 10:
+            raise HTTPException(status_code=400, detail="Text too short or missing.")
 
-    return _generate_cards_from_text(text, provider, api_key)
+        return _generate_cards_from_text(text, provider, api_key)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("generate_cards crashed unexpectedly")
+        raise HTTPException(status_code=500, detail="Card generation failed. Please try again.")
 
 @app.post("/api/generate-cards-vision", response_model=GenerateResponse)
 async def generate_cards_vision(
@@ -1084,9 +1092,13 @@ async def generate_cards_vision(
     except anthropic.RateLimitError:
         raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
     except httpx.HTTPStatusError as e:
+        logger.warning("Gemini vision error status %s: %s", e.response.status_code, e.response.text)
         raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
+    except HTTPException:
+        raise
     except Exception:
         # Never send internal details to clients.
+        logger.exception("generate_cards_vision crashed unexpectedly")
         raise HTTPException(
             status_code=500,
             detail="Card generation failed. Please try again."
@@ -1106,21 +1118,27 @@ async def extract_ppt_text(request: Request, file: UploadFile = File(...)):
     already runs client-side for everyone regardless of BYOK status.
     Rate-limited like the generation endpoints since it's still unauthenticated.
     """
-    _check_rate_limit(_client_ip(request))
+    try:
+        _check_rate_limit(_client_ip(request))
 
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="No file uploaded")
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="No file uploaded")
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
 
-    filename = file.filename or "upload"
-    ext = filename.split('.')[-1].lower() if '.' in filename else ''
-    if ext not in ('ppt', 'pptx'):
-        raise HTTPException(status_code=400, detail="This endpoint only extracts PowerPoint files.")
+        filename = file.filename or "upload"
+        ext = filename.split('.')[-1].lower() if '.' in filename else ''
+        if ext not in ('ppt', 'pptx'):
+            raise HTTPException(status_code=400, detail="This endpoint only extracts PowerPoint files.")
 
-    text = _extract_ppt_text(content)
-    return ExtractTextResponse(text=text)
+        text = _extract_ppt_text(content)
+        return ExtractTextResponse(text=text)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("extract_ppt_text crashed unexpectedly")
+        raise HTTPException(status_code=500, detail="PowerPoint text extraction failed. Please try again.")
 
 @app.post("/api/generate-motion", response_model=GenerateMotionResponse)
 async def generate_motion(request: Request):
@@ -1159,7 +1177,8 @@ async def generate_motion(request: Request):
         except anthropic.RateLimitError:
             raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
+            logger.warning("Gemini motion error status %s: %s", e.response.status_code, e.response.text)
+            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
         except GeminiIncompleteError as e:
             error = (
                 f"Gemini's response didn't finish (reason: {e.finish_reason}) -- "
@@ -1189,16 +1208,9 @@ async def generate_motion(request: Request):
 
     except HTTPException:
         raise
-    except Exception as e:
-        # Anything not already translated above lands here — including
-        # bugs in credential resolution, which used to be able to crash
-        # uncaught. Logged so it's visible in Vercel's Runtime Logs, and
-        # the exception itself is included in the response for now since
-        # this is still pre-launch/dev-only traffic. TEMPORARY: tighten
-        # this to a generic client-facing message (log-only detail) before
-        # any real public traffic — see UPCOMING_FEATURES.md.
+    except Exception:
         logger.exception("generate_motion crashed unexpectedly")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Motion generation failed. Please try again.")
 
 @app.post("/api/expand-motion-script", response_model=GenerateMotionResponse)
 async def expand_motion_script(request: Request):
@@ -1224,9 +1236,9 @@ async def expand_motion_script(request: Request):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("expand_motion_script crashed unexpectedly")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Motion script expansion failed. Please try again.")
 
 @app.post("/api/generate-mind-map", response_model=GenerateMindMapResponse)
 async def generate_mind_map(request: Request):
@@ -1259,7 +1271,8 @@ async def generate_mind_map(request: Request):
         except anthropic.RateLimitError:
             raise HTTPException(status_code=429, detail="Claude rate limit hit. Wait a moment and retry.")
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code} — {e.response.text[:300]}")
+            logger.warning("Gemini mind map error status %s: %s", e.response.status_code, e.response.text)
+            raise HTTPException(status_code=502, detail=f"Gemini error: {e.response.status_code}")
         except GeminiIncompleteError as e:
             error = (
                 f"Gemini's response didn't finish (reason: {e.finish_reason}) -- "
@@ -1287,11 +1300,9 @@ async def generate_mind_map(request: Request):
 
     except HTTPException:
         raise
-    except Exception as e:
-        # TEMPORARY, same as generate_motion above: tighten before real
-        # public traffic, see UPCOMING_FEATURES.md.
+    except Exception:
         logger.exception("generate_mind_map crashed unexpectedly")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Mind map generation failed. Please try again.")
 
 @app.post("/api/expand-mind-map", response_model=GenerateMindMapResponse)
 async def expand_mind_map_endpoint(request: Request):
@@ -1316,6 +1327,6 @@ async def expand_mind_map_endpoint(request: Request):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("expand_mind_map crashed unexpectedly")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Mind map expansion failed. Please try again.")

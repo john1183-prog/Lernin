@@ -1070,6 +1070,31 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #2 — Sanitize 500 Responses & Upstream Provider Error Payloads (`api/index.py`, `api/test_error_sanitization.py`)** —
+eliminated internal exception leakage and raw Gemini response payloads from client-facing HTTP error responses across all backend generation and expansion endpoints:
+- **Root Cause & Information Disclosure** (`api/index.py`):
+  * `generate_motion`, `expand_motion_script`, `generate_mind_map`, and `expand_mind_map` previously returned `f"{type(e).__name__}: {e}"` directly to clients on 500 responses (explicitly tagged in code as temporary pre-launch scaffolding).
+  * Upstream Gemini HTTP errors (`httpx.HTTPStatusError`) in `generate_motion` and `generate_mind_map` interpolated `{e.response.text[:300]}` directly into client `detail` fields, potentially disclosing raw upstream error JSON, prompt echoes, or provider error details to clients.
+- **Sanitized Client Messages & Server-Side Logging** (`api/index.py`):
+  * Replaced all client-facing 500 error details across all 7 API endpoints with clean, user-safe messages:
+    - `/api/generate-motion`: `"Motion generation failed. Please try again."`
+    - `/api/expand-motion-script`: `"Motion script expansion failed. Please try again."`
+    - `/api/generate-mind-map`: `"Mind map generation failed. Please try again."`
+    - `/api/expand-mind-map`: `"Mind map expansion failed. Please try again."`
+    - `/api/generate-cards` & `/api/generate-cards-vision`: `"Card generation failed. Please try again."`
+    - `/api/extract-ppt-text`: `"PowerPoint text extraction failed. Please try again."`
+  * Sanitized Gemini 502 responses across all endpoints to return strictly `f"Gemini error: {e.response.status_code}"`, eliminating raw response text interpolation.
+  * Preserved full server-side observability: raw Gemini errors are logged via `logger.warning(...)`, and unexpected 500 exceptions are logged with full tracebacks via `logger.exception(...)`.
+  * Preserved status code semantics: 500 for unexpected internal errors, 502 for upstream provider failures, and 4xx for client validation/credential/quota errors.
+- **Verified via Automated Unit Tests & Regression Suites**:
+  * Created `api/test_error_sanitization.py` with 10 automated unit tests asserting that simulated internal failures and upstream provider crashes:
+    - Return status code 500 (or 502 for upstream provider errors).
+    - Return exact, sanitized client messages.
+    - Never leak exception class names (e.g. `RuntimeError`, `TypeError`, `KeyError`, `ValueError`, `IndexError`, `HTTPStatusError`) or internal error strings in the response body.
+    - Never leak raw upstream provider payloads in the response body.
+  * Full Python backend test suite passed: 102/102 tests passing (up from 92).
+  * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
+
 **Tier 2 #1 — Explicit Read/Write Contract Separation for `getReviewStats()` (`public/db.js`, `public/app.js`)** —
 separated read and write responsibilities by making `getReviewStats()` a pure read query and extracting streak freeze milestone auto-awarding into an explicit `maybeAwardStreakFreezes()` mutation function:
 - **Contract Ambiguity & Hidden Side-Effect** (`public/db.js`):
