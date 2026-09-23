@@ -1070,6 +1070,30 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #4 — Streak Freeze State Pruning & Search Full-Scan Documentation (`public/db.js`, `UPCOMING_FEATURES.md`)** —
+bounded `frozenDayKeys` growth to a generous 730-day outer window and added durable architectural documentation and parameters for in-memory card search full scans:
+- **`frozenDayKeys` Growth & Bounded Pruning (`public/db.js`)**:
+  * **Problem**: Previously, `streakFreezeState.frozenDayKeys` appended each newly frozen day key (`'YYYY-M-D'`) indefinitely, causing the stored array to grow unboundedly over the lifetime of a student's installation with no eviction mechanism.
+  * **Retention Bound Choice (`FROZEN_DAY_KEYS_RETENTION_DAYS = 730`)**: Aligned the retention window with Tier 1 #10's streak search outer safety bound (`computeStreakDays(..., maxDays = 730)` / 2 years). Because any frozen day older than 730 days is beyond the maximum reach of any streak calculation walk, pruning entries beyond 730 days bounds storage growth without modifying freeze protection semantics for active or recent periods.
+  * **Pruning Locations (Load & Save)**:
+    - `pruneFrozenDayKeys(keys, nowMs)`: Helper that parses `'YYYY-M-D'` day keys to midnight timestamps, filters out entries older than `nowMs - 730 days`, drops malformed entries, and deduplicates keys.
+    - `getStreakFreezeState(nowMs)` (Load): Prunes `record.frozenDayKeys` upon reading from IndexedDB `settings`, ensuring any in-memory calculations (such as `computeStreakDays` and `studiedToday` checks) evaluate against the bounded set.
+    - `saveStreakFreezeState(state, nowMs)` (Save): Prunes `state.frozenDayKeys` prior to persisting to IndexedDB `settings`, ensuring old keys are discarded from disk.
+    - `useStreakFreeze(dayKey)`: Supported optional `dayKey` parameter (defaulting to today), checking for prior coverage and persisting via `saveStreakFreezeState` with automatic pruning.
+- **Search Scale Limit & Architectural Notes (`searchCardsByFront`, `searchCardsByAnswer` in `public/db.js`)**:
+  * **Full-Scan Behavior**: Both `searchCardsByFront` and `searchCardsByAnswer` perform unindexed full table scans via `db.getAll('cards')` followed by in-memory filtering (inspecting question front or 6+ supplementary card fields: `back`, `formula`, `assumptions`, `commonMistakes`, `applications`, and `variables`).
+  * **Current Scale Limit**: Perfectly suited and fast (~2-5ms in modern V8/SpiderMonkey) for typical personal flashcard decks (< 5,000–10,000 cards).
+  * **Future Index Recommendation**: Documented durable architectural guidance for scale: if deck collections expand beyond 10,000 cards, replace linear in-memory filtering with an IndexedDB multi-entry index on lowercased/tokenized front text or an inverted full-text search index (e.g. FlexSearch/MiniSearch / Web Worker).
+  * **API Signatures Preserved & Enhanced**: Added optional `maxResults` (default 20) and handled `(query, excludeCardId, maxResults)` and `(term, maxResults)` signatures backwards-compatibly.
+- **Verified via Automated Headless Chrome CDP & Regression Suites**:
+  * Verified `pruneFrozenDayKeys` directly: keys >730d (e.g. 731d, 1000d) are pruned; keys <=730d (today, 50d, 100d, 700d, 730d) are kept; invalid keys dropped; duplicates deduplicated.
+  * Verified `getStreakFreezeState()` read-pruning on live IndexedDB.
+  * Verified `saveStreakFreezeState()` write-pruning directly persisted to IndexedDB.
+  * Verified `useStreakFreeze()` first use success, second use prevention, and explicit `dayKey` coverage.
+  * Verified `searchCardsByFront` and `searchCardsByAnswer` substring matching, exclusion, and `maxResults` limits.
+  * Captured UI screenshots in both Light and Dark modes (`tier2_4_home_light.png`, `tier2_4_home_dark.png`).
+  * Python backend test suite (102/102 tests passing) and Node audio regression suite passed with zero regressions.
+
 **Tier 2 #3 — Single Source of Truth for Theme (`public/db.js`, `public/app.js`, `public/index.html`)** —
 unified theme persistence onto a single canonical store (IndexedDB `settings.theme`) with `localStorage['lernin-theme']` operating strictly as a synchronized boot cache to prevent Flash of Unstyled Content (FOUC):
 - **Store Drift & Dual Writers Resolved**:

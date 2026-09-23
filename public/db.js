@@ -821,7 +821,7 @@ export async function getReviewStats(now) {
   const nowMs = now ?? Date.now();
   const todayKey = localDayKey(nowMs);
 
-  const freezeState = await getStreakFreezeState();
+  const freezeState = await getStreakFreezeState(nowMs);
   const frozenDayKeys = new Set(freezeState.frozenDayKeys);
 
   // Compute streak by walking backward through reviewLog until a gap or outer bound (730d)
@@ -921,7 +921,7 @@ export async function getDashboardStats(now) {
     }
   }
 
-  const freezeState = await getStreakFreezeState();
+  const freezeState = await getStreakFreezeState(nowMs);
 
   return {
     retention30d,
@@ -949,15 +949,69 @@ export async function getDashboardStats(now) {
 const STREAK_FREEZE_KEY = 'streakFreezeState';
 const MAX_STREAK_FREEZES = 3;
 
-async function getStreakFreezeState() {
-  const db = await getDB();
-  const record = await db.get('settings', STREAK_FREEZE_KEY);
-  return record || { key: STREAK_FREEZE_KEY, freezesAvailable: 0, lastAwardedMilestone: 0, frozenDayKeys: [] };
+/**
+ * Generous outer retention bound (730 days / 2 years) for stored streak freeze day keys.
+ * Aligns with computeStreakDays()'s outer safety bound (maxDays = 730): any freeze older
+ * than 730 days can never be reached by a streak walk, so pruning keys beyond this window
+ * prevents unbounded array growth in the settings store while preserving freeze semantics
+ * for all active and recent periods.
+ */
+export const FROZEN_DAY_KEYS_RETENTION_DAYS = 730;
+
+/**
+ * Prunes an array of day keys to drop entries older than FROZEN_DAY_KEYS_RETENTION_DAYS.
+ * Deduplicates and filters out malformed keys.
+ *
+ * @param {Array<string>} [keys] - array of day keys formatted as 'YYYY-M-D'
+ * @param {number} [nowMs=Date.now()] - current timestamp in epoch ms
+ * @returns {Array<string>} pruned list of day keys within the retention window
+ */
+export function pruneFrozenDayKeys(keys, nowMs = Date.now()) {
+  if (!Array.isArray(keys) || keys.length === 0) return [];
+  const cutoffDate = new Date(nowMs);
+  cutoffDate.setDate(cutoffDate.getDate() - FROZEN_DAY_KEYS_RETENTION_DAYS);
+  cutoffDate.setHours(0, 0, 0, 0);
+  const cutoffMs = cutoffDate.getTime();
+
+  const seen = new Set();
+  const kept = [];
+  for (const k of keys) {
+    if (typeof k !== 'string') continue;
+    const parts = k.split('-').map(Number);
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) continue;
+    const d = new Date(parts[0], parts[1], parts[2]);
+    d.setHours(0, 0, 0, 0);
+    const keyMs = d.getTime();
+    if (!Number.isNaN(keyMs) && keyMs >= cutoffMs) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        kept.push(k);
+      }
+    }
+  }
+  return kept;
 }
 
-async function saveStreakFreezeState(state) {
+export async function getStreakFreezeState(nowMs = Date.now()) {
   const db = await getDB();
-  return db.put('settings', { ...state, key: STREAK_FREEZE_KEY });
+  const record = await db.get('settings', STREAK_FREEZE_KEY);
+  if (!record) {
+    return { key: STREAK_FREEZE_KEY, freezesAvailable: 0, lastAwardedMilestone: 0, frozenDayKeys: [] };
+  }
+  return {
+    ...record,
+    frozenDayKeys: pruneFrozenDayKeys(record.frozenDayKeys, nowMs)
+  };
+}
+
+export async function saveStreakFreezeState(state, nowMs = Date.now()) {
+  const db = await getDB();
+  const toSave = {
+    ...state,
+    frozenDayKeys: pruneFrozenDayKeys(state?.frozenDayKeys, nowMs),
+    key: STREAK_FREEZE_KEY
+  };
+  return db.put('settings', toSave);
 }
 
 /**
@@ -999,30 +1053,40 @@ export async function maybeAwardStreakFreezes(streakDays) {
 }
 
 /**
- * Spends one freeze to protect today's streak (marks today as "covered"
- * without an actual review) — used when someone knows they won't get to
- * study today and doesn't want to lose their streak. Returns false (spends
- * nothing) if there are no freezes available or today is already
- * covered/reviewed.
+ * Spends one freeze to protect today's streak (marks today or specified dayKey
+ * as "covered" without an actual review) — used when someone knows they won't get
+ * to study today and doesn't want to lose their streak. Returns false (spends
+ * nothing) if there are no freezes available or target day is already covered/reviewed.
+ *
+ * @param {string} [dayKey] - optional day key to freeze (defaults to localDayKey(Date.now()))
+ * @returns {Promise<boolean>} true if freeze spent, false otherwise
  */
-export async function useStreakFreeze() {
-  const state = await getStreakFreezeState();
+export async function useStreakFreeze(dayKey) {
   const nowMs = Date.now();
-  const todayKey = localDayKey(nowMs);
-  if (state.freezesAvailable <= 0 || state.frozenDayKeys.includes(todayKey)) return false;
+  const targetKey = dayKey || localDayKey(nowMs);
+  const state = await getStreakFreezeState(nowMs);
+  if (state.freezesAvailable <= 0 || state.frozenDayKeys.includes(targetKey)) return false;
 
   const db = await getDB();
-  const todayStart = startOfLocalDay(nowMs);
-  const entriesToday = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(todayStart));
-  if (entriesToday.some((e) => localDayKey(e.reviewedAt) === todayKey)) {
+  let targetDayStart = startOfLocalDay(nowMs);
+  if (dayKey) {
+    const parts = dayKey.split('-').map(Number);
+    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+      const d = new Date(parts[0], parts[1], parts[2]);
+      d.setHours(0, 0, 0, 0);
+      targetDayStart = d.getTime();
+    }
+  }
+  const entries = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(targetDayStart));
+  if (entries.some((e) => localDayKey(e.reviewedAt) === targetKey)) {
     return false;
   }
 
   await saveStreakFreezeState({
     ...state,
     freezesAvailable: state.freezesAvailable - 1,
-    frozenDayKeys: [...state.frozenDayKeys, todayKey]
-  });
+    frozenDayKeys: [...state.frozenDayKeys, targetKey]
+  }, nowMs);
   return true;
 }
 
@@ -1581,18 +1645,31 @@ export async function getRelationshipsTo(cardId) {
 }
 
 /**
+ * SCALE / PERFORMANCE NOTE:
+ * Full-scan behavior: This function performs an unindexed full table scan (db.getAll('cards'))
+ * followed by an in-memory substring filter across every card in IndexedDB.
+ * Current scale limit: Suitable and fast for typical personal flashcard libraries (< 5,000–10,000 cards),
+ * taking negligible execution time (~2-5ms in modern JavaScript engines).
+ * Future index recommendation: If personal or imported collections scale beyond 10,000 cards,
+ * this linear scan should be replaced with an IndexedDB multi-entry index on tokenized/lowercased
+ * front text, or an inverted full-text search index (e.g. FlexSearch/MiniSearch) to avoid main-thread
+ * memory pressure and redundant full-table deserialization.
+ *
  * Finds cards by a substring match on their front text, across every
  * deck — used by the relationship picker in app.js's manual card
  * creation flow. Cross-deck on purpose, matching the decision that
- * relationships aren't scoped to one deck. Capped at 20 results; this is
- * a live-search-as-you-type picker, not a full search feature.
+ * relationships aren't scoped to one deck. Capped at 20 results by default;
+ * this is a live-search-as-you-type picker, not a full search feature.
  *
- * @param {string} query
- * @param {string} [excludeCardId] - typically the card being created/edited,
- *        so it can't be offered as its own dependency
+ * @param {string} query - substring to match
+ * @param {string|number} [excludeCardId] - optional card ID to exclude, or maxResults if called as (query, maxResults)
+ * @param {number} [maxResults=20] - optional result limit (defaults to 20)
+ * @returns {Promise<Array<{ id: string, front: string, deckId: string, deckTitle: string }>>}
  */
-export async function searchCardsByFront(query, excludeCardId) {
-  const trimmed = query.trim().toLowerCase();
+export async function searchCardsByFront(query, excludeCardId, maxResults = 20) {
+  let excludeId = typeof excludeCardId === 'string' ? excludeCardId : undefined;
+  const limit = typeof excludeCardId === 'number' ? excludeCardId : (typeof maxResults === 'number' ? maxResults : 20);
+  const trimmed = (query || '').trim().toLowerCase();
   if (!trimmed) return [];
 
   const db = await getDB();
@@ -1600,12 +1677,22 @@ export async function searchCardsByFront(query, excludeCardId) {
   const deckTitleById = new Map(decks.map((d) => [d.id, d.title]));
 
   return allCards
-    .filter((c) => c.id !== excludeCardId && c.front.toLowerCase().includes(trimmed))
-    .slice(0, 20)
+    .filter((c) => (!excludeId || c.id !== excludeId) && (c.front || '').toLowerCase().includes(trimmed))
+    .slice(0, limit)
     .map((c) => ({ id: c.id, front: c.front, deckId: c.deckId, deckTitle: deckTitleById.get(c.deckId) || 'Unknown deck' }));
 }
 
 /**
+ * SCALE / PERFORMANCE NOTE:
+ * Full-scan behavior: This function performs an unindexed full table scan (db.getAll('cards'))
+ * followed by an in-memory scan inspecting 6+ supplementary card fields (back, formula,
+ * assumptions, commonMistakes, applications, variables) per card.
+ * Current scale limit: Suitable and fast for typical personal flashcard libraries (< 5,000–10,000 cards),
+ * but iterates all fields for all cards synchronously on the main thread during typing.
+ * Future index recommendation: If deck collections expand into large multi-thousand-card libraries,
+ * replace this full table traversal with a dedicated multi-field token index in IndexedDB or offload
+ * search evaluation to a Web Worker with an inverted trigram/token index.
+ *
  * "Reverse lookup" — given an answer, formula, or any of a formula card's
  * supplementary fields, find which card(s) produce it. Distinct from
  * searchCardsByFront: that searches the question side (for building
@@ -1614,10 +1701,15 @@ export async function searchCardsByFront(query, excludeCardId) {
  * what card it's on." Searches back, formula, variables (both symbol and
  * meaning), assumptions, commonMistakes, and applications — every field
  * that could plausibly hold the thing someone half-remembers. Cross-deck,
- * capped at 20 results, same as searchCardsByFront.
+ * capped at 20 results by default, same as searchCardsByFront.
+ *
+ * @param {string} query - substring to match
+ * @param {number} [maxResults=20] - optional result limit (defaults to 20)
+ * @returns {Promise<Array<{ id: string, front: string, back: string, type: string, deckId: string, deckTitle: string }>>}
  */
-export async function searchCardsByAnswer(query) {
-  const trimmed = query.trim().toLowerCase();
+export async function searchCardsByAnswer(query, maxResults = 20) {
+  const limit = typeof maxResults === 'number' ? maxResults : 20;
+  const trimmed = (query || '').trim().toLowerCase();
   if (!trimmed) return [];
 
   const db = await getDB();
@@ -1640,7 +1732,7 @@ export async function searchCardsByAnswer(query) {
 
   return allCards
     .filter(matches)
-    .slice(0, 20)
+    .slice(0, limit)
     .map((c) => ({
       id: c.id,
       front: c.front,
