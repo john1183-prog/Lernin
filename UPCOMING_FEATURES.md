@@ -1070,6 +1070,30 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #5 — Surface New-Card Session Cap for Large Imports (`public/study.js`, `public/spatial-study.js`, `public/styles.css`, `UPCOMING_FEATURES.md`)** —
+surfaced the session new-card and review caps at session start, in the study chrome, and at session summary so fresh imports (>20 new cards) are never silently truncated:
+- **Root Cause & Silent Truncation Problem (`public/study.js`)**:
+  * `interleaveQueue` caps new cards at `DEFAULT_NEW_CARD_CAP = 20` and reviews at `DEFAULT_DAILY_REVIEW_CAP = 100`.
+  * When a student imported a large deck (such as 50 or 100 new cards), the session queue was silently capped to 20 cards with no UI feedback, leaving users believing their deck was missing cards or that import had failed.
+- **Approach A: Surface the Cap via Toast, Chrome Counter Badge, and Summary Breakdown (`public/study.js`, `public/spatial-study.js`, `public/styles.css`)**:
+  * **Truncation Detection in `interleaveQueue`**: Attached clean metadata to the returned queue array (`totalNew`, `queuedNew`, `newTruncated`, `totalReviews`, `queuedReviews`, `reviewsTruncated`) without mutating array semantics.
+  * **Warm Session Start Toast (`startStudySession`, `startSpatialReview`)**:
+    - When new cards are truncated: fires `showToast("${queuedNew} of ${totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿", 5000)`.
+    - When reviews are truncated: fires `showToast("${queuedReviews} of ${totalReviews} reviews in this session — more tomorrow. Steady pacing keeps recall strong! 🌿", 5000)`.
+    - When both are truncated: fires `showToast("${queuedNew} of ${totalNew} new cards and ${queuedReviews} of ${totalReviews} reviews in this session — more tomorrow! 🌿", 5000)`.
+  * **Persistent Study Chrome Header Badge (`updateHeader`, `styles.css`)**:
+    - Added `.study-header-cap-badge` next to `Card X of Y` in `.study-header-counter` displaying `[20 of 100 new]` (with hover tooltip `20 of 100 new cards in this session (80 more waiting)`).
+    - Styled with `--accent` and `--accent-soft` pill styling that cleanly adapts across Light and Dark themes.
+  * **Session Summary Breakdown & Continuation (`renderSessionSummary`)**:
+    - Delineated remaining cards in the backlog note: `Daily focus target reached! <strong>${remainingNew}</strong> new card(s) remain in this deck — more ready for tomorrow.`
+    - Configured "Study another ${nextBatchCount}" continue button to pass `newCap: nextBatchCount` alongside `reviewCap: 25`, allowing students who wish to continue introducing new cards to do so in controlled batches.
+- **Verified via Automated Headless Chrome CDP & Regression Suites**:
+  * `interleaveQueue` unit assertions: verified `newTruncated`, `totalNew`, `queuedNew` on capped vs small sets.
+  * Live CDP test with 45-card import fixture: verified session start toast, `.study-header-counter` text, `.study-header-cap-badge` pill, and title tooltip.
+  * Session completion test: verified backlog note explicitly identifies remaining 25 new cards; verified clicking "Study another 25" loads the next batch (`Card 1 of 25`).
+  * Captured UI screenshots in both Light and Dark modes (`tier2_5_study_light.png`, `tier2_5_study_dark.png`, `tier2_5_summary_light.png`).
+  * Python backend test suite (102/102 tests passing) and Node audio regression suite passed with zero regressions.
+
 **Tier 2 #4 — Streak Freeze State Pruning & Search Full-Scan Documentation (`public/db.js`, `UPCOMING_FEATURES.md`)** —
 bounded `frozenDayKeys` growth to a generous 730-day outer window and added durable architectural documentation and parameters for in-memory card search full scans:
 - **`frozenDayKeys` Growth & Bounded Pruning (`public/db.js`)**:

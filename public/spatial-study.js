@@ -40,6 +40,9 @@ export async function startSpatialReview(container, deckId, opts = {}) {
     const reviewCap = (await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP;
     const newCap = DEFAULT_NEW_CARD_CAP;
     cards = interleaveQueue(cards, { reviewCap, newCap });
+    if (cards.newTruncated) {
+      showToast(`${cards.queuedNew} of ${cards.totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿`, 5000);
+    }
   }
 
   if (!cards.length) {

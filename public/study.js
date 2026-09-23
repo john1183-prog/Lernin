@@ -163,6 +163,23 @@ export async function startStudySession(container, opts = {}) {
 
   // Interleave new and review with soft caps and overdue-first ordering
   session.queue = interleaveQueue(cards, { reviewCap, newCap });
+  session.capInfo = {
+    totalNew: session.queue.totalNew ?? cards.filter(c => c.state === 'new').length,
+    queuedNew: session.queue.queuedNew ?? session.queue.filter(c => c.state === 'new').length,
+    newTruncated: session.queue.newTruncated ?? (cards.filter(c => c.state === 'new').length > session.queue.filter(c => c.state === 'new').length),
+    totalReviews: session.queue.totalReviews ?? cards.filter(c => c.state !== 'new').length,
+    queuedReviews: session.queue.queuedReviews ?? session.queue.filter(c => c.state !== 'new').length,
+    reviewsTruncated: session.queue.reviewsTruncated ?? (cards.filter(c => c.state !== 'new').length > session.queue.filter(c => c.state !== 'new').length)
+  };
+
+  // Surface session cap if cards were truncated so large imports are never silent
+  if (session.capInfo.newTruncated && session.capInfo.reviewsTruncated) {
+    showToast(`${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new cards and ${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews in this session — more tomorrow! 🌿`, 5000);
+  } else if (session.capInfo.newTruncated) {
+    showToast(`${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿`, 5000);
+  } else if (session.capInfo.reviewsTruncated) {
+    showToast(`${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews in this session — more tomorrow. Steady pacing keeps recall strong! 🌿`, 5000);
+  }
 
   // Smart ordering: soft-reorder so prerequisites (dependsOn) come
   // before their dependents when both are already in today's queue.
@@ -198,9 +215,11 @@ export async function startStudySession(container, opts = {}) {
 }
 
 export function interleaveQueue(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, newCap = DEFAULT_NEW_CARD_CAP } = {}) {
-  const news = cards.filter(c => c.state === 'new').slice(0, newCap);
-  const reviews = cards
-    .filter(c => c.state !== 'new')
+  const allNews = cards.filter(c => c.state === 'new');
+  const allReviews = cards.filter(c => c.state !== 'new');
+
+  const news = allNews.slice(0, newCap);
+  const reviews = allReviews
     .sort((a, b) => {
       const timeA = a.due_date ? new Date(a.due_date).getTime() : 0;
       const timeB = b.due_date ? new Date(b.due_date).getTime() : 0;
@@ -214,6 +233,14 @@ export function interleaveQueue(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, n
     if (n < news.length) result.push(news[n++]);
     if (r < reviews.length) result.push(reviews[r++]);
   }
+
+  result.totalNew = allNews.length;
+  result.queuedNew = news.length;
+  result.newTruncated = allNews.length > news.length;
+  result.totalReviews = allReviews.length;
+  result.queuedReviews = reviews.length;
+  result.reviewsTruncated = allReviews.length > reviews.length;
+
   return result;
 }
 
@@ -324,8 +351,17 @@ function updateHeader() {
   const current = Math.min(session.index + 1, total);
   const canUndo = session.undoStack.length > 0;
 
+  let capBadge = '';
+  if (session.capInfo?.newTruncated) {
+    const remaining = session.capInfo.totalNew - session.capInfo.queuedNew;
+    capBadge = ` <span class="study-header-cap-badge" title="${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new cards in this session (${remaining} more waiting)">${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new</span>`;
+  } else if (session.capInfo?.reviewsTruncated) {
+    const remaining = session.capInfo.totalReviews - session.capInfo.queuedReviews;
+    capBadge = ` <span class="study-header-cap-badge" title="${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews in this session (${remaining} more waiting)">${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews</span>`;
+  }
+
   header.innerHTML = `
-    <div class="study-header-counter">Card ${current} of ${total}</div>
+    <div class="study-header-counter">Card ${current} of ${total}${capBadge}</div>
     <div class="study-header-actions">
       <button class="study-undo-btn" id="studyUndoBtn" aria-label="Undo last grade" ${canUndo ? '' : 'disabled'}>↩</button>
       <button class="study-help-btn" id="studyHelpBtn" aria-label="Keyboard shortcuts">?</button>
@@ -950,6 +986,16 @@ async function renderSessionSummary() {
   }
 
   const hasBacklog = remainingCards.length > 0;
+  const remainingNew = remainingCards.filter(c => c.state === 'new').length;
+  const remainingReviews = remainingCards.filter(c => c.state !== 'new').length;
+
+  let backlogNoteText = `Daily focus target reached! <strong>${remainingCards.length}</strong> card${remainingCards.length === 1 ? '' : 's'} remain in your backlog.`;
+  if (remainingNew > 0 && remainingReviews === 0) {
+    backlogNoteText = `Daily focus target reached! <strong>${remainingNew}</strong> new card${remainingNew === 1 ? '' : 's'} remain in this deck — more ready for tomorrow.`;
+  } else if (remainingNew > 0 && remainingReviews > 0) {
+    backlogNoteText = `Daily focus target reached! <strong>${remainingNew}</strong> new card${remainingNew === 1 ? '' : 's'} and <strong>${remainingReviews}</strong> review${remainingReviews === 1 ? '' : 's'} remain for upcoming sessions.`;
+  }
+
   const nextBatchCount = Math.min(25, remainingCards.length);
 
   container.innerHTML = `
@@ -981,7 +1027,7 @@ async function renderSessionSummary() {
       ${hasBacklog ? `
         <div class="session-backlog-wrap" style="margin:var(--space-md) 0; text-align:center; width:100%; max-width:320px;">
           <p class="session-backlog-note" style="margin:0 0 14px; font-size:14px; color:var(--ink-secondary); line-height:1.5;">
-            Daily focus target reached! <strong>${remainingCards.length}</strong> card${remainingCards.length === 1 ? '' : 's'} remain in your backlog.
+            ${backlogNoteText}
           </p>
           <div style="display:flex; flex-direction:column; gap:10px; width:100%;">
             <button class="session-summary-btn" id="continueStudyBtn">
@@ -1006,7 +1052,8 @@ async function renderSessionSummary() {
         startStudySession(host, {
           deckId: session.deckId,
           onExit: session.onExit,
-          reviewCap: 25
+          reviewCap: 25,
+          newCap: 25
         });
       });
     }
