@@ -32,32 +32,32 @@ const root = document.getElementById('root');
 const LONG_PRESS_MS = 500;
 
 /* ---------- Theme ---------- */
+let currentTheme = 'system';
 let systemThemeListener = null;
 const themeMediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
-async function initTheme() {
-  try {
-    const saved = await getTheme();
-    applyTheme(saved);
-    setupThemeListener(saved);
-  } catch (err) {
-    console.error('Failed to init theme:', err);
-  }
-}
-
-function applyTheme(theme) {
+export function applyTheme(theme) {
   let effective = theme;
   if (theme === 'system' && themeMediaQuery) {
     effective = themeMediaQuery.matches ? 'dark' : 'light';
   }
   document.documentElement.setAttribute('data-theme', effective);
+  const toggleBtn = document.getElementById('themeToggle');
+  if (toggleBtn) {
+    toggleBtn.setAttribute('aria-label', `Toggle theme (current: ${theme})`);
+    toggleBtn.setAttribute('title', `Theme: ${theme}`);
+  }
 }
 
 function setupThemeListener(theme) {
   if (!themeMediaQuery) return;
   if (theme === 'system') {
     if (!systemThemeListener) {
-      systemThemeListener = () => applyTheme('system');
+      systemThemeListener = () => {
+        if (currentTheme === 'system') {
+          applyTheme('system');
+        }
+      };
       themeMediaQuery.addEventListener('change', systemThemeListener);
     }
   } else {
@@ -68,13 +68,53 @@ function setupThemeListener(theme) {
   }
 }
 
-function cycleTheme() {
-  const current = document.documentElement.getAttribute('data-theme') || 'light';
+/**
+ * Single centralized theme mutation helper.
+ * All theme mutations (header cycle, settings picker, multi-tab sync) route through this helper.
+ * Updates canonical IndexedDB first, then mirrors to localStorage boot cache, then applies DOM.
+ */
+export async function setTheme(theme, persist = true) {
+  const valid = (theme === 'light' || theme === 'dark' || theme === 'system') ? theme : 'system';
+  if (persist) {
+    try {
+      await saveTheme(valid);
+    } catch (err) {
+      console.error('Failed to persist theme:', err);
+    }
+  }
+  currentTheme = valid;
+  applyTheme(valid);
+  setupThemeListener(valid);
+  return valid;
+}
+
+export async function cycleTheme() {
   const order = { system: 'light', light: 'dark', dark: 'system' };
-  const next = order[current] || 'system';
-  applyTheme(next);
-  setupThemeListener(next);
-  saveTheme(next).catch(err => console.error('Failed to save theme:', err));
+  const next = order[currentTheme] || 'light';
+  return setTheme(next, true);
+}
+
+async function initTheme() {
+  try {
+    const saved = await getTheme();
+    currentTheme = saved;
+    applyTheme(saved);
+    setupThemeListener(saved);
+  } catch (err) {
+    console.error('Failed to init theme:', err);
+  }
+
+  // Multi-tab storage event: heal toward canonical store if another tab changes theme
+  window.addEventListener('storage', async (e) => {
+    if (e.key === 'lernin-theme') {
+      try {
+        const canonical = await getTheme();
+        setTheme(canonical, false);
+      } catch (err) {
+        console.error('Failed to heal theme on storage event:', err);
+      }
+    }
+  });
 }
 
 /* ---------- Font ---------- */
@@ -506,7 +546,7 @@ export async function renderDeckList() {
     <div class="app-header-title">Lernin</div>
     <div class="app-header-actions">
       <button class="icon-btn" id="viewToggle" aria-label="Change view">${viewIcon}</button>
-      <button class="icon-btn" id="themeToggle" aria-label="Toggle theme">🌓</button>
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle theme (current: ${currentTheme})" title="Theme: ${currentTheme}">🌓</button>
       <div class="header-overflow-wrap">
         <button class="icon-btn" id="overflowBtn" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋮</button>
         <div class="header-overflow-menu" id="headerOverflowMenu" role="menu" hidden>
@@ -1147,7 +1187,7 @@ async function enterMotionStudio(deckId) {
   return renderMotionStudio(root, deckId || null, {});
 }
 
-async function renderSettings() {
+export async function renderSettings() {
   let existing, reminderSettings, smartOrderingEnabled, soundEffectsEnabled;
   try {
     existing = await getApiConfig();
@@ -1299,8 +1339,49 @@ async function renderSettings() {
   genSection.appendChild(form);
   wrap.appendChild(genSection);
 
-  /* Appearance section with font selector */
+  /* Appearance section with theme and font selector */
   const appearanceSection = makeSection('Appearance');
+
+  const themeLabel = document.createElement('div');
+  themeLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
+  themeLabel.textContent = 'Theme';
+  appearanceSection.appendChild(themeLabel);
+
+  const themeRow = document.createElement('div');
+  themeRow.className = 'font-selector';
+  themeRow.style.cssText = 'margin-bottom:var(--space-md);';
+
+  const THEME_OPTIONS = [
+    { value: 'system', label: 'System default (follows OS)' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' }
+  ];
+  const activeTheme = currentTheme || (await getTheme());
+
+  for (const t of THEME_OPTIONS) {
+    const opt = document.createElement('label');
+    opt.className = 'font-option';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'themePreference';
+    radio.value = t.value;
+    radio.checked = t.value === activeTheme;
+    opt.appendChild(radio);
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = t.label;
+    opt.appendChild(nameSpan);
+    themeRow.appendChild(opt);
+  }
+  appearanceSection.appendChild(themeRow);
+
+  themeRow.querySelectorAll('input[name="themePreference"]').forEach(radio => {
+    radio.addEventListener('change', async () => {
+      const value = themeRow.querySelector('input[name="themePreference"]:checked')?.value || 'system';
+      await setTheme(value, true);
+      showToast('Theme updated.');
+    });
+  });
+
   const fontLabel = document.createElement('div');
   fontLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
   fontLabel.textContent = 'Font';
@@ -4104,7 +4185,9 @@ if (typeof window !== 'undefined') {
     openMindMapChooser,
     getTileSvg,
     renderDeckList,
-    showUpdatePrompt
+    showUpdatePrompt,
+    setTheme,
+    cycleTheme
   };
 }
 

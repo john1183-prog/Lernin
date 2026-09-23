@@ -1712,16 +1712,57 @@ export async function getConceptPositionOverrides() {
   return map;
 }
 
+/**
+ * Canonical theme preference reader.
+ * IndexedDB `settings.theme` is the single source of truth.
+ * `localStorage['lernin-theme']` serves strictly as a synchronous boot cache to avoid FOUC.
+ * If localStorage disagrees with canonical IndexedDB, repair localStorage to match.
+ * If IndexedDB is empty but localStorage has a value, seed IndexedDB from the cache.
+ */
 export async function getTheme() {
-  const db = await getDB();
-  const rec = await db.get('settings', 'theme');
-  return rec?.value || 'system';
+  const canonical = await getSetting('theme');
+  let effectiveTheme;
+
+  if (canonical === 'light' || canonical === 'dark' || canonical === 'system') {
+    effectiveTheme = canonical;
+    // Repair boot cache if it drifted from canonical IndexedDB
+    try {
+      if (localStorage.getItem('lernin-theme') !== effectiveTheme) {
+        localStorage.setItem('lernin-theme', effectiveTheme);
+      }
+    } catch (_) {}
+  } else {
+    // Canonical store unseeded: check synchronous boot cache once
+    let cached = null;
+    try {
+      cached = localStorage.getItem('lernin-theme');
+    } catch (_) {}
+    effectiveTheme = (cached === 'light' || cached === 'dark' || cached === 'system') ? cached : 'system';
+    // Seed canonical IndexedDB and ensure cache is aligned
+    await saveSetting('theme', effectiveTheme);
+    try {
+      localStorage.setItem('lernin-theme', effectiveTheme);
+    } catch (_) {}
+  }
+
+  return effectiveTheme;
 }
 
+/**
+ * Canonical theme preference writer.
+ * Updates canonical IndexedDB `settings.theme` first, then mirrors to
+ * `localStorage['lernin-theme']` (retained strictly as a synchronous boot cache
+ * to prevent FOUC on initial HTML paint before IndexedDB connects).
+ */
 export async function saveTheme(value) {
-  const db = await getDB();
-  localStorage.setItem('lernin-theme', value);
-  return db.put('settings', { key: 'theme', value });
+  const theme = (value === 'light' || value === 'dark' || value === 'system') ? value : 'system';
+  // 1. Update canonical store (IndexedDB settings)
+  await saveSetting('theme', theme);
+  // 2. Mirror to synchronous boot cache (avoids FOUC on next reload)
+  try {
+    localStorage.setItem('lernin-theme', theme);
+  } catch (_) {}
+  return theme;
 }
 
 // ---------------------------------------------------------------------------

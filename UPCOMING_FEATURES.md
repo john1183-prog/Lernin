@@ -1070,6 +1070,35 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #3 — Single Source of Truth for Theme (`public/db.js`, `public/app.js`, `public/index.html`)** —
+unified theme persistence onto a single canonical store (IndexedDB `settings.theme`) with `localStorage['lernin-theme']` operating strictly as a synchronized boot cache to prevent Flash of Unstyled Content (FOUC):
+- **Store Drift & Dual Writers Resolved**:
+  * Theme preference was previously stored in two separate places (`localStorage` key `lernin-theme` and IndexedDB `settings` key `theme`), written from different code paths with disparate validation, leading to potential drift across offline reloads, multi-tab usage, or unseeded states.
+- **Canonical Store Choice & Hard FOUC Boot-Cache Rationale**:
+  * **Canonical Single Source of Truth (`IndexedDB settings.theme`)**: All user preferences in Lernin (`fontFamily`, `smartOrderingEnabled`, `soundEffectsEnabled`, `reminderSettings`, `apiConfig`, `streakFreezeState`) reside canonically in the IndexedDB `settings` store. Standardizing theme preference on IndexedDB unifies user preference persistence under a consistent schema and storage API.
+  * **Synchronous Boot-Cache Rationale (`localStorage['lernin-theme']`)**: IndexedDB is inherently asynchronous and cannot block the browser's first paint. `localStorage.getItem('lernin-theme')` is retained strictly as a synchronous boot cache executed in `<head>` before stylesheets and the body parse, ensuring immediate application of `<html data-theme="...">` without Flash of Unstyled Content (FOUC). Documented this role with explicit comments at both the synchronous boot read in `index.html` and the write mirror in `db.js`.
+- **Read-Repair & Healing Contract (`public/db.js`)**:
+  * `getTheme()` queries the canonical IndexedDB `settings` store via `getSetting('theme')`.
+  * If canonical IndexedDB holds a valid value (`'system'`, `'light'`, `'dark'`), it auto-repairs `localStorage` cache if it drifted or was missing.
+  * If canonical IndexedDB is unseeded (fresh install / cleared database), it seeds IndexedDB once from any valid `localStorage` boot value (falling back to `'system'`) and synchronizes both stores.
+- **Single Centralized Write Helper & Unified Callers (`public/db.js`, `public/app.js`)**:
+  * `saveTheme(value)` in `db.js` writes to canonical IndexedDB first via `saveSetting('theme', theme)`, then mirrors to `localStorage['lernin-theme']` in a defensive try/catch block.
+  * `setTheme(theme, persist = true)` in `app.js` serves as the sole UI mutation coordinator: updates in-memory `currentTheme`, applies DOM attributes (`document.documentElement.setAttribute('data-theme', effective)`), manages system media query listeners, updates header toggle titles/aria-labels, and calls `saveTheme(valid)` when persisting.
+  * **Header cycle toggle (`#themeToggle`)**: `cycleTheme()` routes through `setTheme(next, true)` cycling cleanly across `system -> light -> dark -> system` based on in-memory preference (resolving the previous bug where reading DOM `data-theme` got stuck on OS dark mode).
+  * **Settings Appearance theme picker**: Added a Theme radio group (`System default (follows OS)`, `Light`, `Dark`) to the Settings view Appearance section, routing directly through `setTheme(value, true)` with feedback toasts.
+  * **Multi-tab synchronization**: Added a `storage` event listener on `window` in `initTheme()` that responds to `e.key === 'lernin-theme'` by reading canonical `getTheme()` and calling `setTheme(canonical, false)` to heal UI without creating a second database writer.
+- **Verified via Automated Headless Chrome CDP & Regression Suites**:
+  * Verified initial unseeded boot defaults to `'system'` and seeds both stores.
+  * Verified `setTheme('dark')` persists across full page reload in headless Chrome (DOM, IndexedDB, and localStorage match).
+  * Verified `#themeToggle` cycle through `system -> light -> dark -> system`.
+  * Verified drift healing: deliberately corrupted `localStorage` with `'light'` while IndexedDB was `'dark'`; verified `getTheme()` healed `localStorage` back to `'dark'`.
+  * Verified cache seeding: deleted IndexedDB record while `localStorage` had `'light'`; verified `getTheme()` seeded IndexedDB with `'light'`.
+  * Verified Settings view Appearance theme picker selection (`dark` and `light` radio selection updates all stores and DOM).
+  * Verified multi-tab `storage` event synchronization.
+  * Captured UI screenshots in both Light and Dark modes: `tier2_3_home_dark.png`, `tier2_3_home_light.png`, `tier2_3_settings_dark.png`, `tier2_3_settings_light.png`.
+  * Full Python backend test suite passed: 102/102 tests passing (exit code 0).
+  * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed: `ALL CHECKS PASSED` (exit code 0).
+
 **Tier 2 #2 — Sanitize 500 Responses & Upstream Provider Error Payloads (`api/index.py`, `api/test_error_sanitization.py`)** —
 eliminated internal exception leakage and raw Gemini response payloads from client-facing HTTP error responses across all backend generation and expansion endpoints:
 - **Root Cause & Information Disclosure** (`api/index.py`):
