@@ -1070,6 +1070,18 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Tier 2 #6 — Delete Dead `concept-graph.js` Module (`public/concept-graph.js`, `public/app.js`, `public/mind-map.js`, `public/styles.css`, `UPCOMING_FEATURES.md`)** —
+completely removed dead `concept-graph.js` deprecated stub, cleaned up unused CSS classes, and purged lingering naming references:
+- **Dead Code Purge (`public/concept-graph.js`)**:
+  * Deleted `public/concept-graph.js` (a 17-line deprecated stub that redirected calls to `canvas.js`'s L2 map). The file was previously evicted from the service worker shell precache in Tier 1 #7 and retained no active import or dynamic load sites across the entire codebase.
+- **Reference & Style Cleanup (`public/app.js`, `public/styles.css`, `public/mind-map.js`)**:
+  * In `public/app.js`: Renamed internal router handler `enterConceptGraph(deckId)` to `enterDeckMap(deckId)` to accurately reflect that route `#/map/:deckId` directly initializes `openDeckOnMap(root, deckId)`.
+  * In `public/styles.css`: Removed obsolete `.concept-graph-container`, `.concept-graph-header`, `.concept-graph-title`, and `.concept-graph-canvas` rules that only pertained to the pre-rewrite concept graph DOM overlay.
+  * In `public/mind-map.js`: Updated physics tuning comment to reference the legacy prototype rather than an active module file.
+- **Verified Zero Residual Live References & Regressions**:
+  * Ripgrep confirmation across the entire repository showed 0 import sites, 0 dynamic loads, and 0 active references to `concept-graph` or `initConceptGraph`.
+  * Python backend test suite (102/102 tests passing) and Node audio regression suite passed with zero regressions.
+
 **Tier 2 #5 — Surface New-Card Session Cap for Large Imports (`public/study.js`, `public/spatial-study.js`, `public/styles.css`, `UPCOMING_FEATURES.md`)** —
 surfaced the session new-card and review caps at session start, in the study chrome, and at session summary so fresh imports (>20 new cards) are never silently truncated:
 - **Root Cause & Silent Truncation Problem (`public/study.js`)**:

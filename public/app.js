@@ -258,7 +258,7 @@ async function handleRoute() {
     case 'leeches': await renderLeechView(id); break;
     case 'reading-toolkit': await renderReadingToolkit(); break;
     case 'map':
-      activeViewCleanup = id ? await enterConceptGraph(id) : await enterMap();
+      activeViewCleanup = id ? await enterDeckMap(id) : await enterMap();
       break;
     case 'mind-map':
       activeViewCleanup = await enterMindMap(id);
@@ -1148,8 +1148,8 @@ async function enterStudy(deckId) {
   return cleanup || teardownStudySession;
 }
 
-async function enterConceptGraph(deckId) {
-  // Absorbed into the spatial map — open at L2 for this deck
+async function enterDeckMap(deckId) {
+  // Opens the spatial map at L2 for this deck (absorbed from legacy concept graph)
   root.innerHTML = '';
   const cleanup = await openDeckOnMap(root, deckId, { onExit: () => navigate('/') });
   return cleanup || destroyCanvasView;

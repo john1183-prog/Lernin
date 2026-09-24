@@ -95,8 +95,8 @@ function buildNodePath(ctx, points) {
  * means the view is stable and readable immediately, not visibly
  * jittering into place.
  *
- * Parameters were re-tuned, not just ported as-is. The original
- * concept-graph.js's values (repulsion 800, springLength 140) were
+ * Parameters were re-tuned, not just ported as-is. The legacy
+ * prototype's values (repulsion 800, springLength 140) were
  * verified — via a standalone test harness, not assumed — to actually
  * produce the OPPOSITE of the intended effect on a realistic sparse
  * graph (a few small connected clusters plus isolated cards, typical
