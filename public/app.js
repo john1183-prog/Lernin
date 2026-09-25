@@ -20,6 +20,7 @@ import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
 import { renderMindMap } from './mind-map.js';
+import { renderMindMazeView } from './mind-maze.js';
 import { renderDocumentMindMap } from './mind-map-doc.js';
 import { generateMindMap } from './mind-map-doc-api.js';
 import { renderMotionStudio, MOTION_PREFILL_KEY } from './motion-studio.js';
@@ -262,6 +263,9 @@ async function handleRoute() {
       break;
     case 'mind-map':
       activeViewCleanup = await enterMindMap(id);
+      break;
+    case 'maze':
+      activeViewCleanup = await enterMindMaze(id);
       break;
     case 'document-mind-map':
       activeViewCleanup = await enterDocumentMindMap(id);
@@ -973,6 +977,7 @@ function openBottomSheet(deck) {
     { label: 'Cards', icon: '🃏', action: () => navigate(`/cards/${deck.id}`) },
     { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
     { label: 'Map', icon: '🗺️', action: () => navigate(`/map/${deck.id}`) },
+    { label: 'Wander MindMaze', icon: '🧭', action: () => navigate(`/maze/${deck.id}`) },
     { label: 'Mind Map', icon: '🕸️', action: () => navigate(`/mind-map/${deck.id}`) },
     { label: 'Motion', icon: '🎬', action: () => navigate(`/motion/${deck.id}`) },
     { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
@@ -1007,7 +1012,7 @@ function openBottomSheet(deck) {
 
   let html = '<div class="sheet-handle"></div>';
   actions.forEach((a, i) => {
-    if (i === 4 || i === 11) html += '<div class="sheet-divider"></div>';
+    if (i === 4 || i === 12) html += '<div class="sheet-divider"></div>';
     html += `
       <button class="sheet-action ${a.primary ? 'is-primary' : ''} ${a.danger ? 'is-danger' : ''}">
         <span class="sheet-action-icon">${a.icon}</span>
@@ -1165,6 +1170,15 @@ async function enterMindMap(deckId) {
   root.innerHTML = '';
   if (!deckId) { navigate('/'); return null; }
   return renderMindMap(root, deckId, { onExit: () => navigate('/') });
+}
+
+async function enterMindMaze(deckId) {
+  root.innerHTML = '';
+  if (!deckId) { navigate('/'); return null; }
+  const controller = await renderMindMazeView(root, deckId, {
+    onExit: () => goBack()
+  });
+  return () => controller?.destroy?.();
 }
 
 async function enterDocumentMindMap(documentId) {
@@ -1813,6 +1827,16 @@ function renderHelp() {
           Zoom in, arrange cards on purpose, draw study paths, then review
           <em>on the map</em> so where something sits and what it means start
           reinforcing each other.
+        </p>
+      </article>
+      <article class="help-card">
+        <div class="help-card-icon">🧭</div>
+        <h3>MindMaze (Side-Mode Fog Exploration)</h3>
+        <p>
+          Want to warm up or wander through today's due cards without touching your review schedule?
+          Open <strong>Wander MindMaze</strong> from any deck menu or territory map. Clearing a fogged
+          chamber reveals connected footpaths for the rest of the calendar day — and because MindMaze
+          is a <strong>pure side-mode</strong>, it never counts as formal reviews or alters your FSRS intervals.
         </p>
       </article>
     </div>

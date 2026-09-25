@@ -12,6 +12,7 @@ import {
   getDeck,
   getRelationshipsFrom,
   getSetting,
+  saveSetting,
   MASTERY_STABILITY_DAYS
 } from './db.js';
 import {
@@ -27,6 +28,8 @@ import {
 } from './sound.js';
 
 export const MAZE_MAX_CHAMBERS = 12;
+export const MAZE_MAX_ATTEMPTS = 200;
+export const MAZE_ATTEMPTS_RETENTION_DAYS = 30;
 export const CHAMBER_RADIUS_MIN = 18;
 export const CHAMBER_RADIUS_MAX = 34;
 
@@ -271,6 +274,134 @@ export function resolveClearedCardIdsFromState(stateRecord, deckId, dayKey) {
   if (!Array.isArray(candidate.clearedCardIds)) return [];
 
   return candidate.clearedCardIds.map((id) => String(id));
+}
+
+export function getMazeSettingKey(deckId) {
+  return `mindMaze:${String(deckId || 'default-deck')}`;
+}
+
+/**
+ * Pure helper that computes the next persisted `mindMaze:<deckId>` settings record.
+ * - Day-scopes `clearedCardIds`: if `prevRecord.dayKey !== dayKey`, previous `clearedCardIds`
+ *   are discarded (fresh fog on a new calendar day).
+ * - Appends the attempt to `attempts`, pruning entries older than 30 days and capping at
+ *   `MAZE_MAX_ATTEMPTS` (200) ring buffer.
+ *
+ * @param {object|null} prevRecord
+ * @param {object} params
+ * @param {string} params.deckId
+ * @param {string} [params.dayKey]
+ * @param {string|null} [params.cardId]
+ * @param {string|null} [params.grade]
+ * @param {'unlocked'|'soft-fail'|null} [params.outcome]
+ * @param {number} [params.nowMs=Date.now()]
+ * @param {number} [params.maxAttempts=MAZE_MAX_ATTEMPTS]
+ * @returns {object}
+ */
+export function buildNextDeckMazeState(
+  prevRecord,
+  {
+    deckId,
+    dayKey = null,
+    cardId = null,
+    grade = null,
+    outcome = null,
+    nowMs = Date.now(),
+    maxAttempts = MAZE_MAX_ATTEMPTS
+  } = {}
+) {
+  const resolvedDeckId = String(deckId || prevRecord?.deckId || 'default-deck');
+  const resolvedDayKey = dayKey || toMazeDayKey(nowMs);
+  const isSameDay = Boolean(
+    prevRecord && typeof prevRecord === 'object' && prevRecord.dayKey === resolvedDayKey
+  );
+
+  const clearedSet = new Set(
+    isSameDay && Array.isArray(prevRecord.clearedCardIds)
+      ? prevRecord.clearedCardIds.map((id) => String(id))
+      : []
+  );
+
+  if (cardId != null && outcome === 'unlocked') {
+    clearedSet.add(String(cardId));
+  }
+
+  const cutoffMs = nowMs - MAZE_ATTEMPTS_RETENTION_DAYS * 86400000;
+  const priorAttempts = Array.isArray(prevRecord?.attempts)
+    ? prevRecord.attempts.filter(
+        (a) => a && typeof a === 'object' && (typeof a.timestamp !== 'number' || a.timestamp >= cutoffMs)
+      )
+    : [];
+
+  if (cardId != null && grade != null && outcome != null) {
+    priorAttempts.push({
+      cardId: String(cardId),
+      grade: String(grade),
+      outcome: String(outcome),
+      dayKey: resolvedDayKey,
+      timestamp: nowMs
+    });
+  }
+
+  const boundedAttempts = priorAttempts.slice(-Math.max(1, maxAttempts));
+
+  return {
+    deckId: resolvedDeckId,
+    dayKey: resolvedDayKey,
+    clearedCardIds: Array.from(clearedSet),
+    attempts: boundedAttempts,
+    updatedAt: nowMs
+  };
+}
+
+/**
+ * Persists a MindMaze gate outcome (`unlocked` or `soft-fail`) into the IndexedDB
+ * `settings` store under `mindMaze:<deckId>` (and mirrors into `mindMazeState.byDeck[deckId]`).
+ * Strictly side-mode: never touches `cards` FSRS fields or `reviewLog`.
+ *
+ * @param {string} deckId
+ * @param {object} [opts]
+ * @param {string} [opts.cardId]
+ * @param {string} [opts.grade]
+ * @param {'unlocked'|'soft-fail'} [opts.outcome]
+ * @param {string} [opts.dayKey]
+ * @param {number} [opts.nowMs=Date.now()]
+ * @returns {Promise<object|null>}
+ */
+export async function saveDeckMazeAttempt(
+  deckId,
+  { cardId, grade, outcome, dayKey = null, nowMs = Date.now() } = {}
+) {
+  if (!deckId) return null;
+  const resolvedDeckId = String(deckId);
+  const resolvedDayKey = dayKey || toMazeDayKey(nowMs);
+  const key = getMazeSettingKey(resolvedDeckId);
+  try {
+    const prev = await getSetting(key);
+    const nextRecord = buildNextDeckMazeState(prev, {
+      deckId: resolvedDeckId,
+      dayKey: resolvedDayKey,
+      cardId,
+      grade,
+      outcome,
+      nowMs
+    });
+    await saveSetting(key, nextRecord);
+
+    // Mirror into shared `mindMazeState.byDeck[deckId]` container
+    const shared = (await getSetting('mindMazeState')) || { byDeck: {} };
+    const nextShared = {
+      ...(typeof shared === 'object' && shared ? shared : {}),
+      byDeck: {
+        ...(shared && typeof shared.byDeck === 'object' ? shared.byDeck : {}),
+        [resolvedDeckId]: nextRecord
+      }
+    };
+    await saveSetting('mindMazeState', nextShared);
+    return nextRecord;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -540,10 +671,12 @@ export function buildChamberGraph({
     };
   });
 
+  const allChambersAlreadyCleared = nodes.length > 0 && nodes.every((n) => n.status === 'CLEARED');
+
   return {
-    status: 'ACTIVE',
+    status: allChambersAlreadyCleared ? 'SANCTUARY' : 'ACTIVE',
     isEmptyDeck: false,
-    isSanctuary: false,
+    isSanctuary: allChambersAlreadyCleared,
     deckId: resolvedDeckId,
     dayKey: resolvedDayKey,
     totalActiveCards: activeCards.length,
@@ -1379,11 +1512,16 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     return `${cleared} cleared · ${frontier} open · ${fogged} misted`;
   }
 
+  const isArchivedDeck = Boolean(deck?.archived);
+
   const header = document.createElement('div');
   header.className = 'app-header mind-maze-header';
   header.innerHTML = `
     <button class="back-btn" id="mmzBackBtn" type="button" aria-label="Back">←</button>
-    <div class="app-header-title">MindMaze · ${escapeHtmlMaze(deckTitle)}</div>
+    <div class="app-header-title" style="display:flex; align-items:center; gap:8px;">
+      <span>MindMaze · ${escapeHtmlMaze(deckTitle)}</span>
+      ${isArchivedDeck ? `<span class="mind-maze-archived-badge" style="font-size:11px; font-weight:500; padding:2px 8px; border-radius:999px; background:var(--surface-elevated, rgba(128,128,128,0.14)); color:var(--ink-secondary); border:1px solid rgba(128,128,128,0.22);">📦 Archived</span>` : ''}
+    </div>
     <div style="display:flex; align-items:center; gap:8px;">
       <span class="mind-maze-status-pill" id="mmzLegendPill" style="font-size:12px; padding:4px 10px; border-radius:999px; background:var(--surface-elevated, rgba(128,128,128,0.14)); color:var(--ink-secondary);">
         ${escapeHtmlMaze(computeLegendText())}
@@ -1513,12 +1651,24 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     return true;
   }
 
+  let lastPersistPromise = Promise.resolve(null);
+
   function gradeActiveGate(grade) {
     if (!activeGateState) return null;
     const { node } = activeGateState;
     const res = applyMazeGateGrade(graph, node.id, grade);
     closeGateModal();
     updateLegendPill();
+
+    if (res && (res.outcome === 'soft-fail' || res.outcome === 'unlocked')) {
+      lastPersistPromise = saveDeckMazeAttempt(deck?.id || deckId || graph.deckId, {
+        cardId: node.cardId,
+        grade: res.grade,
+        outcome: res.outcome,
+        dayKey: graph.dayKey
+      });
+      res.persistPromise = lastPersistPromise;
+    }
 
     if (res.outcome === 'soft-fail') {
       playAgain();

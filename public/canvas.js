@@ -1616,6 +1616,7 @@ function updateToolbar() {
     <button class="map-tool-btn" id="toolLandmark" title="Add landmark">🏷️</button>
     <button class="map-tool-btn ${pathBuildMode ? 'is-active' : ''}" id="toolPath" title="New path">🛤️</button>
     <button class="map-tool-btn ${annotateMode ? 'is-active' : ''}" id="toolAnnotate" title="Annotate">📝</button>
+    <button class="map-tool-btn" id="toolMindMaze" title="Wander MindMaze (practice side-mode)">🧭</button>
     <button class="map-tool-btn is-primary" id="toolSpatial" title="Review on map">🎯</button>
     <button class="map-tool-btn" id="toolStudy" title="Classic study">▶️</button>
     ${pathBuildMode ? '<button class="map-tool-btn is-primary" id="toolSavePath">Save path</button><button class="map-tool-btn" id="toolCancelPath">Cancel</button>' : ''}
@@ -1632,6 +1633,10 @@ function updateToolbar() {
     annotateMode = !annotateMode;
     pathBuildMode = false;
     updateToolbar();
+  });
+  toolbarEl.querySelector('#toolMindMaze')?.addEventListener('click', () => {
+    if (!activeDeckId) return;
+    window.location.hash = `/maze/${activeDeckId}`;
   });
   toolbarEl.querySelector('#toolSpatial')?.addEventListener('click', startSpatialFromMap);
   toolbarEl.querySelector('#toolStudy')?.addEventListener('click', () => {

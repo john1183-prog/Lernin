@@ -1070,8 +1070,21 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**MindMaze v1 — Phase 4 (Vertical Slice Complete): Day-Scoped Persistence, `#/maze/:deckId` Route, Entry Points & SW Shell (`public/mind-maze.js`, `public/app.js`, `public/canvas.js`, `public/sw.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+completed all 4 phases of MindMaze v1 as a pure side-mode fog-of-war territory exploration experience (does not count as formal reviews and never alters FSRS schedules or `reviewLog`):
+- **Day-Scoped Persistence & Bounded Attempts Ring Buffer (`public/mind-maze.js`)**:
+  * Added `getMazeSettingKey(deckId)` (`mindMaze:<deckId>`), `buildNextDeckMazeState(prevRecord, params)`, and `saveDeckMazeAttempt(deckId, params)` persisting into IndexedDB `settings` (`mindMaze:<deckId>` and mirrored in `mindMazeState.byDeck[deckId]`) with zero `DB_VERSION` bump.
+  * On gate unlock (`Hard` / `Good` / `Easy`), appends `cardId` to today's `clearedCardIds` (`dayKey: YYYY-MM-DD`) and records `{ cardId, grade, outcome, dayKey, timestamp }` in `attempts` (pruned beyond 30 days and bounded to `MAZE_MAX_ATTEMPTS = 200`).
+  * Reloading or re-entering `#/maze/:deckId` on the same calendar day restores `CLEARED` chambers, promotes adjacent `FOGGED` successors to `FRONTIER`, and restores `SANCTUARY` state if all chambers were already cleared today.
+  * On a new calendar `dayKey`, previous `clearedCardIds` are ignored/discarded so fresh fog rolls back in automatically.
+- **SPA Routing, Entry Points, Archived Deck Badge & Help Documentation (`public/app.js`, `public/canvas.js`, `public/sw.js`)**:
+  * Wired `#/maze/:deckId` route (`enterMindMaze`) in `public/app.js`, with entry points in the deck action bottom sheet (**🧭 Wander MindMaze**) and the L2 Territory Map toolbar (`#toolMindMaze` in `public/canvas.js`, navigating via `window.location.hash` with zero `app.js` imports).
+  * Archived decks remain playable in MindMaze with a subtle `📦 Archived` header badge (`.mind-maze-archived-badge`) and zero auto-unarchive side effects.
+  * Added **MindMaze (Side-Mode Fog Exploration)** card to the in-app Help view (`renderHelp()`), clarifying that MindMaze is a pure side-mode that never writes FSRS intervals or review counts.
+  * Added `/mind-maze.js` to `SHELL_ASSETS` and bumped `CACHE_VERSION` to `lernin-shell-v27` in `public/sw.js` for cold-start offline parity.
+
 **MindMaze v1 — Phase 3: Gate Modal, Unlock/Soft-Fail & Synth Audio (`public/mind-maze.js`, `public/sound.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
-shipped Phase 3 (self-contained Gate Modal on `FRONTIER` chamber tap, cloze-safe prompt + answer reveal, side-mode grading `Again`/`Hard`/`Good`/`Easy` without FSRS intervals, in-memory unlock & soft-fail animations, `Escape` handling, full-clear detection, and synthesizer audio cues); **Phase 4 remains open** (Phase 4: Day-scoped reveal persistence, `#/maze/:deckId` route integration, deck menu entry, and SW shell updates):
+shipped Phase 3 (self-contained Gate Modal on `FRONTIER` chamber tap, cloze-safe prompt + answer reveal, side-mode grading `Again`/`Hard`/`Good`/`Easy` without FSRS intervals, in-memory unlock & soft-fail animations, `Escape` handling, full-clear detection, and synthesizer audio cues):
 - **Self-Contained Gate Modal & Side-Mode Grading (`public/mind-maze.js`)**:
   * Wired `FRONTIER` chamber tap to open `.mind-maze-gate-overlay` / `.mind-maze-gate-modal` displaying the due card's front (masking `{{cN::answer::hint}}` cloze syntax as `[...]` and rendering `$$formula$$` when present).
   * Clicking **Show Answer** (or pressing `Space`/`Enter`) calls `playFlip()`, reveals the card back (with cloze answers highlighted and formula variables/assumptions displayed), and surfaces the 4 grade buttons (**Again**, **Hard**, **Good**, **Easy** — keys `1`–`4`, strictly omitting FSRS interval labels).

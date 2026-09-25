@@ -11,6 +11,8 @@
 import assert from 'node:assert/strict';
 import {
   MAZE_MAX_CHAMBERS,
+  MAZE_MAX_ATTEMPTS,
+  MAZE_ATTEMPTS_RETENTION_DAYS,
   CHAMBER_RADIUS_MIN,
   CHAMBER_RADIUS_MAX,
   toMazeDayKey,
@@ -19,6 +21,8 @@ import {
   isCardDueForMaze,
   selectMazeDueCards,
   resolveClearedCardIdsFromState,
+  getMazeSettingKey,
+  buildNextDeckMazeState,
   buildChamberGraph,
   chamberColor,
   getMazeThemeTokens,
@@ -371,6 +375,103 @@ console.log('=== 7. Phase 3 Gate Outcome Resolver (applyMazeGateGrade: unlock, s
   console.log('  ok - applyMazeGateGrade handles soft-fail, progressive unlock, and full-clear with zero FSRS mutation');
 }
 
-console.log('\nALL MINDMAZE PHASE 1, PHASE 2 & PHASE 3 CHECKS PASSED');
+// ---------------------------------------------------------------------------
+// 8. Phase 4: Day-Scoped Persistence, Ring Buffer & Next-Day Reset
+// ---------------------------------------------------------------------------
+console.log('8. Testing Phase 4 day-scoped persistence (buildNextDeckMazeState) & next-day reset...');
+{
+  assert.equal(getMazeSettingKey('deck-xyz'), 'mindMaze:deck-xyz');
+
+  // Step 1: Soft-fail on day 1 records attempt but does NOT add to clearedCardIds
+  const s1 = buildNextDeckMazeState(null, {
+    deckId: 'deck-p4',
+    dayKey: '2026-09-25',
+    cardId: 'c1',
+    grade: 'again',
+    outcome: 'soft-fail',
+    nowMs: NOW
+  });
+  assert.deepEqual(s1.clearedCardIds, []);
+  assert.equal(s1.attempts.length, 1);
+  assert.equal(s1.attempts[0].outcome, 'soft-fail');
+
+  // Step 2: Unlock on same day adds c1 to clearedCardIds and appends attempt
+  const s2 = buildNextDeckMazeState(s1, {
+    deckId: 'deck-p4',
+    dayKey: '2026-09-25',
+    cardId: 'c1',
+    grade: 'good',
+    outcome: 'unlocked',
+    nowMs: NOW + 1000
+  });
+  assert.deepEqual(s2.clearedCardIds, ['c1']);
+  assert.equal(s2.attempts.length, 2);
+
+  // Step 3: Next calendar day ('2026-09-26') resets clearedCardIds (fresh fog!) while preserving recent attempts
+  const s3 = buildNextDeckMazeState(s2, {
+    deckId: 'deck-p4',
+    dayKey: '2026-09-26',
+    cardId: 'c2',
+    grade: 'hard',
+    outcome: 'unlocked',
+    nowMs: NOW + 86400000
+  });
+  assert.deepEqual(
+    s3.clearedCardIds,
+    ['c2'],
+    'New calendar dayKey must discard previous day clearedCardIds (fresh fog) and record only new day unlocks'
+  );
+  assert.equal(s3.attempts.length, 3);
+
+  // Step 4: Ring buffer cap (MAZE_MAX_ATTEMPTS = 200) and 30-day pruning
+  const expiredTimestamp = NOW - (MAZE_ATTEMPTS_RETENTION_DAYS + 5) * 86400000;
+  let bulkState = {
+    deckId: 'deck-p4',
+    dayKey: '2026-09-26',
+    clearedCardIds: ['c1'],
+    attempts: [
+      { cardId: 'expired-card', grade: 'good', outcome: 'unlocked', dayKey: '2026-08-01', timestamp: expiredTimestamp }
+    ]
+  };
+  for (let i = 0; i < MAZE_MAX_ATTEMPTS + 25; i++) {
+    bulkState = buildNextDeckMazeState(bulkState, {
+      deckId: 'deck-p4',
+      dayKey: '2026-09-26',
+      cardId: `card-${i}`,
+      grade: 'good',
+      outcome: 'unlocked',
+      nowMs: NOW + i * 10
+    });
+  }
+  assert.equal(
+    bulkState.attempts.length,
+    MAZE_MAX_ATTEMPTS,
+    `Attempts ring buffer must be bounded to MAZE_MAX_ATTEMPTS (${MAZE_MAX_ATTEMPTS})`
+  );
+  assert.ok(
+    !bulkState.attempts.some((a) => a.cardId === 'expired-card'),
+    'Attempts older than 30 days must be pruned'
+  );
+
+  // Step 5: Re-loading buildChamberGraph when all due cards are in clearedCardIds restores SANCTUARY status
+  const cards = [
+    makeFrozenCard({ id: 'c1', due_date: NOW - 40000 }),
+    makeFrozenCard({ id: 'c2', due_date: NOW - 20000 })
+  ];
+  const fullClearedGraph = buildChamberGraph({
+    deckId: 'deck-p4',
+    cards,
+    clearedCardIds: ['c1', 'c2'],
+    nowMs: NOW,
+    dayKey: '2026-09-25'
+  });
+  assert.equal(fullClearedGraph.status, 'SANCTUARY', 'When all selected chambers are already cleared today, status is SANCTUARY');
+  assert.equal(fullClearedGraph.isSanctuary, true);
+  assert.equal(fullClearedGraph.nodes.length, 2);
+  assert.ok(fullClearedGraph.nodes.every((n) => n.status === 'CLEARED'));
+  console.log('  ok - buildNextDeckMazeState, ring buffer, 30-day prune, and SANCTUARY reload verified');
+}
+
+console.log('\nALL MINDMAZE PHASE 1, PHASE 2, PHASE 3 & PHASE 4 CHECKS PASSED');
 
 
