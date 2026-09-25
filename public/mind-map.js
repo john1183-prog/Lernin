@@ -23,6 +23,7 @@
 
 import { getCardsByDeck, getRelationshipsFrom, getDeck, MASTERY_STABILITY_DAYS } from './db.js';
 import { cardQuickActions } from './study.js';
+import { resolveCardMotionTopic } from './motion-topic.js';
 
 const SAND_HSL = { h: 38, s: 28, l: 78 };
 const OCHRE_HSL = { h: 32, s: 55, l: 55 };
@@ -221,6 +222,7 @@ let lastPointer = null;
 let dragMoved = 0;
 let onExitCb = null;
 let currentDeckId = null;
+let currentDeckTitle = '';
 const DRAG_THRESHOLD = 4;
 
 function scheduleFrame(delayMs) {
@@ -237,6 +239,7 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   container = rootEl;
   onExitCb = opts.onExit || null;
   currentDeckId = deckId;
+  currentDeckTitle = '';
   container.innerHTML = '';
   container.style.padding = '0';
 
@@ -280,7 +283,10 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   }
   cards = cards.filter(c => !c.suspended);
 
-  if (deck) header.querySelector('.app-header-title').textContent = `Mind Map \u00b7 ${deck.title}`;
+  if (deck) {
+    currentDeckTitle = deck.title || '';
+    header.querySelector('.app-header-title').textContent = `Mind Map \u00b7 ${deck.title}`;
+  }
 
   if (cards.length === 0) {
     canvasWrap.innerHTML = '<p style="padding:var(--space-lg); color:var(--ink-muted); text-align:center;">No cards in this deck yet.</p>';
@@ -437,14 +443,27 @@ function onWheel(e) {
   scheduleFrame(0);
 }
 
+function buildThinHelperMessage(thinReason) {
+  if (thinReason === 'referential_fragment') {
+    return '💡 This card references surrounding context (“this reaction”, a figure, etc.) — feel free to add a detail above or check “Include deck context” below.';
+  }
+  if (thinReason === 'bare_formula_without_variables') {
+    return '💡 Short formula card — you can name the variables above or check “Include deck context” for a richer animation.';
+  }
+  if (thinReason === 'empty_front') {
+    return '💡 Card front is blank — we pre-filled a topic from your deck/card back, which you can refine above.';
+  }
+  return '💡 Short card prompt — we added your deck title to help. Tweak the topic above if you’d like a more specific animation.';
+}
+
 let detailPanelEl = null;
 function openNodeDetail(node) {
   detailPanelEl?.remove();
   const p = document.createElement('div');
   p.className = 'mind-map-node-detail';
-  p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:45%; overflow-y:auto; z-index:10;';
+  p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:68%; overflow-y:auto; z-index:10;';
   p.innerHTML = `
-    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtmlLocal(node.card.front)}</div>
+    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:22px;">${escapeHtmlLocal(node.card.front)}</div>
     <div style="font-size:13px; color:var(--ink-secondary); line-height:1.5;">${escapeHtmlLocal(node.card.back || '')}</div>
     ${node.card.formula ? `<div style="font-size:13px; margin-top:6px; color:var(--ink-secondary);">$$${escapeHtmlLocal(node.card.formula)}$$</div>` : ''}
   `;
@@ -458,6 +477,89 @@ function openNodeDetail(node) {
   });
   p.style.position = 'absolute';
   p.appendChild(closeBtn);
+
+  // Explain with motion section (Phase 2: local deterministic topic prefill + UI chrome)
+  if (node.card) {
+    const motionResolved = resolveCardMotionTopic(node.card, currentDeckTitle);
+    const branchLabels = {
+      formula: 'Formula card',
+      cloze: 'Cloze card',
+      basic: 'Card topic',
+      fallback: 'Deck fallback'
+    };
+    const branchLabel = branchLabels[motionResolved.sourceBranch] || 'Card topic';
+
+    const motionSection = document.createElement('div');
+    motionSection.className = 'mm-explain-motion-section';
+    motionSection.style.cssText = 'margin-top:12px; padding-top:12px; border-top:1px solid var(--border, rgba(128,128,128,0.18)); display:flex; flex-direction:column; gap:8px;';
+    motionSection.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <span style="font-size:12px; font-weight:600; color:var(--ink); display:inline-flex; align-items:center; gap:5px;">
+          <span>🎬</span>
+          <span>Explain with motion</span>
+        </span>
+        <span class="mm-motion-branch-pill" data-branch="${escapeHtmlLocal(motionResolved.sourceBranch)}" style="font-size:11px; padding:2px 8px; border-radius:999px; background:var(--surface-raised, rgba(128,128,128,0.12)); color:var(--ink-secondary);">
+          ${escapeHtmlLocal(branchLabel)}
+        </span>
+      </div>
+      <input
+        type="text"
+        id="mmMotionTopicInput"
+        class="mm-motion-topic-input"
+        aria-label="Motion explainer topic"
+        placeholder="Describe the concept to animate…"
+        style="width:100%; padding:8px 10px; border-radius:var(--radius-sm, 6px); border:1px solid var(--border, rgba(128,128,128,0.28)); background:var(--bg); color:var(--ink); font-size:13px; box-sizing:border-box;"
+      />
+      ${motionResolved.isThin ? `
+        <div class="mm-motion-thin-badge" data-thin-reason="${escapeHtmlLocal(motionResolved.thinReason || 'thin')}" style="font-size:12px; line-height:1.45; padding:7px 10px; border-radius:var(--radius-sm, 6px); background:rgba(188, 126, 50, 0.14); color:var(--ink-secondary); border:1px solid rgba(188, 126, 50, 0.3);">
+          ${escapeHtmlLocal(buildThinHelperMessage(motionResolved.thinReason))}
+        </div>
+      ` : ''}
+      <label class="mm-motion-context-row" style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-secondary); cursor:pointer; user-select:none;">
+        <input type="checkbox" id="mmMotionIncludeContext" class="mm-motion-context-checkbox" style="margin:0; cursor:pointer;" />
+        <span>Include deck context (related cards &amp; summary)</span>
+      </label>
+      <button
+        type="button"
+        id="mmMotionGenerateBtn"
+        class="btn-secondary mm-motion-generate-btn"
+        style="align-self:flex-start; padding:7px 12px; font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:6px; cursor:pointer;"
+      >
+        <span>🎬</span>
+        <span>Generate motion explainer</span>
+      </button>
+    `;
+
+    const topicInput = motionSection.querySelector('#mmMotionTopicInput');
+    if (topicInput) {
+      topicInput.value = motionResolved.topic;
+    }
+
+    const contextCheckbox = motionSection.querySelector('#mmMotionIncludeContext');
+    if (contextCheckbox) {
+      contextCheckbox.checked = false;
+    }
+
+    const generateBtn = motionSection.querySelector('#mmMotionGenerateBtn');
+    if (generateBtn) {
+      generateBtn.addEventListener('click', () => {
+        // TODO(Phase 3): Wire MOTION_PREFILL handoff & optional deck context pack assembly.
+        const prepared = {
+          cardId: node.card.id,
+          deckId: currentDeckId,
+          topic: topicInput ? topicInput.value.trim() : motionResolved.topic,
+          includeContext: Boolean(contextCheckbox && contextCheckbox.checked),
+          sourceBranch: motionResolved.sourceBranch,
+          isThin: motionResolved.isThin,
+          thinReason: motionResolved.thinReason
+        };
+        p.__preparedMotionRequest = prepared;
+        p.dispatchEvent(new CustomEvent('lernin:mind-map-motion-prepare', { bubbles: true, detail: prepared }));
+      });
+    }
+
+    p.appendChild(motionSection);
+  }
 
   if (currentDeckId && node.card) {
     const did = currentDeckId;
@@ -588,6 +690,7 @@ function destroy() {
   hoveredNode = null; draggedNode = null; pointerDownNode = null;
   lastPointer = null; isPanning = false;
   currentDeckId = null;
+  currentDeckTitle = '';
 }
 
 if (typeof window !== 'undefined') {

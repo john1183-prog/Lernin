@@ -1070,6 +1070,15 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Explain with Motion (Card Mind Map) — Phase 2: Node Detail Panel UX (`public/mind-map.js`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 2 (Explain with motion section inside `openNodeDetail` in `public/mind-map.js` with local deterministic topic prefill, source-branch badge, conditional `isThin` helper nudge, default-unchecked `Include deck context` checkbox, and Generate button stub); **Phases 3–4 remain open** (Phase 3: Optional deck context pack assembly & `MOTION_PREFILL` handoff to Motion Studio; Phase 4: SW shell & end-to-end polish):
+- **Node Detail Panel UX (`openNodeDetail` in `public/mind-map.js`)**:
+  * Imports `resolveCardMotionTopic` strictly from `./motion-topic.js` with zero `app.js` imports and zero network/LLM requests on node tap.
+  * Renders `.mm-explain-motion-section` containing an editable topic `<input id="mmMotionTopicInput">` prefilled with `resolveCardMotionTopic(node.card, currentDeckTitle).topic` and a branch indicator pill (`.mm-motion-branch-pill` for `Formula card`, `Cloze card`, `Card topic`, or `Deck fallback`).
+  * Conditionally renders a warm rescuing helper banner (`.mm-motion-thin-badge`) when `isThin === true` (`referential_fragment`, `bare_formula_without_variables`, `empty_front`, or `too_short`).
+  * Renders the `Include deck context (related cards & summary)` checkbox (`#mmMotionIncludeContext`) strictly **OFF (unchecked) by default**.
+  * Includes `#mmMotionGenerateBtn` (`🎬 Generate motion explainer`), preparing `p.__preparedMotionRequest` and dispatching `lernin:mind-map-motion-prepare` without navigating until Phase 3 wires `MOTION_PREFILL_KEY` and context assembly.
+
 **Explain with Motion (Card Mind Map) — Phase 1: Deterministic Local Topic Resolver (`public/motion-topic.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 1 (`resolveCardMotionTopic` pure local extractor and permanent Node test suite); **Phases 2–4 remain open** (Phase 2: Card Mind Map node detail panel UI, editable topic field & thin-topic nudge; Phase 3: Optional context pack & `MOTION_PREFILL` handoff to Motion Studio; Phase 4: SW shell & end-to-end verification):
 - **Pure Local Topic Extraction (`resolveCardMotionTopic` in `public/motion-topic.js`)**:
