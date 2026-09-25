@@ -1070,6 +1070,15 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Explain with Motion (Card Mind Map) — Phase 1: Deterministic Local Topic Resolver (`public/motion-topic.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 1 (`resolveCardMotionTopic` pure local extractor and permanent Node test suite); **Phases 2–4 remain open** (Phase 2: Card Mind Map node detail panel UI, editable topic field & thin-topic nudge; Phase 3: Optional context pack & `MOTION_PREFILL` handoff to Motion Studio; Phase 4: SW shell & end-to-end verification):
+- **Pure Local Topic Extraction (`resolveCardMotionTopic` in `public/motion-topic.js`)**:
+  * Zero network/LLM calls and zero `app.js` or DOM imports; strictly non-mutating on input card records.
+  * **Formula branch (`sourceBranch: 'formula'`)**: Prioritizes `card.variables` (`symbol`/`name` + `meaning`/`description`) alongside stripped `front` and `cleanFormulaText(card.formula)`; falls back cleanly when variables are absent and flags bare formulas (`thinReason: 'bare_formula_without_variables'`).
+  * **Cloze branch (`sourceBranch: 'cloze'`)**: Strips `{{cN::answer::hint}}` markup via `parseClozeMarkup`, combining unique blanked terms with the full reconstructed surrounding sentence.
+  * **Basic branch (`sourceBranch: 'basic'`)**: Strips common interrogative quiz stems (`What is...`, `Define...`, `How does...`, trailing `?` and `____`) via `stripQuizQuestionStem`, while flagging short or referential prompts (`isThin: true`, `thinReason: 'referential_fragment' | 'too_short'`) and appending `deckTitle` when helpful.
+  * **Empty front fallback (`sourceBranch: 'fallback'`)**: Gracefully resolves empty/whitespace fronts using `deckTitle` and/or a concise `card.back` snippet (`isThin: true`, `thinReason: 'empty_front'`).
+
 **MindMaze v1 — Phase 4 (Vertical Slice Complete): Day-Scoped Persistence, `#/maze/:deckId` Route, Entry Points & SW Shell (`public/mind-maze.js`, `public/app.js`, `public/canvas.js`, `public/sw.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 completed all 4 phases of MindMaze v1 as a pure side-mode fog-of-war territory exploration experience (does not count as formal reviews and never alters FSRS schedules or `reviewLog`):
 - **Day-Scoped Persistence & Bounded Attempts Ring Buffer (`public/mind-maze.js`)**:
