@@ -21,9 +21,15 @@
    nothing is persisted.
 */
 
-import { getCardsByDeck, getRelationshipsFrom, getDeck, MASTERY_STABILITY_DAYS } from './db.js';
+import { getCardsByDeck, getRelationshipsFrom, getDeck, getDocumentsByDeck, MASTERY_STABILITY_DAYS } from './db.js';
 import { cardQuickActions } from './study.js';
-import { resolveCardMotionTopic } from './motion-topic.js';
+import { MOTION_PREFILL_KEY } from './motion-studio.js';
+import {
+  resolveCardMotionTopic,
+  composeCardMotionFinalTopic,
+  buildCardMotionContextPack,
+  MOTION_SOURCE_CARD_KEY
+} from './motion-topic.js';
 
 const SAND_HSL = { h: 38, s: 28, l: 78 };
 const OCHRE_HSL = { h: 32, s: 55, l: 55 };
@@ -223,6 +229,7 @@ let dragMoved = 0;
 let onExitCb = null;
 let currentDeckId = null;
 let currentDeckTitle = '';
+let currentDocSummary = '';
 const DRAG_THRESHOLD = 4;
 
 function scheduleFrame(delayMs) {
@@ -240,6 +247,7 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   onExitCb = opts.onExit || null;
   currentDeckId = deckId;
   currentDeckTitle = '';
+  currentDocSummary = '';
   container.innerHTML = '';
   container.style.padding = '0';
 
@@ -274,9 +282,13 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
     scheduleFrame(0);
   });
 
-  let cards, deck;
+  let cards, deck, docs;
   try {
-    [cards, deck] = await Promise.all([getCardsByDeck(deckId), getDeck(deckId)]);
+    [cards, deck, docs] = await Promise.all([
+      getCardsByDeck(deckId),
+      getDeck(deckId),
+      getDocumentsByDeck(deckId).catch(() => [])
+    ]);
   } catch (err) {
     canvasWrap.innerHTML = '<p style="padding:var(--space-lg); color:var(--ink-muted); text-align:center;">Failed to load this deck\u2019s cards.</p>';
     return destroy;
@@ -286,6 +298,13 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   if (deck) {
     currentDeckTitle = deck.title || '';
     header.querySelector('.app-header-title').textContent = `Mind Map \u00b7 ${deck.title}`;
+  }
+
+  if (Array.isArray(docs) && docs.length > 0) {
+    const docWithSummary = docs.find(d => d && typeof d.summary === 'string' && d.summary.trim().length > 0);
+    if (docWithSummary) {
+      currentDocSummary = docWithSummary.summary.trim();
+    }
   }
 
   if (cards.length === 0) {
@@ -543,18 +562,48 @@ function openNodeDetail(node) {
     const generateBtn = motionSection.querySelector('#mmMotionGenerateBtn');
     if (generateBtn) {
       generateBtn.addEventListener('click', () => {
-        // TODO(Phase 3): Wire MOTION_PREFILL handoff & optional deck context pack assembly.
+        const rawInput = topicInput ? topicInput.value.trim() : '';
+        const editedTopic = rawInput || motionResolved.topic;
+        const includeContext = Boolean(contextCheckbox && contextCheckbox.checked);
+        const neighborCards = getConnectedNeighborCards(node, 3);
+        const contextPack = includeContext
+          ? buildCardMotionContextPack({
+              deckTitle: currentDeckTitle,
+              neighborCards,
+              docSummary: currentDocSummary
+            })
+          : '';
+        const finalTopic = composeCardMotionFinalTopic(editedTopic, {
+          includeContext,
+          deckTitle: currentDeckTitle,
+          neighborCards,
+          docSummary: currentDocSummary
+        });
+
         const prepared = {
           cardId: node.card.id,
           deckId: currentDeckId,
-          topic: topicInput ? topicInput.value.trim() : motionResolved.topic,
-          includeContext: Boolean(contextCheckbox && contextCheckbox.checked),
+          topic: editedTopic,
+          finalTopic,
+          contextPack,
+          includeContext,
           sourceBranch: motionResolved.sourceBranch,
           isThin: motionResolved.isThin,
           thinReason: motionResolved.thinReason
         };
         p.__preparedMotionRequest = prepared;
         p.dispatchEvent(new CustomEvent('lernin:mind-map-motion-prepare', { bubbles: true, detail: prepared }));
+
+        // Handoff to Motion Studio via sessionStorage + hash navigation (same
+        // zero-import pattern as mind-map-doc.js so mind-map.js never imports app.js).
+        try {
+          sessionStorage.setItem(MOTION_PREFILL_KEY, finalTopic);
+          sessionStorage.setItem(MOTION_SOURCE_CARD_KEY, String(node.card.id));
+        } catch (_) {}
+
+        if (currentDeckId) {
+          window.location.hash = `/motion/${currentDeckId}`;
+        }
       });
     }
 
@@ -677,6 +726,33 @@ function renderLoop() {
   scheduleFrame(isActive ? 0 : 250);
 }
 
+function getConnectedNeighborCards(targetNode, maxNeighbors = 3) {
+  if (!targetNode || !Array.isArray(edges)) return [];
+  const connected = [];
+  const seenCardIds = new Set([targetNode.id]);
+
+  // Prioritize dependsOn edges first, then related edges
+  const orderedEdges = [
+    ...edges.filter(e => e && e.type === 'dependsOn'),
+    ...edges.filter(e => e && e.type !== 'dependsOn')
+  ];
+
+  for (const e of orderedEdges) {
+    if (connected.length >= maxNeighbors) break;
+    let otherNode = null;
+    if (e.source === targetNode || (e.source && e.source.id === targetNode.id)) {
+      otherNode = e.target;
+    } else if (e.target === targetNode || (e.target && e.target.id === targetNode.id)) {
+      otherNode = e.source;
+    }
+    if (otherNode && otherNode.card && !seenCardIds.has(otherNode.id)) {
+      seenCardIds.add(otherNode.id);
+      connected.push(otherNode.card);
+    }
+  }
+  return connected;
+}
+
 function destroy() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
@@ -691,11 +767,14 @@ function destroy() {
   lastPointer = null; isPanning = false;
   currentDeckId = null;
   currentDeckTitle = '';
+  currentDocSummary = '';
 }
 
 if (typeof window !== 'undefined') {
   window.__mindMapDebug = {
     getNodes: () => nodes,
+    getEdges: () => edges,
+    getConnectedNeighborCards,
     openNodeDetail,
     getDetailPanel: () => detailPanelEl,
     nodeSilhouettePoints,

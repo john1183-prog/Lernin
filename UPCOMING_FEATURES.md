@@ -1070,6 +1070,16 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Explain with Motion (Card Mind Map) — Phase 3: Bounded Context Pack & Motion Studio Prefill Handoff (`public/motion-topic.js`, `public/mind-map.js`, `public/sw.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 3 (bounded context pack assembly when `Include deck context` is checked, `MOTION_PREFILL_KEY` + `MOTION_SOURCE_CARD_KEY` `sessionStorage` handoff, `#/motion/:deckId` hash navigation without importing `app.js`, and service worker shell cache registration for `/motion-topic.js`):
+- **Bounded Context Pack & Final Topic Composer (`public/motion-topic.js`)**:
+  * Exports `MOTION_SOURCE_CARD_KEY = 'lernin:motionStudioSourceCardId'`, `MAX_CONTEXT_PACK_CHARS = 360`, `unmaskCardFrontForContext`, `buildCardMotionContextPack`, and `composeCardMotionFinalTopic`.
+  * When `includeContext === false` (default): `composeCardMotionFinalTopic` returns the exact trimmed `editedTopic` with zero context appended.
+  * When `includeContext === true`: builds a bounded context string ($\le 360$ chars) containing `Deck: <deckTitle>`, up to 3 connected neighbor card fronts (`dependsOn` prioritized before `related`) with `{{cN::answer::hint}}` cloze syntax unmasked to plain text (`unmaskCardFrontForContext`), and an optional concise document summary snippet only when connected neighbors are sparse ($< 3$) and a document summary exists for the deck (`getDocumentsByDeck`). Never includes card backs or full deck dumps.
+- **Motion Studio Prefill Handoff (`public/mind-map.js` & `public/sw.js`)**:
+  * Clicking `#mmMotionGenerateBtn` inside `openNodeDetail` writes `finalTopic` to `sessionStorage.setItem(MOTION_PREFILL_KEY, finalTopic)` and `String(node.card.id)` to `sessionStorage.setItem(MOTION_SOURCE_CARD_KEY, ...)`, then navigates to `#/motion/:deckId` via `window.location.hash` (preserving strict zero-`app.js`-import hierarchy) where Motion Studio consumes `MOTION_PREFILL_KEY`, populates `#msTopicInput`, and initiates generation/manual-prompt flow.
+  * Registered `'/motion-topic.js'` in `SHELL_ASSETS` and bumped `CACHE_VERSION` to `'lernin-shell-v28'` in `public/sw.js`.
+
 **Explain with Motion (Card Mind Map) — Phase 2: Node Detail Panel UX (`public/mind-map.js`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 2 (Explain with motion section inside `openNodeDetail` in `public/mind-map.js` with local deterministic topic prefill, source-branch badge, conditional `isThin` helper nudge, default-unchecked `Include deck context` checkbox, and Generate button stub); **Phases 3–4 remain open** (Phase 3: Optional deck context pack assembly & `MOTION_PREFILL` handoff to Motion Studio; Phase 4: SW shell & end-to-end polish):
 - **Node Detail Panel UX (`openNodeDetail` in `public/mind-map.js`)**:

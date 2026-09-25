@@ -14,7 +14,12 @@ import {
   resolveCardMotionTopic,
   stripQuizQuestionStem,
   parseClozeMarkup,
-  cleanFormulaText
+  cleanFormulaText,
+  unmaskCardFrontForContext,
+  buildCardMotionContextPack,
+  composeCardMotionFinalTopic,
+  MOTION_SOURCE_CARD_KEY,
+  MAX_CONTEXT_PACK_CHARS
 } from './motion-topic.js';
 
 function deepFreeze(obj) {
@@ -250,4 +255,89 @@ console.log('=== 7. Zero mutation of input card ===');
   console.log('  ok - input card object is never mutated');
 }
 
-console.log('\nALL MOTION TOPIC PHASE 1 CHECKS PASSED');
+// ---------------------------------------------------------------------------
+// 8. Phase 3: Bounded Context Pack & Final Topic Composer
+// ---------------------------------------------------------------------------
+console.log('=== 8. Phase 3: Bounded context pack & composeCardMotionFinalTopic ===');
+{
+  assert.equal(MOTION_SOURCE_CARD_KEY, 'lernin:motionStudioSourceCardId');
+  assert.equal(MAX_CONTEXT_PACK_CHARS, 360);
+
+  // When includeContext is false (default), exact editedTopic is returned with zero context appended
+  const neighbors = deepFreeze([
+    {
+      id: 'n1',
+      front: 'In {{c1::oxidative phosphorylation::pathway}}, {{c2::ATP synthase}} phosphorylates ADP.',
+      back: 'SECRET BACK 1 MUST NEVER LEAK'
+    },
+    {
+      id: 'n2',
+      front: 'What is the role of the proton-motive force across the inner membrane?',
+      back: 'SECRET BACK 2 MUST NEVER LEAK'
+    },
+    {
+      id: 'n3',
+      front: 'Define chemiosmotic coupling in mitochondria.',
+      back: 'SECRET BACK 3 MUST NEVER LEAK'
+    },
+    {
+      id: 'n4',
+      front: 'Fourth neighbor that should be ignored because max is 3.',
+      back: 'SECRET BACK 4 MUST NEVER LEAK'
+    }
+  ]);
+
+  const offResult = composeCardMotionFinalTopic('Proton gradient across inner membrane', {
+    includeContext: false,
+    deckTitle: 'Cellular Bioenergetics',
+    neighborCards: neighbors,
+    docSummary: 'Detailed lecture notes on electron transport chain and ATP synthesis.'
+  });
+  assert.equal(
+    offResult,
+    'Proton gradient across inner membrane',
+    'When includeContext is false, finalTopic must equal exact editedTopic'
+  );
+
+  // When includeContext is true with 3+ neighbors:
+  // - Includes Deck: Cellular Bioenergetics
+  // - Includes up to 3 neighbor fronts with cloze syntax unmasked
+  // - Excludes 4th neighbor and excludes docSummary (since 3 neighbors are already present)
+  // - Never includes any card back
+  const onResult = composeCardMotionFinalTopic('Proton gradient across inner membrane', {
+    includeContext: true,
+    deckTitle: 'Cellular Bioenergetics',
+    neighborCards: neighbors,
+    docSummary: 'Detailed lecture notes on electron transport chain and ATP synthesis.'
+  });
+  assert.ok(onResult.startsWith('Proton gradient across inner membrane [Context — '), `Expected context suffix, got: ${onResult}`);
+  assert.ok(onResult.includes('Deck: Cellular Bioenergetics'), 'Must include deck title');
+  assert.ok(
+    onResult.includes('In oxidative phosphorylation, ATP synthase phosphorylates ADP'),
+    'Cloze syntax in neighbor front must be unmasked to plain text'
+  );
+  assert.ok(!onResult.includes('{{c'), 'Must not contain raw cloze markup');
+  assert.ok(onResult.includes('Role of the proton-motive force'), 'Must include 2nd neighbor front');
+  assert.ok(onResult.includes('Chemiosmotic coupling in mitochondria'), 'Must include 3rd neighbor front');
+  assert.ok(!onResult.includes('Fourth neighbor'), 'Must cap connected neighbors at 3');
+  assert.ok(!onResult.includes('Summary:'), 'Must omit docSummary when 3 neighbors are already available');
+  assert.ok(!onResult.includes('SECRET BACK'), 'Must never include card backs');
+
+  // Sparse neighbors (< 3) WITH docSummary -> includes concise Summary snippet and stays <= MAX_CONTEXT_PACK_CHARS
+  const longDocSummary =
+    'Cellular respiration couples exergonic electron transfer through Complexes I-IV with endergonic proton pumping across the cristae membrane, establishing an electrochemical gradient that drives F0F1-ATP synthase rotary catalysis.';
+  const sparsePack = buildCardMotionContextPack({
+    deckTitle: 'Cellular Bioenergetics',
+    neighborCards: [neighbors[0]],
+    docSummary: longDocSummary
+  });
+  assert.ok(sparsePack.length <= MAX_CONTEXT_PACK_CHARS, `Context pack must be <= ${MAX_CONTEXT_PACK_CHARS} chars (got ${sparsePack.length})`);
+  assert.ok(sparsePack.includes('Deck: Cellular Bioenergetics'), 'Sparse pack must include deck title');
+  assert.ok(sparsePack.includes('Summary:'), 'Sparse pack (< 3 neighbors) must include concise doc summary snippet');
+  assert.ok(!sparsePack.includes('SECRET BACK'), 'Sparse pack must never include card backs');
+
+  console.log('  ok - bounded context pack & composeCardMotionFinalTopic pass all assertions');
+}
+
+console.log('\nALL MOTION TOPIC PHASE 1 & PHASE 3 CHECKS PASSED');
+
