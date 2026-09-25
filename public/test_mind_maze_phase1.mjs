@@ -19,7 +19,10 @@ import {
   isCardDueForMaze,
   selectMazeDueCards,
   resolveClearedCardIdsFromState,
-  buildChamberGraph
+  buildChamberGraph,
+  chamberColor,
+  getMazeThemeTokens,
+  drawMindMazeFrame
 } from './mind-maze.js';
 
 const NOW = 1727265600000; // Fixed epoch ms anchor
@@ -249,4 +252,74 @@ console.log('=== 5. Zero mutation of card records & day-scoped mindMazeState sup
   console.log('  ok - zero mutation of card records and day-scoped clearedCardIds promotes frontier');
 }
 
-console.log('\nALL MINDMAZE PHASE 1 CHECKS PASSED');
+console.log('=== 6. Phase 2 Canvas 2D renderer (drawMindMazeFrame) across ACTIVE / SANCTUARY / EMPTY_DECK ===');
+{
+  const makeMockCtx = () => {
+    const ops = [];
+    const gradStub = { addColorStop() {} };
+    return {
+      ops,
+      save() {},
+      restore() {},
+      beginPath() { ops.push('beginPath'); },
+      closePath() {},
+      moveTo() {},
+      lineTo() {},
+      quadraticCurveTo() { ops.push('quadraticCurveTo'); },
+      arc() { ops.push('arc'); },
+      fill() { ops.push('fill'); },
+      stroke() { ops.push('stroke'); },
+      fillRect() { ops.push('fillRect'); },
+      fillText(txt) { ops.push(`fillText:${txt}`); },
+      setLineDash() {},
+      createLinearGradient() { return gradStub; },
+      createRadialGradient() { return gradStub; }
+    };
+  };
+
+  const sampleCards = Object.freeze([
+    makeFrozenCard({ id: 'm1', due_date: NOW - 9000, stability: 28 }),
+    makeFrozenCard({ id: 'm2', due_date: NOW - 8000, stability: 12 }),
+    makeFrozenCard({ id: 'm3', due_date: NOW - 7000, stability: 3 }),
+    makeFrozenCard({ id: 'm4', due_date: NOW - 6000, stability: 0 })
+  ]);
+  const activeGraph = buildChamberGraph({
+    deckId: 'deck-render',
+    cards: sampleCards,
+    clearedCardIds: ['m1'],
+    nowMs: NOW,
+    dayKey: DAY_KEY
+  });
+
+  for (const theme of ['light', 'dark']) {
+    const ctx = makeMockCtx();
+    const stats = drawMindMazeFrame(ctx, activeGraph, { width: 960, height: 640 }, { theme, nowMs: NOW });
+    assert.equal(stats.renderedNodes, 4);
+    assert.ok(stats.renderedEdges >= 3);
+    assert.equal(stats.statusCounts.CLEARED, 1);
+    assert.ok(stats.statusCounts.FRONTIER >= 1);
+    assert.ok(stats.statusCounts.FOGGED >= 1);
+    assert.ok(ctx.ops.includes('fillText:✓'), 'Cleared node must render ✓ crest');
+    assert.ok(ctx.ops.includes('fillText:?'), 'Fogged node must render ? shroud');
+  }
+
+  // SANCTUARY & EMPTY_DECK must render cleanly without throwing
+  const sanctuaryGraph = buildChamberGraph({
+    deckId: 'deck-sanc',
+    cards: [makeFrozenCard({ id: 's1', due_date: NOW + 999999 })],
+    nowMs: NOW,
+    dayKey: DAY_KEY
+  });
+  const emptyGraph = buildChamberGraph({
+    deckId: 'deck-emp',
+    cards: [],
+    nowMs: NOW,
+    dayKey: DAY_KEY
+  });
+  assert.equal(drawMindMazeFrame(makeMockCtx(), sanctuaryGraph, { width: 800, height: 500 }, { theme: 'dark' }).renderedNodes, 0);
+  assert.equal(drawMindMazeFrame(makeMockCtx(), emptyGraph, { width: 800, height: 500 }, { theme: 'light' }).renderedNodes, 0);
+  console.log('  ok - ACTIVE (CLEARED/FRONTIER/FOGGED), SANCTUARY, and EMPTY_DECK paint cleanly in Light & Dark');
+}
+
+console.log('\nALL MINDMAZE PHASE 1 & PHASE 2 CHECKS PASSED');
+

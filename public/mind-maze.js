@@ -9,6 +9,7 @@
 
 import {
   getCardsByDeck,
+  getDeck,
   getRelationshipsFrom,
   getSetting,
   MASTERY_STABILITY_DAYS
@@ -587,3 +588,862 @@ export async function loadDeckMazeGraph(
     maxChambers
   });
 }
+
+// ===========================================================================
+// Phase 2: Canvas 2D Terrain, Fog-of-War & Footpath Renderer
+// ===========================================================================
+
+export const SAND_HSL = { h: 38, s: 28, l: 78 };
+export const OCHRE_HSL = { h: 32, s: 55, l: 55 };
+export const MOSS_HSL = { h: 110, s: 32, l: 38 };
+const HUE_JITTER_RANGE = 14;
+
+/**
+ * Linearly interpolates between two HSL color objects.
+ *
+ * @param {{h:number, s:number, l:number}} a
+ * @param {{h:number, s:number, l:number}} b
+ * @param {number} t - clamped to [0, 1]
+ * @returns {{h:number, s:number, l:number}}
+ */
+export function lerpHsl(a, b, t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return {
+    h: a.h + (b.h - a.h) * clamped,
+    s: a.s + (b.s - a.s) * clamped,
+    l: a.l + (b.l - a.l) * clamped
+  };
+}
+
+/**
+ * Maps mastery in [0, 1] and a seed ID to the unified terrain palette
+ * (`SAND_HSL` novice -> `OCHRE_HSL` intermediate -> `MOSS_HSL` mastered).
+ *
+ * @param {number} mastery
+ * @param {string} seedId
+ * @returns {{h:number, s:number, l:number}}
+ */
+export function chamberColor(mastery = 0, seedId = '') {
+  const m = Math.min(1, Math.max(0, Number(mastery) || 0));
+  const base = m < 0.5
+    ? lerpHsl(SAND_HSL, OCHRE_HSL, m / 0.5)
+    : lerpHsl(OCHRE_HSL, MOSS_HSL, (m - 0.5) / 0.5);
+  const jitter = (hashToUnit(`hue:${seedId}`) - 0.5) * 2 * HUE_JITTER_RANGE;
+  return {
+    h: Math.round((base.h + jitter) * 10) / 10,
+    s: Math.round(base.s * 10) / 10,
+    l: Math.round(base.l * 10) / 10
+  };
+}
+
+/**
+ * Resolves Light vs. Dark theme tokens (`data-theme` aware).
+ *
+ * @param {'light'|'dark'|null} [explicitTheme]
+ * @returns {object}
+ */
+export function getMazeThemeTokens(explicitTheme = null) {
+  let isDark = explicitTheme === 'dark';
+  if (!explicitTheme && typeof document !== 'undefined' && document.documentElement) {
+    isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  }
+  if (isDark) {
+    return {
+      isDark: true,
+      sky: '#0A0D10',
+      horizon: '#1B252C',
+      waterRipple: 'rgba(120, 165, 180, 0.08)',
+      ink: '#EDEFF1',
+      inkMuted: '#9BA8A0',
+      surfaceGlass: 'rgba(20, 26, 31, 0.88)',
+      surfaceBorder: 'rgba(155, 168, 160, 0.22)',
+      mistRgb: '14, 20, 25',
+      mistHighlightRgb: '34, 48, 56',
+      lockedStroke: 'rgba(155, 168, 160, 0.34)',
+      frontierHalo: 'rgba(235, 170, 62, 0.68)',
+      frontierRing: '#F2B84B',
+      clearedRing: '#66BB6A',
+      roadUndercoat: '#8B6F47',
+      roadTopcoat: '#D4B275',
+      relRoadUndercoat: '#557A46',
+      relRoadTopcoat: '#9CCC65'
+    };
+  }
+  return {
+    isDark: false,
+    sky: '#E6EFE9',
+    horizon: '#C9DBD0',
+    waterRipple: 'rgba(55, 95, 85, 0.09)',
+    ink: '#1A211C',
+    inkMuted: '#4E5E52',
+    surfaceGlass: 'rgba(248, 250, 248, 0.92)',
+    surfaceBorder: 'rgba(78, 94, 82, 0.22)',
+    mistRgb: '214, 224, 218',
+    mistHighlightRgb: '235, 241, 237',
+    lockedStroke: 'rgba(78, 94, 82, 0.38)',
+    frontierHalo: 'rgba(214, 134, 28, 0.58)',
+    frontierRing: '#C97A16',
+    clearedRing: '#2E7D32',
+    roadUndercoat: '#8B6F47',
+    roadTopcoat: '#C4A265',
+    relRoadUndercoat: '#3E6B36',
+    relRoadTopcoat: '#689F38'
+  };
+}
+
+/**
+ * Generates deterministic irregular polygon points for an island or chamber pebble.
+ *
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} baseRadius
+ * @param {string} seedId
+ * @param {number} [pointCount=14]
+ * @param {number} [irregularity=0.22]
+ * @returns {Array<{x:number, y:number}>}
+ */
+export function buildOrganicPolygonPoints(
+  cx,
+  cy,
+  baseRadius,
+  seedId,
+  pointCount = 14,
+  irregularity = 0.22
+) {
+  const pts = [];
+  const minScale = 1 - irregularity;
+  for (let i = 0; i < pointCount; i++) {
+    const angle = (i / pointCount) * Math.PI * 2;
+    const noise = hashToUnit(`${i * 997}:${seedId}`);
+    const r = baseRadius * (minScale + irregularity * 1.35 * noise);
+    pts.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r
+    });
+  }
+  return pts;
+}
+
+function traceSmoothPolygon(ctx, points) {
+  if (!points || points.length < 3) return;
+  ctx.beginPath();
+  const len = points.length;
+  const firstMidX = (points[len - 1].x + points[0].x) / 2;
+  const firstMidY = (points[len - 1].y + points[0].y) / 2;
+  ctx.moveTo(firstMidX, firstMidY);
+  for (let i = 0; i < len; i++) {
+    const curr = points[i];
+    const next = points[(i + 1) % len];
+    const midX = (curr.x + next.x) / 2;
+    const midY = (curr.y + next.y) / 2;
+    ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
+  }
+  ctx.closePath();
+}
+
+/**
+ * Pure/direct Canvas 2D frame renderer for MindMaze v1.
+ * Draws the environment backdrop, island landform, footpaths (relationship vs seeded,
+ * locked vs unlocked), chambers (`FOGGED`, `FRONTIER`, `CLEARED`), and drifting procedural fog.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} graph - output of `buildChamberGraph` / `loadDeckMazeGraph`
+ * @param {{ width: number, height: number, camera?: { x: number, y: number, zoom: number } }} viewport
+ * @param {object} [opts]
+ * @param {'light'|'dark'|null} [opts.theme]
+ * @param {number} [opts.nowMs=Date.now()]
+ * @param {string|null} [opts.hoveredNodeId=null]
+ * @param {Map<string, string>|Object} [opts.cardLabelsById]
+ * @returns {{ renderedNodes: number, renderedEdges: number, statusCounts: { FOGGED: number, FRONTIER: number, CLEARED: number } }}
+ */
+export function drawMindMazeFrame(ctx, graph, viewport = { width: 800, height: 600 }, opts = {}) {
+  const width = Math.max(1, viewport.width || 800);
+  const height = Math.max(1, viewport.height || 600);
+  const cam = viewport.camera || { x: 0, y: 0, zoom: 1 };
+  const nowMs = opts.nowMs ?? Date.now();
+  const tokens = getMazeThemeTokens(opts.theme || null);
+  const hoveredNodeId = opts.hoveredNodeId || null;
+  const cardLabelsById = opts.cardLabelsById || null;
+
+  const worldToScreen = (wx, wy) => ({
+    x: (wx - cam.x) * cam.zoom + width / 2,
+    y: (wy - cam.y) * cam.zoom + height / 2
+  });
+
+  // 1. Sky-to-horizon environment backdrop
+  ctx.save();
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
+  skyGrad.addColorStop(0, tokens.sky);
+  skyGrad.addColorStop(1, tokens.horizon);
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, width, height);
+
+  // Subtle ambient water horizon ripples
+  const sway = Math.sin(nowMs / 1600) * 6;
+  ctx.strokeStyle = tokens.waterRipple;
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 4; i++) {
+    const ry = height * (0.22 + i * 0.2) + Math.sin(nowMs / 1900 + i) * 3;
+    ctx.beginPath();
+    ctx.moveTo(width * 0.1 + sway, ry);
+    ctx.lineTo(width * 0.9 - sway, ry);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const deckId = String(graph?.deckId || 'maze-island');
+
+  // Compute average mastery for the island terrain hue
+  const avgMastery = nodes.length > 0
+    ? nodes.reduce((acc, n) => acc + (n.mastery || 0), 0) / nodes.length
+    : (graph?.status === 'SANCTUARY' ? 0.85 : 0.25);
+  const islandHsl = chamberColor(avgMastery, deckId);
+
+  // 2. Procedural Island Silhouette encompassing the chamber layout
+  const islandCenter = worldToScreen(0, 0);
+  const baseIslandWorldRadius = nodes.length > 0 ? 275 : 185;
+  const islandScreenRadius = Math.max(80, baseIslandWorldRadius * cam.zoom);
+  const coastPts = buildOrganicPolygonPoints(
+    islandCenter.x + Math.sin(nowMs / 2600) * 1.4,
+    islandCenter.y + Math.cos(nowMs / 3100) * 1.1,
+    islandScreenRadius,
+    `island:${deckId}`,
+    16,
+    0.18
+  );
+
+  ctx.save();
+  // Soft shoreline glow
+  const glowGrad = ctx.createRadialGradient(
+    islandCenter.x, islandCenter.y, islandScreenRadius * 0.2,
+    islandCenter.x, islandCenter.y, islandScreenRadius * 1.25
+  );
+  glowGrad.addColorStop(0, `hsla(${islandHsl.h}, ${islandHsl.s}%, ${islandHsl.l}%, 0.26)`);
+  glowGrad.addColorStop(1, `hsla(${islandHsl.h}, ${islandHsl.s}%, ${islandHsl.l}%, 0)`);
+  ctx.fillStyle = glowGrad;
+  ctx.beginPath();
+  ctx.arc(islandCenter.x, islandCenter.y, islandScreenRadius * 1.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Island landmass fill
+  traceSmoothPolygon(ctx, coastPts);
+  const landGrad = ctx.createRadialGradient(
+    islandCenter.x, islandCenter.y, 0,
+    islandCenter.x, islandCenter.y, islandScreenRadius
+  );
+  const lBoost = tokens.isDark ? -12 : 6;
+  landGrad.addColorStop(0, `hsl(${islandHsl.h}, ${islandHsl.s}%, ${Math.min(92, Math.max(18, islandHsl.l + lBoost + 10))}%)`);
+  landGrad.addColorStop(0.68, `hsl(${islandHsl.h}, ${islandHsl.s}%, ${Math.min(88, Math.max(15, islandHsl.l + lBoost))}%)`);
+  landGrad.addColorStop(1, `hsl(${islandHsl.h}, ${Math.min(100, islandHsl.s + 8)}%, ${Math.max(12, islandHsl.l + lBoost - 10)}%)`);
+  ctx.fillStyle = landGrad;
+  ctx.fill();
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = tokens.isDark ? 'rgba(0, 0, 0, 0.45)' : 'rgba(55, 75, 60, 0.32)';
+  ctx.stroke();
+
+  // Elevation contour rings
+  for (let ring = 1; ring <= 2; ring++) {
+    const ringPts = buildOrganicPolygonPoints(
+      islandCenter.x,
+      islandCenter.y,
+      islandScreenRadius * (0.45 + ring * 0.22),
+      `island:${deckId}`,
+      16,
+      0.16
+    );
+    traceSmoothPolygon(ctx, ringPts);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `hsla(${islandHsl.h}, ${islandHsl.s}%, ${islandHsl.l}%, 0.25)`;
+    ctx.stroke();
+  }
+
+  // Scattered terrain tufts (seeded by deckId)
+  const tuftCount = Math.min(28, Math.max(8, (graph?.totalActiveCards || 6) * 2));
+  ctx.fillStyle = `hsla(${islandHsl.h}, ${Math.min(100, islandHsl.s + 12)}%, ${Math.max(15, islandHsl.l - 14)}%, 0.32)`;
+  for (let t = 0; t < tuftCount; t++) {
+    const angle = hashToUnit(`tuft-a:${deckId}:${t}`) * Math.PI * 2;
+    const dist = Math.sqrt(hashToUnit(`tuft-d:${deckId}:${t}`)) * islandScreenRadius * 0.72;
+    const tx = islandCenter.x + Math.cos(angle) * dist;
+    const ty = islandCenter.y + Math.sin(angle) * dist;
+    ctx.beginPath();
+    ctx.arc(tx, ty, Math.max(1.5, 2.2 * cam.zoom), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  if (nodes.length === 0) {
+    // Sanctuary decorative lanterns when caught up
+    if (graph?.status === 'SANCTUARY') {
+      for (let k = 0; k < 5; k++) {
+        const ang = (k / 5) * Math.PI * 2 + nowMs / 4000;
+        const dist = islandScreenRadius * 0.42;
+        const lx = islandCenter.x + Math.cos(ang) * dist;
+        const ly = islandCenter.y + Math.sin(ang) * dist;
+        const lGrad = ctx.createRadialGradient(lx, ly, 0, lx, ly, 26 * cam.zoom);
+        lGrad.addColorStop(0, tokens.frontierHalo);
+        lGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = lGrad;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 26 * cam.zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    return { renderedNodes: 0, renderedEdges: 0, statusCounts: { FOGGED: 0, FRONTIER: 0, CLEARED: 0 } };
+  }
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  // 3. Footpaths (Edges: relationship vs seeded, unlocked vs locked)
+  let renderedEdges = 0;
+  for (const edge of edges) {
+    const u = nodeById.get(edge.fromId);
+    const v = nodeById.get(edge.toId);
+    if (!u || !v) continue;
+
+    const su = worldToScreen(u.x, u.y);
+    const sv = worldToScreen(v.x, v.y);
+    const isRelationship = edge.kind === 'relationship';
+    const isUnlocked = u.status === 'CLEARED' || (u.status === 'FRONTIER' && v.status === 'CLEARED');
+    const isSemiVisible = u.status === 'FRONTIER' || v.status === 'FRONTIER';
+
+    ctx.save();
+    if (isUnlocked) {
+      // Double-line worn-earth road (brighter moss-tinted track for real relationship edges)
+      const baseW = (isRelationship ? 5.2 : 4.0) * cam.zoom;
+      ctx.globalAlpha = 0.88;
+      ctx.strokeStyle = isRelationship ? tokens.relRoadUndercoat : tokens.roadUndercoat;
+      ctx.lineWidth = Math.max(2, baseW);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(su.x, su.y);
+      ctx.lineTo(sv.x, sv.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = isRelationship ? tokens.relRoadTopcoat : tokens.roadTopcoat;
+      ctx.lineWidth = Math.max(1, baseW * 0.46);
+      ctx.beginPath();
+      ctx.moveTo(su.x, su.y);
+      ctx.lineTo(sv.x, sv.y);
+      ctx.stroke();
+    } else {
+      // Locked path: faint dotted footpath waiting to be uncovered
+      ctx.globalAlpha = isSemiVisible ? 0.44 : 0.22;
+      ctx.strokeStyle = isRelationship ? tokens.frontierRing : tokens.lockedStroke;
+      ctx.lineWidth = Math.max(1.2, (isRelationship ? 2.4 : 1.7) * cam.zoom);
+      ctx.setLineDash(isRelationship ? [5, 5] : [3, 6]);
+      ctx.beginPath();
+      ctx.moveTo(su.x, su.y);
+      ctx.lineTo(sv.x, sv.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Directional chevron at midpoint for `dependsOn` relationship footpaths
+    if (isRelationship && edge.type === 'dependsOn') {
+      const mx = (su.x + sv.x) / 2;
+      const my = (su.y + sv.y) / 2;
+      const ang = Math.atan2(sv.y - su.y, sv.x - su.x);
+      const hs = Math.max(5, 7 * cam.zoom);
+      ctx.fillStyle = isUnlocked ? tokens.relRoadTopcoat : tokens.frontierRing;
+      ctx.globalAlpha = isUnlocked ? 0.9 : 0.55;
+      ctx.beginPath();
+      ctx.moveTo(mx + hs * Math.cos(ang), my + hs * Math.sin(ang));
+      ctx.lineTo(mx - hs * Math.cos(ang - 0.55), my - hs * Math.sin(ang - 0.55));
+      ctx.lineTo(mx - hs * Math.cos(ang + 0.55), my - hs * Math.sin(ang + 0.55));
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    renderedEdges++;
+  }
+
+  // 4. Procedural Fog-of-War Veil over FOGGED Regions
+  // Draw soft drifting mist clouds over each FOGGED chamber before rendering FRONTIER/CLEARED clearings on top
+  const statusCounts = { FOGGED: 0, FRONTIER: 0, CLEARED: 0 };
+  for (const node of nodes) {
+    if (node.status in statusCounts) statusCounts[node.status]++;
+    if (node.status !== 'FOGGED') continue;
+
+    const sn = worldToScreen(node.x, node.y);
+    const nr = Math.max(12, node.r * cam.zoom);
+    const phase = hashToUnit(`fog:${node.id}`) * Math.PI * 2;
+    const driftX = Math.sin(nowMs / 1100 + phase) * 5 * cam.zoom;
+    const driftY = Math.cos(nowMs / 1400 + phase) * 4 * cam.zoom;
+    const fogR = nr * 2.85;
+
+    ctx.save();
+    const mistGrad = ctx.createRadialGradient(
+      sn.x + driftX, sn.y + driftY, nr * 0.25,
+      sn.x + driftX, sn.y + driftY, fogR
+    );
+    mistGrad.addColorStop(0, `rgba(${tokens.mistRgb}, 0.78)`);
+    mistGrad.addColorStop(0.55, `rgba(${tokens.mistHighlightRgb}, 0.48)`);
+    mistGrad.addColorStop(1, `rgba(${tokens.mistRgb}, 0)`);
+    ctx.fillStyle = mistGrad;
+    ctx.beginPath();
+    ctx.arc(sn.x + driftX, sn.y + driftY, fogR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 5. Chamber Nodes (`FOGGED` vs `FRONTIER` vs `CLEARED`)
+  for (const node of nodes) {
+    const sn = worldToScreen(node.x, node.y);
+    const nr = Math.max(12, node.r * cam.zoom);
+    const cHsl = chamberColor(node.mastery, node.cardId);
+    const isHovered = hoveredNodeId === node.id;
+    const pebblePts = buildOrganicPolygonPoints(sn.x, sn.y, nr, `chamber:${node.id}`, 12, 0.14);
+
+    ctx.save();
+
+    if (node.status === 'CLEARED') {
+      // CLEARED: warm moss-tinted vitality halo + full mastery radial fill
+      const clearHalo = ctx.createRadialGradient(sn.x, sn.y, nr * 0.4, sn.x, sn.y, nr * 2.1);
+      clearHalo.addColorStop(0, `hsla(${cHsl.h}, ${Math.min(100, cHsl.s + 15)}%, ${cHsl.l}%, 0.42)`);
+      clearHalo.addColorStop(1, `hsla(${cHsl.h}, ${cHsl.s}%, ${cHsl.l}%, 0)`);
+      ctx.fillStyle = clearHalo;
+      ctx.beginPath();
+      ctx.arc(sn.x, sn.y, nr * 2.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      traceSmoothPolygon(ctx, pebblePts);
+      const fillGrad = ctx.createRadialGradient(sn.x, sn.y, 0, sn.x, sn.y, nr);
+      fillGrad.addColorStop(0, `hsl(${cHsl.h}, ${cHsl.s}%, ${Math.min(92, cHsl.l + 12)}%)`);
+      fillGrad.addColorStop(0.7, `hsl(${cHsl.h}, ${cHsl.s}%, ${cHsl.l}%)`);
+      fillGrad.addColorStop(1, `hsl(${cHsl.h}, ${Math.min(100, cHsl.s + 8)}%, ${Math.max(18, cHsl.l - 10)}%)`);
+      ctx.fillStyle = fillGrad;
+      ctx.fill();
+
+      ctx.lineWidth = isHovered ? 3 : 2.2;
+      ctx.strokeStyle = tokens.clearedRing;
+      ctx.stroke();
+
+      // Cleared glyph (✓ crest)
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = `700 ${Math.max(10, Math.round(nr * 0.52))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✓', sn.x, sn.y);
+    } else if (node.status === 'FRONTIER') {
+      // FRONTIER: pulsing ochre lantern halo + solid stone core
+      const pulse = 0.5 + 0.5 * Math.sin(nowMs / 320);
+      const pulseR = nr * (1.55 + pulse * 0.35);
+      const haloGrad = ctx.createRadialGradient(sn.x, sn.y, nr * 0.5, sn.x, sn.y, pulseR);
+      haloGrad.addColorStop(0, tokens.frontierHalo);
+      haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = haloGrad;
+      ctx.beginPath();
+      ctx.arc(sn.x, sn.y, pulseR, 0, Math.PI * 2);
+      ctx.fill();
+
+      traceSmoothPolygon(ctx, pebblePts);
+      const fillGrad = ctx.createRadialGradient(sn.x, sn.y, 0, sn.x, sn.y, nr);
+      fillGrad.addColorStop(0, `hsl(${cHsl.h}, ${cHsl.s}%, ${Math.min(90, cHsl.l + 8)}%)`);
+      fillGrad.addColorStop(1, `hsl(${cHsl.h}, ${cHsl.s}%, ${Math.max(22, cHsl.l - 8)}%)`);
+      ctx.fillStyle = fillGrad;
+      ctx.fill();
+
+      ctx.lineWidth = isHovered ? 3.2 : 2.5;
+      ctx.strokeStyle = tokens.frontierRing;
+      ctx.stroke();
+
+      // Lantern spark core
+      ctx.fillStyle = tokens.frontierRing;
+      ctx.beginPath();
+      ctx.arc(sn.x, sn.y, Math.max(3.5, nr * 0.22), 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // FOGGED: desaturated stone circle beneath mist with dashed perimeter
+      traceSmoothPolygon(ctx, pebblePts);
+      ctx.fillStyle = `hsla(${SAND_HSL.h}, 12%, ${tokens.isDark ? 26 : 72}%, 0.42)`;
+      ctx.fill();
+
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = isHovered ? 2.2 : 1.5;
+      ctx.strokeStyle = tokens.lockedStroke;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Unrevealed shroud symbol (?)
+      ctx.fillStyle = tokens.inkMuted;
+      ctx.globalAlpha = 0.65;
+      ctx.font = `600 ${Math.max(9, Math.round(nr * 0.45))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', sn.x, sn.y);
+    }
+
+    // Label caption for FRONTIER and CLEARED chambers
+    if (node.status !== 'FOGGED' && cam.zoom >= 0.45) {
+      const rawLabel = cardLabelsById instanceof Map
+        ? cardLabelsById.get(node.cardId)
+        : (cardLabelsById && cardLabelsById[node.cardId]) || node.cardId;
+      const cleanLabel = String(rawLabel || node.cardId)
+        .replace(/\{\{c\d+::([^:}]+)(?:::[^}]+)?\}\}/g, '[...]')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const shortLabel = cleanLabel.length > 20 ? `${cleanLabel.slice(0, 19)}…` : cleanLabel;
+
+      ctx.fillStyle = tokens.ink;
+      ctx.font = `600 ${Math.max(10, Math.min(12, Math.round(11 * cam.zoom)))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(shortLabel, sn.x, sn.y + nr + 6);
+    }
+
+    ctx.restore();
+  }
+
+  return {
+    renderedNodes: nodes.length,
+    renderedEdges,
+    statusCounts
+  };
+}
+
+function escapeHtmlMaze(str) {
+  const s = String(str ?? '');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Mounts the interactive MindMaze Canvas 2D surface inside `containerEl` for a deck.
+ * Strictly read-only (zero FSRS/reviewLog/settings writes) and self-contained (never imports app.js).
+ * Exposes `onChamberTap(node, graph)` callback + dispatches `lernin:mindmaze-chamber-tap` CustomEvent
+ * as the Phase 3 gate modal attachment hook.
+ *
+ * @param {HTMLElement} containerEl
+ * @param {string} deckId
+ * @param {object} [opts]
+ * @param {object} [opts.graph] - optional prebuilt graph from `buildChamberGraph` / `loadDeckMazeGraph`
+ * @param {(node: object, graph: object) => void} [opts.onChamberTap] - Phase 3 hook fired when a chamber is tapped
+ * @param {() => void} [opts.onExit] - callback when Back button is clicked
+ * @returns {Promise<{ destroy: () => void, getGraph: () => object, getLastFrameStats: () => object, fitCamera: () => void, tapChamberById: (nodeId: string) => object|null }>}
+ */
+export async function renderMindMazeView(containerEl, deckId, opts = {}) {
+  if (!containerEl) {
+    throw new Error('renderMindMazeView requires a valid container element');
+  }
+
+  const [deck, cards, graph] = await Promise.all([
+    getDeck(deckId).catch(() => null),
+    getCardsByDeck(deckId).catch(() => []),
+    opts.graph ? Promise.resolve(opts.graph) : loadDeckMazeGraph(deckId, opts)
+  ]);
+
+  const cardLabelsById = new Map(
+    (cards || []).map((c) => [String(c.id), String(c.front || c.id)])
+  );
+
+  containerEl.innerHTML = '';
+  containerEl.style.padding = '0';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'mind-maze-view';
+  wrap.style.cssText = 'position:relative; width:100%; height:100%; min-height:520px; display:flex; flex-direction:column; overflow:hidden; user-select:none;';
+
+  const deckTitle = deck?.title || deckId || 'Territory';
+  const clearedCount = (graph.nodes || []).filter((n) => n.status === 'CLEARED').length;
+  const frontierCount = (graph.nodes || []).filter((n) => n.status === 'FRONTIER').length;
+  const foggedCount = (graph.nodes || []).filter((n) => n.status === 'FOGGED').length;
+
+  const header = document.createElement('div');
+  header.className = 'app-header mind-maze-header';
+  header.innerHTML = `
+    <button class="back-btn" id="mmzBackBtn" type="button" aria-label="Back">←</button>
+    <div class="app-header-title">MindMaze · ${escapeHtmlMaze(deckTitle)}</div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="mind-maze-status-pill" id="mmzLegendPill" style="font-size:12px; padding:4px 10px; border-radius:999px; background:var(--surface-elevated, rgba(128,128,128,0.14)); color:var(--ink-secondary);">
+        ${graph.status === 'ACTIVE'
+          ? `${clearedCount} cleared · ${frontierCount} open · ${foggedCount} misted`
+          : (graph.status === 'SANCTUARY' ? 'Sanctuary clear' : 'Empty territory')}
+      </span>
+      <button class="btn-secondary" id="mmzFitBtn" type="button" style="padding:4px 10px; font-size:12px;">Center</button>
+    </div>
+  `;
+  wrap.appendChild(header);
+
+  const stage = document.createElement('div');
+  stage.className = 'mind-maze-stage';
+  stage.style.cssText = 'position:relative; flex:1; width:100%; height:100%; min-height:460px; overflow:hidden;';
+
+  const canvasEl = document.createElement('canvas');
+  canvasEl.className = 'mind-maze-canvas';
+  canvasEl.style.cssText = 'display:block; width:100%; height:100%; touch-action:none;';
+  stage.appendChild(canvasEl);
+
+  // Self-contained overlay banner for SANCTUARY or EMPTY_DECK states
+  if (graph.status === 'SANCTUARY' || graph.status === 'EMPTY_DECK') {
+    const banner = document.createElement('div');
+    banner.className = `mind-maze-state-banner is-${graph.status.toLowerCase()}`;
+    banner.style.cssText = [
+      'position:absolute',
+      'left:50%',
+      'bottom:28px',
+      'transform:translateX(-50%)',
+      'max-width:440px',
+      'width:calc(100% - 32px)',
+      'padding:16px 20px',
+      'border-radius:14px',
+      'background:var(--surface, #1E252B)',
+      'color:var(--ink, #EDEFF1)',
+      'box-shadow:0 10px 28px rgba(0,0,0,0.28)',
+      'text-align:center',
+      'z-index:5'
+    ].join(';');
+
+    if (graph.status === 'SANCTUARY') {
+      banner.innerHTML = `
+        <div style="font-size:22px; margin-bottom:6px;">🌿</div>
+        <div style="font-size:15px; font-weight:600; margin-bottom:4px;">Sanctuary Illuminated</div>
+        <div style="font-size:13px; color:var(--ink-secondary, #9BA8A0); line-height:1.5;">
+          ${escapeHtmlMaze(graph.message || 'All paths in this territory are clear today. Wander the clearings freely, or return tomorrow when the mist rolls back in.')}
+        </div>
+      `;
+    } else {
+      banner.innerHTML = `
+        <div style="font-size:22px; margin-bottom:6px;">🧭</div>
+        <div style="font-size:15px; font-weight:600; margin-bottom:4px;">No Chambers Kindled Yet</div>
+        <div style="font-size:13px; color:var(--ink-secondary, #9BA8A0); line-height:1.5;">
+          This territory doesn’t have any active cards yet. Add or import cards to this deck to kindle its first chambers.
+        </div>
+      `;
+    }
+    stage.appendChild(banner);
+  }
+
+  wrap.appendChild(stage);
+  containerEl.appendChild(wrap);
+
+  const ctx = canvasEl.getContext('2d');
+  let dpr = Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1, 2);
+  let camera = { x: 0, y: 0, zoom: 1 };
+  let targetCamera = { x: 0, y: 0, zoom: 1 };
+  let hoveredNodeId = null;
+  let lastTappedNode = null;
+  let lastFrameStats = null;
+  let rafId = null;
+  let isDestroyed = false;
+
+  function fitCameraToGraph() {
+    const rect = canvasEl.getBoundingClientRect();
+    const w = rect.width || 800;
+    const h = rect.height || 520;
+    const nodes = graph.nodes || [];
+    if (nodes.length === 0) {
+      targetCamera = { x: 0, y: 0, zoom: 1 };
+      camera = { ...targetCamera };
+      return;
+    }
+    const xs = nodes.map((n) => n.x);
+    const ys = nodes.map((n) => n.y);
+    const minX = Math.min(...xs) - 90;
+    const maxX = Math.max(...xs) + 90;
+    const minY = Math.min(...ys) - 90;
+    const maxY = Math.max(...ys) + 90;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const spanX = Math.max(280, maxX - minX);
+    const spanY = Math.max(280, maxY - minY);
+    const zoom = Math.max(0.55, Math.min(1.45, Math.min(w / spanX, h / spanY)));
+    targetCamera = { x: cx, y: cy, zoom };
+    camera = { ...targetCamera };
+  }
+
+  function resizeCanvas() {
+    if (isDestroyed || !canvasEl) return;
+    const rect = stage.getBoundingClientRect();
+    const w = Math.max(320, rect.width || 800);
+    const h = Math.max(320, rect.height || 520);
+    dpr = Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1, 2);
+    canvasEl.width = Math.floor(w * dpr);
+    canvasEl.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    renderTick();
+  }
+
+  function screenToWorld(sx, sy) {
+    const rect = canvasEl.getBoundingClientRect();
+    const w = rect.width || 800;
+    const h = rect.height || 520;
+    return {
+      x: (sx - w / 2) / camera.zoom + camera.x,
+      y: (sy - h / 2) / camera.zoom + camera.y
+    };
+  }
+
+  function hitTestChamber(sx, sy) {
+    const worldPt = screenToWorld(sx, sy);
+    const nodes = graph.nodes || [];
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      const dx = worldPt.x - n.x;
+      const dy = worldPt.y - n.y;
+      const hitR = n.r * 1.25;
+      if (dx * dx + dy * dy <= hitR * hitR) {
+        return n;
+      }
+    }
+    return null;
+  }
+
+  function fireChamberTap(node) {
+    if (!node) return null;
+    lastTappedNode = node;
+    if (typeof opts.onChamberTap === 'function') {
+      opts.onChamberTap(node, graph);
+    }
+    const evDetail = { node, deckId, status: node.status, graph };
+    containerEl.dispatchEvent(new CustomEvent('lernin:mindmaze-chamber-tap', { bubbles: true, detail: evDetail }));
+    return node;
+  }
+
+  // Pointer pan / tap & wheel zoom
+  let pointerDown = false;
+  let lastPtr = { x: 0, y: 0 };
+  let dragMoved = 0;
+  let downChamber = null;
+
+  function onPointerDown(e) {
+    pointerDown = true;
+    dragMoved = 0;
+    lastPtr = { x: e.clientX, y: e.clientY };
+    const rect = canvasEl.getBoundingClientRect();
+    downChamber = hitTestChamber(e.clientX - rect.left, e.clientY - rect.top);
+  }
+
+  function onPointerMove(e) {
+    const rect = canvasEl.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    if (!pointerDown) {
+      const hit = hitTestChamber(sx, sy);
+      hoveredNodeId = hit ? hit.id : null;
+      canvasEl.style.cursor = hit ? 'pointer' : 'grab';
+      return;
+    }
+    const dx = e.clientX - lastPtr.x;
+    const dy = e.clientY - lastPtr.y;
+    dragMoved += Math.abs(dx) + Math.abs(dy);
+    if (dragMoved > 6) {
+      targetCamera.x -= dx / camera.zoom;
+      targetCamera.y -= dy / camera.zoom;
+      camera.x = targetCamera.x;
+      camera.y = targetCamera.y;
+    }
+    lastPtr = { x: e.clientX, y: e.clientY };
+  }
+
+  function onPointerUp() {
+    if (pointerDown && dragMoved <= 8 && downChamber) {
+      fireChamberTap(downChamber);
+    }
+    pointerDown = false;
+    downChamber = null;
+  }
+
+  function onWheel(e) {
+    e.preventDefault();
+    const factor = 1 - e.deltaY * 0.001;
+    const nextZoom = Math.max(0.4, Math.min(2.6, targetCamera.zoom * factor));
+    targetCamera.zoom = nextZoom;
+  }
+
+  function renderFrameNow() {
+    if (isDestroyed || !ctx || !canvasEl) return;
+    const rect = stage.getBoundingClientRect();
+    const w = Math.max(320, rect.width || 800);
+    const h = Math.max(320, rect.height || 520);
+
+    lastFrameStats = drawMindMazeFrame(
+      ctx,
+      graph,
+      { width: w, height: h, camera },
+      { hoveredNodeId, cardLabelsById }
+    );
+  }
+
+  function renderTick() {
+    if (isDestroyed) return;
+    camera.x += (targetCamera.x - camera.x) * 0.14;
+    camera.y += (targetCamera.y - camera.y) * 0.14;
+    camera.zoom += (targetCamera.zoom - camera.zoom) * 0.14;
+
+    renderFrameNow();
+    rafId = requestAnimationFrame(renderTick);
+  }
+
+  let themeObserver = null;
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.documentElement) {
+    themeObserver = new MutationObserver(() => {
+      renderFrameNow();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+  }
+
+  header.querySelector('#mmzBackBtn')?.addEventListener('click', () => {
+    if (typeof opts.onExit === 'function') opts.onExit();
+  });
+  header.querySelector('#mmzFitBtn')?.addEventListener('click', () => {
+    fitCameraToGraph();
+  });
+
+  canvasEl.addEventListener('pointerdown', onPointerDown);
+  canvasEl.addEventListener('pointermove', onPointerMove);
+  canvasEl.addEventListener('pointerup', onPointerUp);
+  canvasEl.addEventListener('pointercancel', onPointerUp);
+  canvasEl.addEventListener('wheel', onWheel, { passive: false });
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', resizeCanvas);
+  }
+
+  resizeCanvas();
+  fitCameraToGraph();
+  renderTick();
+
+  const controller = {
+    destroy() {
+      isDestroyed = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      if (themeObserver) {
+        themeObserver.disconnect();
+        themeObserver = null;
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', resizeCanvas);
+      }
+      canvasEl.removeEventListener('pointerdown', onPointerDown);
+      canvasEl.removeEventListener('pointermove', onPointerMove);
+      canvasEl.removeEventListener('pointerup', onPointerUp);
+      canvasEl.removeEventListener('pointercancel', onPointerUp);
+      canvasEl.removeEventListener('wheel', onWheel);
+    },
+    getGraph: () => graph,
+    getLastFrameStats: () => lastFrameStats,
+    getLastTappedNode: () => lastTappedNode,
+    fitCamera: fitCameraToGraph,
+    redraw: renderFrameNow,
+    tapChamberById(nodeId) {
+      const target = (graph.nodes || []).find((n) => n.id === nodeId || n.cardId === nodeId);
+      return fireChamberTap(target || null);
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.__mindMazeDebug = controller;
+  }
+
+  return controller;
+}
+

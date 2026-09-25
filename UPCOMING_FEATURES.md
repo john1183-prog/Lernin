@@ -1070,6 +1070,17 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**MindMaze v1 — Phase 2: Canvas 2D Terrain, Fog-of-War & Footpath Renderer (`public/mind-maze.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 2 (Canvas 2D terrain, procedural fog-of-war, footpath renderer, light/dark theme tokens, `SANCTUARY`/`EMPTY_DECK` banners, and Phase 3 `onChamberTap` hook); **Phases 3–4 remain open** (Phase 3: Gate modal, self-grading & synth audio cues; Phase 4: Day-scoped reveal persistence & `#/maze/:deckId` route integration):
+- **Canvas 2D Terrain, Chambers, Footpaths & Procedural Fog (`drawMindMazeFrame`, `renderMindMazeView`)**:
+  * Implemented `drawMindMazeFrame` and `renderMindMazeView` in `public/mind-maze.js` (zero `app.js` imports, strictly read-only against IndexedDB FSRS fields, `reviewLog`, and `settings`).
+  * Renders sky-to-horizon gradients, water ripples, and a 16-point organic quadratic-curve island silhouette (`buildOrganicPolygonPoints`) with elevation contours and seeded terrain tufts colored by average deck mastery (`SAND_HSL` $\rightarrow$ `OCHRE_HSL` $\rightarrow$ `MOSS_HSL`).
+  * Renders distinct visual treatments for `CLEARED` (warm moss-tinted halo, mastery radial fill, `✓` crest, and card label), `FRONTIER` (pulsing ochre lantern halo, stone core, and card label), and `FOGGED` (desaturated stone pebble beneath drifting sinusoidal radial mist clouds with dashed border and `?` shroud).
+  * Renders double-line worn-earth footpaths for unlocked routes (`#8B6F47` / `#C4A265`, with moss-tinted tracks and directional `dependsOn` chevrons for real relationship edges) and faint dashed tracks for locked routes.
+  * Supports smooth camera fit-to-graph (`fitCameraToGraph`), pointer pan, and wheel zoom, plus `data-theme` aware Light and Dark theme tokens (`getMazeThemeTokens`).
+  * Renders self-contained overlay banners for `SANCTUARY` (0 due cards when active cards exist) and `EMPTY_DECK` (0 total active cards).
+  * Exposes `onChamberTap(node, graph)` callback and `lernin:mindmaze-chamber-tap` CustomEvent for Phase 3 gate modal attachment.
+
 **MindMaze v1 — Phase 1: Deterministic Chamber Graph Builder & Read-Only Data Layer (`public/mind-maze.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 1 (pure deterministic due-card chamber graph builder and read-only IndexedDB data layer); **Phases 2–4 remain open** (Phase 2: Canvas 2D terrain/fog/footpath renderer; Phase 3: Gate modal & synth audio cues; Phase 4: Day-scoped reveal persistence & `#/maze/:deckId` route integration):
 - **Pure Side-Mode & Dependency Hierarchy (`public/mind-maze.js`)**:
