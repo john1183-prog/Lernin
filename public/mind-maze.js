@@ -14,6 +14,17 @@ import {
   getSetting,
   MASTERY_STABILITY_DAYS
 } from './db.js';
+import {
+  initSoundSetting,
+  playNavigate,
+  playFlip,
+  playAgain,
+  playHard,
+  playGood,
+  playEasy,
+  playMazeFogLift,
+  playSessionComplete
+} from './sound.js';
 
 export const MAZE_MAX_CHAMBERS = 12;
 export const CHAMBER_RADIUS_MIN = 18;
@@ -990,8 +1001,42 @@ export function drawMindMazeFrame(ctx, graph, viewport = { width: 800, height: 6
   }
 
   // 5. Chamber Nodes (`FOGGED` vs `FRONTIER` vs `CLEARED`)
+  const unlockRipples = Array.isArray(opts.unlockRipples) ? opts.unlockRipples : [];
+  const shimmerMap = opts.shimmerByNodeId instanceof Map ? opts.shimmerByNodeId : null;
+
+  // Draw active radial fog-retreat ripples behind unlocked chambers
+  for (const ripple of unlockRipples) {
+    const progress = Math.min(1, Math.max(0, (nowMs - ripple.startMs) / (ripple.durationMs || 550)));
+    if (progress >= 1) continue;
+    const sr = worldToScreen(ripple.x, ripple.y);
+    const baseR = Math.max(14, (ripple.r || 24) * cam.zoom);
+    const currentR = baseR * (1 + progress * 2.3);
+    const alpha = (1 - progress) * 0.62;
+
+    ctx.save();
+    const ripGrad = ctx.createRadialGradient(sr.x, sr.y, baseR * 0.4, sr.x, sr.y, currentR);
+    ripGrad.addColorStop(0, `rgba(102, 187, 106, ${(alpha * 0.45).toFixed(3)})`);
+    ripGrad.addColorStop(0.7, `rgba(242, 184, 75, ${alpha.toFixed(3)})`);
+    ripGrad.addColorStop(1, 'rgba(242, 184, 75, 0)');
+    ctx.fillStyle = ripGrad;
+    ctx.beginPath();
+    ctx.arc(sr.x, sr.y, currentR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   for (const node of nodes) {
-    const sn = worldToScreen(node.x, node.y);
+    let shimmerDx = 0;
+    if (shimmerMap && shimmerMap.has(node.id)) {
+      const startMs = shimmerMap.get(node.id);
+      const t = (nowMs - startMs) / 320;
+      if (t >= 0 && t < 1) {
+        shimmerDx = Math.sin(t * Math.PI * 5) * (1 - t) * 7 * cam.zoom;
+      }
+    }
+
+    const rawScreen = worldToScreen(node.x, node.y);
+    const sn = { x: rawScreen.x + shimmerDx, y: rawScreen.y };
     const nr = Math.max(12, node.r * cam.zoom);
     const cHsl = chamberColor(node.mastery, node.cardId);
     const isHovered = hoveredNodeId === node.id;
@@ -1104,6 +1149,111 @@ export function drawMindMazeFrame(ctx, graph, viewport = { width: 800, height: 6
   };
 }
 
+// ===========================================================================
+// Phase 3: In-Memory Gate Outcome Resolver, Self-Contained Gate Modal & Audio
+// ===========================================================================
+
+/**
+ * Normalizes a grade input ('again'|'hard'|'good'|'easy' or 1|2|3|4) into a canonical string.
+ *
+ * @param {string|number} grade
+ * @returns {'again'|'hard'|'good'|'easy'|null}
+ */
+export function normalizeMazeGrade(grade) {
+  if (grade === 1 || String(grade).toLowerCase() === 'again') return 'again';
+  if (grade === 2 || String(grade).toLowerCase() === 'hard') return 'hard';
+  if (grade === 3 || String(grade).toLowerCase() === 'good') return 'good';
+  if (grade === 4 || String(grade).toLowerCase() === 'easy') return 'easy';
+  return null;
+}
+
+/**
+ * Applies a self-grade outcome to a FRONTIER chamber in memory.
+ * Strictly side-mode: mutates ONLY the in-memory `graph.nodes` statuses (`'FRONTIER' -> 'CLEARED'`,
+ * and reachable `'FOGGED'` successors -> `'FRONTIER'`).
+ * Performs ZERO writes to IndexedDB `cards`, `reviewLog`, or FSRS fields.
+ *
+ * @param {object} graph - chamber graph from `buildChamberGraph` / `loadDeckMazeGraph`
+ * @param {string} nodeIdOrCardId - id or cardId of the tapped FRONTIER chamber
+ * @param {string|number} grade - 'again'|'hard'|'good'|'easy' or 1|2|3|4
+ * @returns {{ outcome: 'unlocked'|'soft-fail'|'ignored', grade: string|null, unlocked: boolean, allCleared: boolean, newlyPromotedIds: Array<string>, node: object|null }}
+ */
+export function applyMazeGateGrade(graph, nodeIdOrCardId, grade) {
+  const canonicalGrade = normalizeMazeGrade(grade);
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const target = nodes.find(
+    (n) => n.id === String(nodeIdOrCardId) || n.cardId === String(nodeIdOrCardId)
+  );
+
+  if (!target || !canonicalGrade || target.status !== 'FRONTIER') {
+    return {
+      outcome: 'ignored',
+      grade: canonicalGrade,
+      unlocked: false,
+      allCleared: nodes.length > 0 && nodes.every((n) => n.status === 'CLEARED'),
+      newlyPromotedIds: [],
+      node: target || null
+    };
+  }
+
+  // Soft-fail ('again'): chamber remains FRONTIER so the user can retry or take an adjacent branch
+  if (canonicalGrade === 'again') {
+    return {
+      outcome: 'soft-fail',
+      grade: canonicalGrade,
+      unlocked: false,
+      allCleared: false,
+      newlyPromotedIds: [],
+      node: target
+    };
+  }
+
+  // Unlock ('hard' | 'good' | 'easy'): mark chamber CLEARED and promote connected FOGGED neighbors
+  target.status = 'CLEARED';
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const newlyPromotedIds = [];
+
+  for (const edge of edges) {
+    let candidateId = null;
+    if (edge.fromId === target.id) candidateId = edge.toId;
+    else if (edge.toId === target.id) candidateId = edge.fromId;
+
+    if (candidateId) {
+      const neighbor = nodeById.get(candidateId);
+      if (neighbor && neighbor.status === 'FOGGED') {
+        neighbor.status = 'FRONTIER';
+        newlyPromotedIds.push(neighbor.id);
+      }
+    }
+  }
+
+  // Ensure at least one FRONTIER node exists if any FOGGED chambers remain
+  const anyFrontier = nodes.some((n) => n.status === 'FRONTIER');
+  if (!anyFrontier) {
+    const nextFogged = nodes.find((n) => n.status === 'FOGGED');
+    if (nextFogged) {
+      nextFogged.status = 'FRONTIER';
+      newlyPromotedIds.push(nextFogged.id);
+    }
+  }
+
+  const allCleared = nodes.length > 0 && nodes.every((n) => n.status === 'CLEARED');
+  if (allCleared) {
+    graph.status = 'SANCTUARY';
+    graph.isSanctuary = true;
+  }
+
+  return {
+    outcome: 'unlocked',
+    grade: canonicalGrade,
+    unlocked: true,
+    allCleared,
+    newlyPromotedIds,
+    node: target
+  };
+}
+
 function escapeHtmlMaze(str) {
   const s = String(str ?? '');
   return s
@@ -1114,23 +1264,88 @@ function escapeHtmlMaze(str) {
 }
 
 /**
- * Mounts the interactive MindMaze Canvas 2D surface inside `containerEl` for a deck.
+ * Renders cloze-safe front HTML (masks `{{c1::answer}}` and `{{c1::answer::hint}}` with `[...]`)
+ * and appends formula display if present.
+ */
+function formatGateFrontHtml(card) {
+  let html = escapeHtmlMaze(card?.front || '');
+  html = html.replace(
+    /\{\{c\d+::([^:}]+)(?:::([^}]+))?\}\}/g,
+    (_, _ans, hint) => `<span class="mm-cloze-mask" style="color:var(--accent, #F2B84B); font-weight:600;">[${hint ? escapeHtmlMaze(hint) : '...'}]</span>`
+  );
+  if (card?.formula) {
+    html += `<div style="margin-top:12px; padding:8px 12px; border-radius:8px; background:rgba(128,128,128,0.1); font-family:monospace;">$$${escapeHtmlMaze(card.formula)}$$</div>`;
+  }
+  return html;
+}
+
+/**
+ * Renders the revealed answer HTML for the Gate Modal (unmasks cloze deletions, shows back,
+ * and shows formula variables/assumptions if present).
+ */
+function formatGateBackHtml(card) {
+  const parts = [];
+  if (card?.type === 'cloze' || /\{\{c\d+::/.test(card?.front || '')) {
+    const unmasked = escapeHtmlMaze(card?.front || '').replace(
+      /\{\{c\d+::([^:}]+)(?:::[^}]+)?\}\}/g,
+      '<strong style="color:var(--accent, #66BB6A);">$1</strong>'
+    );
+    parts.push(`<div style="margin-bottom:8px; line-height:1.5;">${unmasked}</div>`);
+  }
+  if (card?.back) {
+    parts.push(`<div style="line-height:1.55;">${escapeHtmlMaze(card.back)}</div>`);
+  }
+  if (Array.isArray(card?.variables) && card.variables.length > 0) {
+    const varItems = card.variables
+      .map((v) => `${escapeHtmlMaze(v.symbol || v.name || '')}: ${escapeHtmlMaze(v.meaning || v.description || '')}`)
+      .join(' · ');
+    parts.push(`<div style="margin-top:8px; font-size:12px; color:var(--ink-secondary, #9BA8A0);"><strong>Variables:</strong> ${varItems}</div>`);
+  }
+  if (card?.assumptions) {
+    parts.push(`<div style="margin-top:4px; font-size:12px; color:var(--ink-secondary, #9BA8A0);"><strong>Assumptions:</strong> ${escapeHtmlMaze(card.assumptions)}</div>`);
+  }
+  return parts.join('') || '<div style="color:var(--ink-secondary);">Answer revealed</div>';
+}
+
+/**
+ * Self-contained toast helper (writes to `.toast-container` without importing from `app.js`).
+ */
+function showMazeToast(message, duration = 3800) {
+  if (typeof document === 'undefined' || !document.body) return;
+  let toastContainer = document.querySelector('.toast-container');
+  if (!toastContainer) {
+    toastContainer = document.createElement('div');
+    toastContainer.className = 'toast-container';
+    document.body.appendChild(toastContainer);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast mind-maze-toast';
+  toast.textContent = message;
+  toastContainer.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('is-leaving');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+/**
+ * Mounts the interactive MindMaze Canvas 2D surface inside `containerEl` for a deck,
+ * including the Phase 3 Gate Modal, unlock/soft-fail visual effects, and synthesizer audio cues.
  * Strictly read-only (zero FSRS/reviewLog/settings writes) and self-contained (never imports app.js).
- * Exposes `onChamberTap(node, graph)` callback + dispatches `lernin:mindmaze-chamber-tap` CustomEvent
- * as the Phase 3 gate modal attachment hook.
  *
  * @param {HTMLElement} containerEl
  * @param {string} deckId
  * @param {object} [opts]
  * @param {object} [opts.graph] - optional prebuilt graph from `buildChamberGraph` / `loadDeckMazeGraph`
- * @param {(node: object, graph: object) => void} [opts.onChamberTap] - Phase 3 hook fired when a chamber is tapped
+ * @param {(node: object, graph: object) => void} [opts.onChamberTap] - hook fired when a chamber is tapped
  * @param {() => void} [opts.onExit] - callback when Back button is clicked
- * @returns {Promise<{ destroy: () => void, getGraph: () => object, getLastFrameStats: () => object, fitCamera: () => void, tapChamberById: (nodeId: string) => object|null }>}
  */
 export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   if (!containerEl) {
     throw new Error('renderMindMazeView requires a valid container element');
   }
+
+  await initSoundSetting().catch(() => {});
 
   const [deck, cards, graph] = await Promise.all([
     getDeck(deckId).catch(() => null),
@@ -1138,6 +1353,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     opts.graph ? Promise.resolve(opts.graph) : loadDeckMazeGraph(deckId, opts)
   ]);
 
+  const cardsById = new Map((cards || []).map((c) => [String(c.id), c]));
   const cardLabelsById = new Map(
     (cards || []).map((c) => [String(c.id), String(c.front || c.id)])
   );
@@ -1150,9 +1366,18 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   wrap.style.cssText = 'position:relative; width:100%; height:100%; min-height:520px; display:flex; flex-direction:column; overflow:hidden; user-select:none;';
 
   const deckTitle = deck?.title || deckId || 'Territory';
-  const clearedCount = (graph.nodes || []).filter((n) => n.status === 'CLEARED').length;
-  const frontierCount = (graph.nodes || []).filter((n) => n.status === 'FRONTIER').length;
-  const foggedCount = (graph.nodes || []).filter((n) => n.status === 'FOGGED').length;
+
+  function computeLegendText() {
+    const nodes = graph.nodes || [];
+    if (nodes.length === 0) {
+      return graph.status === 'SANCTUARY' ? 'Sanctuary clear' : 'Empty territory';
+    }
+    const cleared = nodes.filter((n) => n.status === 'CLEARED').length;
+    const frontier = nodes.filter((n) => n.status === 'FRONTIER').length;
+    const fogged = nodes.filter((n) => n.status === 'FOGGED').length;
+    if (cleared === nodes.length) return `All ${cleared} chambers illuminated ✨`;
+    return `${cleared} cleared · ${frontier} open · ${fogged} misted`;
+  }
 
   const header = document.createElement('div');
   header.className = 'app-header mind-maze-header';
@@ -1161,9 +1386,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     <div class="app-header-title">MindMaze · ${escapeHtmlMaze(deckTitle)}</div>
     <div style="display:flex; align-items:center; gap:8px;">
       <span class="mind-maze-status-pill" id="mmzLegendPill" style="font-size:12px; padding:4px 10px; border-radius:999px; background:var(--surface-elevated, rgba(128,128,128,0.14)); color:var(--ink-secondary);">
-        ${graph.status === 'ACTIVE'
-          ? `${clearedCount} cleared · ${frontierCount} open · ${foggedCount} misted`
-          : (graph.status === 'SANCTUARY' ? 'Sanctuary clear' : 'Empty territory')}
+        ${escapeHtmlMaze(computeLegendText())}
       </span>
       <button class="btn-secondary" id="mmzFitBtn" type="button" style="padding:4px 10px; font-size:12px;">Center</button>
     </div>
@@ -1179,10 +1402,10 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   canvasEl.style.cssText = 'display:block; width:100%; height:100%; touch-action:none;';
   stage.appendChild(canvasEl);
 
-  // Self-contained overlay banner for SANCTUARY or EMPTY_DECK states
-  if (graph.status === 'SANCTUARY' || graph.status === 'EMPTY_DECK') {
+  function renderStateBanner(kind, customMsg = null) {
+    stage.querySelector('.mind-maze-state-banner')?.remove();
     const banner = document.createElement('div');
-    banner.className = `mind-maze-state-banner is-${graph.status.toLowerCase()}`;
+    banner.className = `mind-maze-state-banner is-${kind.toLowerCase()}`;
     banner.style.cssText = [
       'position:absolute',
       'left:50%',
@@ -1199,12 +1422,12 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       'z-index:5'
     ].join(';');
 
-    if (graph.status === 'SANCTUARY') {
+    if (kind === 'SANCTUARY') {
       banner.innerHTML = `
         <div style="font-size:22px; margin-bottom:6px;">🌿</div>
         <div style="font-size:15px; font-weight:600; margin-bottom:4px;">Sanctuary Illuminated</div>
         <div style="font-size:13px; color:var(--ink-secondary, #9BA8A0); line-height:1.5;">
-          ${escapeHtmlMaze(graph.message || 'All paths in this territory are clear today. Wander the clearings freely, or return tomorrow when the mist rolls back in.')}
+          ${escapeHtmlMaze(customMsg || graph.message || 'All paths in this territory are clear today. Wander the clearings freely, or return tomorrow when the mist rolls back in.')}
         </div>
       `;
     } else {
@@ -1219,6 +1442,10 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     stage.appendChild(banner);
   }
 
+  if (graph.status === 'SANCTUARY' || graph.status === 'EMPTY_DECK') {
+    renderStateBanner(graph.status);
+  }
+
   wrap.appendChild(stage);
   containerEl.appendChild(wrap);
 
@@ -1231,6 +1458,227 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   let lastFrameStats = null;
   let rafId = null;
   let isDestroyed = false;
+
+  // Phase 3 active visual effects & gate modal state
+  const unlockRipples = [];
+  const shimmerByNodeId = new Map();
+  let activeGateState = null; // { node, card, revealed, modalEl }
+  let lastNavSoundTime = 0;
+
+  function playThrottledNavigate() {
+    const now = Date.now();
+    if (now - lastNavSoundTime < 80) return;
+    lastNavSoundTime = now;
+    playNavigate();
+  }
+
+  function updateLegendPill() {
+    const pill = header.querySelector('#mmzLegendPill');
+    if (pill) pill.textContent = computeLegendText();
+  }
+
+  function closeGateModal() {
+    if (!activeGateState) return false;
+    activeGateState.modalEl?.remove();
+    activeGateState = null;
+    return true;
+  }
+
+  function revealGateAnswer() {
+    if (!activeGateState || activeGateState.revealed) return false;
+    activeGateState.revealed = true;
+    playFlip();
+
+    const { modalEl } = activeGateState;
+    const answerWrap = modalEl.querySelector('#mmzGateBackArea');
+    const showBtnWrap = modalEl.querySelector('#mmzGateShowWrap');
+    const gradeRow = modalEl.querySelector('#mmzGateGradeRow');
+
+    if (answerWrap) answerWrap.style.display = 'block';
+    if (showBtnWrap) showBtnWrap.style.display = 'none';
+    if (gradeRow) gradeRow.style.display = 'grid';
+
+    if (typeof window !== 'undefined' && typeof window.renderMathInElement === 'function' && answerWrap) {
+      try {
+        window.renderMathInElement(answerWrap, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ]
+        });
+      } catch {
+        // non-fatal
+      }
+    }
+    return true;
+  }
+
+  function gradeActiveGate(grade) {
+    if (!activeGateState) return null;
+    const { node } = activeGateState;
+    const res = applyMazeGateGrade(graph, node.id, grade);
+    closeGateModal();
+    updateLegendPill();
+
+    if (res.outcome === 'soft-fail') {
+      playAgain();
+      shimmerByNodeId.set(node.id, Date.now());
+      showMazeToast('The mist holds for a moment — try an adjacent path or step back in whenever you’re ready.');
+      renderFrameNow();
+      return res;
+    }
+
+    if (res.outcome === 'unlocked') {
+      if (res.grade === 'hard') playHard();
+      else if (res.grade === 'easy') playEasy();
+      else playGood();
+
+      unlockRipples.push({
+        x: node.x,
+        y: node.y,
+        r: node.r,
+        startMs: Date.now(),
+        durationMs: 550
+      });
+
+      if (res.allCleared) {
+        playSessionComplete();
+        renderStateBanner(
+          'SANCTUARY',
+          'Every clearing in this run is illuminated! The mist has lifted across this island — and your FSRS schedule remains untouched.'
+        );
+      } else {
+        setTimeout(() => {
+          if (!isDestroyed) playMazeFogLift();
+        }, 110);
+      }
+      renderFrameNow();
+    }
+    return res;
+  }
+
+  function openGateModalForNode(node) {
+    if (!node) return null;
+    closeGateModal();
+
+    const card = cardsById.get(String(node.cardId)) || {
+      id: node.cardId,
+      front: node.cardId,
+      back: '',
+      type: 'basic'
+    };
+
+    const isClearedPeek = node.status === 'CLEARED';
+    const overlay = document.createElement('div');
+    overlay.className = 'mind-maze-gate-overlay';
+    overlay.style.cssText = [
+      'position:absolute',
+      'inset:0',
+      'background:rgba(10, 14, 18, 0.56)',
+      'backdrop-filter:blur(3px)',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'padding:16px',
+      'z-index:20'
+    ].join(';');
+
+    overlay.innerHTML = `
+      <div class="mind-maze-gate-modal" role="dialog" aria-modal="true" style="
+        position:relative;
+        width:100%;
+        max-width:460px;
+        background:var(--surface, #1C242A);
+        color:var(--ink, #EDEFF1);
+        border:1px solid rgba(155,168,160,0.25);
+        border-radius:16px;
+        padding:20px;
+        box-shadow:0 16px 40px rgba(0,0,0,0.38);
+      ">
+        <button type="button" id="mmzGateCloseBtn" aria-label="Close gate" style="
+          position:absolute; top:12px; right:14px; border:none; background:none;
+          color:var(--ink-secondary, #9BA8A0); font-size:16px; cursor:pointer;
+        ">✕</button>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+          <span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; background:${isClearedPeek ? 'rgba(102,187,106,0.18)' : 'rgba(242,184,75,0.18)'}; color:${isClearedPeek ? '#66BB6A' : '#F2B84B'};">
+            ${isClearedPeek ? '✓ Cleared Chamber' : '🏮 Frontier Gate'}
+          </span>
+          <span style="font-size:11px; color:var(--ink-secondary, #9BA8A0);">${escapeHtmlMaze(card.type || 'basic')}</span>
+        </div>
+
+        <div class="mind-maze-gate-front" style="font-size:16px; font-weight:600; line-height:1.5; margin-bottom:14px;">
+          ${formatGateFrontHtml(card)}
+        </div>
+
+        <div id="mmzGateBackArea" class="mind-maze-gate-back" style="
+          display:${isClearedPeek ? 'block' : 'none'};
+          padding-top:12px;
+          margin-top:12px;
+          border-top:1px solid rgba(155,168,160,0.2);
+          font-size:14px;
+        ">
+          ${formatGateBackHtml(card)}
+        </div>
+
+        ${isClearedPeek ? '' : `
+          <div id="mmzGateShowWrap" style="margin-top:16px;">
+            <button type="button" class="btn-primary" id="mmzShowAnswerBtn" style="width:100%; padding:10px 14px; font-size:14px; font-weight:600;">
+              Show Answer
+            </button>
+          </div>
+          <div id="mmzGateGradeRow" class="mind-maze-grade-row" style="
+            display:none;
+            grid-template-columns:repeat(4, 1fr);
+            gap:8px;
+            margin-top:16px;
+          ">
+            <button type="button" class="btn-secondary mmz-grade-btn" id="mmzGradeAgain" data-grade="again" style="padding:9px 6px; font-size:13px; font-weight:600;">Again</button>
+            <button type="button" class="btn-secondary mmz-grade-btn" id="mmzGradeHard" data-grade="hard" style="padding:9px 6px; font-size:13px; font-weight:600;">Hard</button>
+            <button type="button" class="btn-primary mmz-grade-btn" id="mmzGradeGood" data-grade="good" style="padding:9px 6px; font-size:13px; font-weight:600;">Good</button>
+            <button type="button" class="btn-secondary mmz-grade-btn" id="mmzGradeEasy" data-grade="easy" style="padding:9px 6px; font-size:13px; font-weight:600;">Easy</button>
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:var(--ink-secondary, #9BA8A0); text-align:center;">
+            Side-mode exploration — your FSRS study schedule is untouched.
+          </div>
+        `}
+      </div>
+    `;
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeGateModal();
+    });
+    overlay.querySelector('#mmzGateCloseBtn')?.addEventListener('click', () => closeGateModal());
+    overlay.querySelector('#mmzShowAnswerBtn')?.addEventListener('click', () => revealGateAnswer());
+    overlay.querySelectorAll('.mmz-grade-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const g = btn.getAttribute('data-grade');
+        gradeActiveGate(g);
+      });
+    });
+
+    stage.appendChild(overlay);
+    activeGateState = {
+      node,
+      card,
+      revealed: isClearedPeek,
+      modalEl: overlay
+    };
+
+    if (typeof window !== 'undefined' && typeof window.renderMathInElement === 'function') {
+      try {
+        window.renderMathInElement(overlay, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ]
+        });
+      } catch {
+        // non-fatal
+      }
+    }
+
+    return activeGateState;
+  }
 
   function fitCameraToGraph() {
     const rect = canvasEl.getBoundingClientRect();
@@ -1297,12 +1745,45 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   function fireChamberTap(node) {
     if (!node) return null;
     lastTappedNode = node;
+    playThrottledNavigate();
+
     if (typeof opts.onChamberTap === 'function') {
       opts.onChamberTap(node, graph);
     }
     const evDetail = { node, deckId, status: node.status, graph };
     containerEl.dispatchEvent(new CustomEvent('lernin:mindmaze-chamber-tap', { bubbles: true, detail: evDetail }));
+
+    if (node.status === 'FOGGED') {
+      showMazeToast('Clear a connected chamber first to reach this path.');
+    } else if (node.status === 'FRONTIER' || node.status === 'CLEARED') {
+      targetCamera.x = node.x;
+      targetCamera.y = node.y;
+      openGateModalForNode(node);
+    }
     return node;
+  }
+
+  // Keyboard support: Escape closes gate modal first; Space/Enter reveals answer; 1..4 grades
+  function onKeyDown(e) {
+    if (isDestroyed) return;
+    if (e.key === 'Escape') {
+      if (activeGateState) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeGateModal();
+      }
+      return;
+    }
+    if (!activeGateState) return;
+    if (!activeGateState.revealed && (e.key === ' ' || e.key === 'Enter')) {
+      e.preventDefault();
+      revealGateAnswer();
+      return;
+    }
+    if (activeGateState.revealed && ['1', '2', '3', '4'].includes(e.key)) {
+      e.preventDefault();
+      gradeActiveGate(Number(e.key));
+    }
   }
 
   // Pointer pan / tap & wheel zoom
@@ -1366,7 +1847,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       ctx,
       graph,
       { width: w, height: h, camera },
-      { hoveredNodeId, cardLabelsById }
+      { hoveredNodeId, cardLabelsById, unlockRipples, shimmerByNodeId }
     );
   }
 
@@ -1392,6 +1873,10 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   }
 
   header.querySelector('#mmzBackBtn')?.addEventListener('click', () => {
+    if (activeGateState) {
+      closeGateModal();
+      return;
+    }
     if (typeof opts.onExit === 'function') opts.onExit();
   });
   header.querySelector('#mmzFitBtn')?.addEventListener('click', () => {
@@ -1405,6 +1890,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   canvasEl.addEventListener('wheel', onWheel, { passive: false });
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('keydown', onKeyDown, true);
   }
 
   resizeCanvas();
@@ -1414,6 +1900,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   const controller = {
     destroy() {
       isDestroyed = true;
+      closeGateModal();
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
       if (themeObserver) {
@@ -1422,6 +1909,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       }
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', resizeCanvas);
+        window.removeEventListener('keydown', onKeyDown, true);
       }
       canvasEl.removeEventListener('pointerdown', onPointerDown);
       canvasEl.removeEventListener('pointermove', onPointerMove);
@@ -1432,8 +1920,16 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     getGraph: () => graph,
     getLastFrameStats: () => lastFrameStats,
     getLastTappedNode: () => lastTappedNode,
+    getActiveGateState: () => activeGateState,
     fitCamera: fitCameraToGraph,
     redraw: renderFrameNow,
+    openGateForNode: (nodeId) => {
+      const target = (graph.nodes || []).find((n) => n.id === nodeId || n.cardId === nodeId);
+      return openGateModalForNode(target || null);
+    },
+    revealGateAnswer,
+    gradeActiveGate,
+    closeGateModal,
     tapChamberById(nodeId) {
       const target = (graph.nodes || []).find((n) => n.id === nodeId || n.cardId === nodeId);
       return fireChamberTap(target || null);
@@ -1446,4 +1942,5 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
 
   return controller;
 }
+
 

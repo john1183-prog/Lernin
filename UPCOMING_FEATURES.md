@@ -1070,6 +1070,20 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**MindMaze v1 — Phase 3: Gate Modal, Unlock/Soft-Fail & Synth Audio (`public/mind-maze.js`, `public/sound.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 3 (self-contained Gate Modal on `FRONTIER` chamber tap, cloze-safe prompt + answer reveal, side-mode grading `Again`/`Hard`/`Good`/`Easy` without FSRS intervals, in-memory unlock & soft-fail animations, `Escape` handling, full-clear detection, and synthesizer audio cues); **Phase 4 remains open** (Phase 4: Day-scoped reveal persistence, `#/maze/:deckId` route integration, deck menu entry, and SW shell updates):
+- **Self-Contained Gate Modal & Side-Mode Grading (`public/mind-maze.js`)**:
+  * Wired `FRONTIER` chamber tap to open `.mind-maze-gate-overlay` / `.mind-maze-gate-modal` displaying the due card's front (masking `{{cN::answer::hint}}` cloze syntax as `[...]` and rendering `$$formula$$` when present).
+  * Clicking **Show Answer** (or pressing `Space`/`Enter`) calls `playFlip()`, reveals the card back (with cloze answers highlighted and formula variables/assumptions displayed), and surfaces the 4 grade buttons (**Again**, **Hard**, **Good**, **Easy** — keys `1`–`4`, strictly omitting FSRS interval labels).
+  * Pressing `Escape` closes the open Gate Modal first without exiting the maze or writing to IndexedDB.
+- **In-Memory Unlock, Soft-Fail & Full-Clear Resolution (`applyMazeGateGrade`)**:
+  * **Unlock (`Hard` / `Good` / `Easy`)**: Transitions the chamber to `CLEARED`, promotes connected `FOGGED` successors to `FRONTIER`, animates a `550ms` radial fog-retreat ripple on the Canvas 2D surface, and updates the header status pill.
+  * **Soft Fail (`Again`)**: Preserves `FRONTIER` status on the chamber (never locks out or penalizes), plays `playAgain()`, triggers a `320ms` dampened horizontal shimmer on the node, and displays a warm rescuing toast (*"The mist holds for a moment — try an adjacent path or step back in whenever you’re ready."*).
+  * **Full Clear**: When all chambers in the run reach `CLEARED`, transitions in-session status to `SANCTUARY`, fires `playSessionComplete()`, and displays the Sanctuary Illuminated celebration banner.
+  * Performs **zero** writes to IndexedDB `cards` FSRS fields or `reviewLog`.
+- **Synthesizer Audio (`public/sound.js`)**:
+  * Added oscillator-only `playMazeFogLift()` (debounced triangle-wave D4 + A4 fifth interval) to accompany chamber unlock, alongside throttled `playNavigate()`, `playFlip()`, `playAgain()`, `playHard()`, `playGood()`, `playEasy()`, and `playSessionComplete()`.
+
 **MindMaze v1 — Phase 2: Canvas 2D Terrain, Fog-of-War & Footpath Renderer (`public/mind-maze.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 2 (Canvas 2D terrain, procedural fog-of-war, footpath renderer, light/dark theme tokens, `SANCTUARY`/`EMPTY_DECK` banners, and Phase 3 `onChamberTap` hook); **Phases 3–4 remain open** (Phase 3: Gate modal, self-grading & synth audio cues; Phase 4: Day-scoped reveal persistence & `#/maze/:deckId` route integration):
 - **Canvas 2D Terrain, Chambers, Footpaths & Procedural Fog (`drawMindMazeFrame`, `renderMindMazeView`)**:

@@ -22,7 +22,9 @@ import {
   buildChamberGraph,
   chamberColor,
   getMazeThemeTokens,
-  drawMindMazeFrame
+  drawMindMazeFrame,
+  normalizeMazeGrade,
+  applyMazeGateGrade
 } from './mind-maze.js';
 
 const NOW = 1727265600000; // Fixed epoch ms anchor
@@ -321,5 +323,54 @@ console.log('=== 6. Phase 2 Canvas 2D renderer (drawMindMazeFrame) across ACTIVE
   console.log('  ok - ACTIVE (CLEARED/FRONTIER/FOGGED), SANCTUARY, and EMPTY_DECK paint cleanly in Light & Dark');
 }
 
-console.log('\nALL MINDMAZE PHASE 1 & PHASE 2 CHECKS PASSED');
+console.log('=== 7. Phase 3 Gate Outcome Resolver (applyMazeGateGrade: unlock, soft-fail, full clear, zero FSRS writes) ===');
+{
+  const cards = Object.freeze([
+    makeFrozenCard({ id: 'g1', due_date: NOW - 3000, stability: 10 }),
+    makeFrozenCard({ id: 'g2', due_date: NOW - 2000, stability: 15 }),
+    makeFrozenCard({ id: 'g3', due_date: NOW - 1000, stability: 20 })
+  ]);
+  const cardsSnapshot = JSON.stringify(cards);
+
+  const g = buildChamberGraph({
+    deckId: 'deck-gate-p3',
+    cards,
+    nowMs: NOW,
+    dayKey: DAY_KEY
+  });
+
+  // Entry node starts FRONTIER, others FOGGED
+  assert.equal(g.nodes[0].status, 'FRONTIER');
+  assert.equal(g.nodes[1].status, 'FOGGED');
+  assert.equal(g.nodes[2].status, 'FOGGED');
+
+  // 1. Soft-fail ('again' / 1) keeps node FRONTIER
+  const failRes = applyMazeGateGrade(g, g.nodes[0].id, 'again');
+  assert.equal(failRes.outcome, 'soft-fail');
+  assert.equal(failRes.unlocked, false);
+  assert.equal(g.nodes[0].status, 'FRONTIER', 'Soft-fail must keep chamber FRONTIER');
+  assert.equal(g.nodes[1].status, 'FOGGED', 'Soft-fail must not unlock fogged successors');
+
+  // 2. Unlock ('good' / 3) transitions entry node to CLEARED and promotes connected successor(s) to FRONTIER
+  const unlock1 = applyMazeGateGrade(g, g.nodes[0].id, 'good');
+  assert.equal(unlock1.outcome, 'unlocked');
+  assert.equal(unlock1.unlocked, true);
+  assert.equal(unlock1.allCleared, false);
+  assert.equal(g.nodes[0].status, 'CLEARED');
+  assert.ok(unlock1.newlyPromotedIds.length >= 1, 'Unlocking entry must promote at least one FOGGED successor');
+
+  // 3. Clear remaining FRONTIER chambers using 'hard' and 'easy' until allCleared === true
+  while (!g.nodes.every((n) => n.status === 'CLEARED')) {
+    const nextFrontier = g.nodes.find((n) => n.status === 'FRONTIER');
+    assert.ok(nextFrontier, 'Must always have a reachable FRONTIER chamber until all are cleared');
+    applyMazeGateGrade(g, nextFrontier.id, 'easy');
+  }
+
+  assert.equal(g.status, 'SANCTUARY', 'Full clear transitions in-session status to SANCTUARY');
+  assert.equal(JSON.stringify(cards), cardsSnapshot, 'Card FSRS records must remain 100% untouched');
+  console.log('  ok - applyMazeGateGrade handles soft-fail, progressive unlock, and full-clear with zero FSRS mutation');
+}
+
+console.log('\nALL MINDMAZE PHASE 1, PHASE 2 & PHASE 3 CHECKS PASSED');
+
 

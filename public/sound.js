@@ -249,3 +249,22 @@ export function playTileHover(tileKey) {
   playTones(notes);
 }
 
+let lastMazeFogLiftTime = 0;
+
+/**
+ * MindMaze chamber unlock mist-lift tone — a soft triangle-wave fifth interval
+ * (D4 293.66 Hz + A4 440.00 Hz) with a slow attack and gentle decay.
+ * Oscillator-only, gated by isEnabled(), and debounced so rapid clicks never stack.
+ */
+export function playMazeFogLift() {
+  const now = Date.now();
+  if (now - lastMazeFogLiftTime < 150) return;
+  lastMazeFogLiftTime = now;
+
+  playTones([
+    { freq: 293.66, type: 'triangle', start: 0, duration: 0.28, gain: 0.04, attack: 0.06 },
+    { freq: 440.00, type: 'triangle', start: 0.04, duration: 0.32, gain: 0.038, attack: 0.08 }
+  ]);
+}
+
+
