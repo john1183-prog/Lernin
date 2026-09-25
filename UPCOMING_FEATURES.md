@@ -1070,6 +1070,21 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**MindMaze v1 — Phase 1: Deterministic Chamber Graph Builder & Read-Only Data Layer (`public/mind-maze.js`, `public/test_mind_maze_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 1 (pure deterministic due-card chamber graph builder and read-only IndexedDB data layer); **Phases 2–4 remain open** (Phase 2: Canvas 2D terrain/fog/footpath renderer; Phase 3: Gate modal & synth audio cues; Phase 4: Day-scoped reveal persistence & `#/maze/:deckId` route integration):
+- **Pure Side-Mode & Dependency Hierarchy (`public/mind-maze.js`)**:
+  * Created self-contained `public/mind-maze.js` importing strictly from `./db.js` (`getCardsByDeck`, `getRelationshipsFrom`, `getSetting`, `MASTERY_STABILITY_DAYS`) and never from `app.js`.
+  * Performs zero writes to `cards` FSRS fields or `reviewLog`, preserving pure side-mode guarantees.
+- **Deterministic Due-Card Selection & DAG Construction (`selectMazeDueCards`, `buildChamberGraph`, `loadDeckMazeGraph`)**:
+  * Filters active (`!card.suspended && card.state !== 'suspended'`) due cards (`due_date <= nowMs` or `state === 'new'`), capping each run at `MAZE_MAX_CHAMBERS = 12`.
+  * When `> 12` due cards exist, deterministically prioritizes due cards participating in intra-deck relationships (`dependsOn` / `related`) alongside earliest `due_date`, pulling connected due partners into the 12-chamber set.
+  * Computes chamber nodes (`{ id, cardId, x, y, r, status: 'FOGGED'|'FRONTIER'|'CLEARED', stability, mastery }`) with radius (`18px`–`34px`) and mastery (`0`–`1`) derived from `MASTERY_STABILITY_DAYS = 30`.
+  * Wires primary edges from real `dependsOn` / `related` relationships (`kind: 'relationship'`) and fills remaining reachability via a seeded DAG (`kind: 'seeded'`, branch factor 1–2) seeded by `${deckId}:${dayKey}`.
+  * Distinguishes `status: 'SANCTUARY'` (0 due cards when active cards exist) from `status: 'EMPTY_DECK'` (0 total active cards) without throwing exceptions.
+  * Supports optional day-scoped read of `mindMazeState` (`resolveClearedCardIdsFromState`, `readDeckMazeClearedIds`) to mark already-cleared chambers `'CLEARED'` and promote their connected children to `'FRONTIER'`.
+- **Verification (`public/test_mind_maze_phase1.mjs`)**:
+  * Added permanent unit test suite covering `>12` due truncation/determinism, relationship preference & full DAG reachability, `SANCTUARY` vs `EMPTY_DECK` distinction, suspended card filtering, and `Object.freeze` non-mutation guarantees.
+
 **Tier 2 #6 — Delete Dead `concept-graph.js` Module (`public/concept-graph.js`, `public/app.js`, `public/mind-map.js`, `public/styles.css`, `UPCOMING_FEATURES.md`)** —
 completely removed dead `concept-graph.js` deprecated stub, cleaned up unused CSS classes, and purged lingering naming references:
 - **Dead Code Purge (`public/concept-graph.js`)**:
