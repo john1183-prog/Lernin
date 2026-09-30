@@ -3051,6 +3051,16 @@ input, textarea, select {
   cursor: pointer;
 }
 
+.ms-back-to-card-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .ms-suggest-btn {
   background: transparent;
   border: 1px dashed var(--border);

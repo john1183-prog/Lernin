@@ -1070,6 +1070,20 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
   * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
 
+**Explain with Motion (Card Mind Map) — Phase 4 Polish: Post-Watch Back Link to Source Card (`public/motion-studio.js`, `public/mind-map.js`, `public/motion-topic.js`, `public/styles.css`, `public/sw.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped Phase 4 polish (post-watch navigation back to originating card on the Card Mind Map):
+- **Post-Watch Back Link in Motion Studio (`showPostWatchCard` in `public/motion-studio.js`)**:
+  * Reads `MOTION_SOURCE_CARD_KEY` (`'lernin:motionStudioSourceCardId'`) from `sessionStorage` alongside active `deckId`.
+  * When source card is present, renders a warm secondary action button: `← Back to card on Mind Map` (`#msBackToCardBtn`).
+  * On click: sets `MIND_MAP_FOCUS_CARD_KEY` (`'lernin:mindMapFocusCardId'`) in `sessionStorage`, cleans up `MOTION_SOURCE_CARD_KEY` to avoid stale links, destroys the active player, and navigates back to `#/mind-map/${deckId}`.
+  * When `MOTION_SOURCE_CARD_KEY` is missing (doc-map or Studio-started flows), the back link is completely omitted with zero broken controls.
+- **Auto-Focusing Source Card on Mind Map Re-entry (`renderMindMap` in `public/mind-map.js`)**:
+  * On load, reads and single-shot clears `MIND_MAP_FOCUS_CARD_KEY` from `sessionStorage`.
+  * If a matching node is found, centers the camera on `(targetNode.x, targetNode.y)` and immediately opens `openNodeDetail(targetNode)`.
+- **Shell Parity & Styles (`public/styles.css`, `public/sw.js`)**:
+  * Added `.ms-back-to-card-btn` styling to `public/styles.css` matching Lernin's warm tactile button aesthetic in Light and Dark themes.
+  * Bumped `CACHE_VERSION` to `'lernin-shell-v29'` in `public/sw.js`.
+
 **Explain with Motion (Card Mind Map) — Phase 3: Bounded Context Pack & Motion Studio Prefill Handoff (`public/motion-topic.js`, `public/mind-map.js`, `public/sw.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 3 (bounded context pack assembly when `Include deck context` is checked, `MOTION_PREFILL_KEY` + `MOTION_SOURCE_CARD_KEY` `sessionStorage` handoff, `#/motion/:deckId` hash navigation without importing `app.js`, and service worker shell cache registration for `/motion-topic.js`):
 - **Bounded Context Pack & Final Topic Composer (`public/motion-topic.js`)**:

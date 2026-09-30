@@ -19,6 +19,7 @@ import {
   buildCardMotionContextPack,
   composeCardMotionFinalTopic,
   MOTION_SOURCE_CARD_KEY,
+  MIND_MAP_FOCUS_CARD_KEY,
   MAX_CONTEXT_PACK_CHARS
 } from './motion-topic.js';
 
@@ -261,6 +262,7 @@ console.log('=== 7. Zero mutation of input card ===');
 console.log('=== 8. Phase 3: Bounded context pack & composeCardMotionFinalTopic ===');
 {
   assert.equal(MOTION_SOURCE_CARD_KEY, 'lernin:motionStudioSourceCardId');
+  assert.equal(MIND_MAP_FOCUS_CARD_KEY, 'lernin:mindMapFocusCardId');
   assert.equal(MAX_CONTEXT_PACK_CHARS, 360);
 
   // When includeContext is false (default), exact editedTopic is returned with zero context appended

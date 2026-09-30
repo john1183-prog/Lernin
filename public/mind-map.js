@@ -28,7 +28,8 @@ import {
   resolveCardMotionTopic,
   composeCardMotionFinalTopic,
   buildCardMotionContextPack,
-  MOTION_SOURCE_CARD_KEY
+  MOTION_SOURCE_CARD_KEY,
+  MIND_MAP_FOCUS_CARD_KEY
 } from './motion-topic.js';
 
 const SAND_HSL = { h: 38, s: 28, l: 78 };
@@ -342,6 +343,27 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
 
   buildLayout();
   fitCameraToContent();
+
+  let focusCardId = opts.focusCardId || null;
+  if (!focusCardId) {
+    try {
+      focusCardId = sessionStorage.getItem(MIND_MAP_FOCUS_CARD_KEY);
+      if (focusCardId) {
+        sessionStorage.removeItem(MIND_MAP_FOCUS_CARD_KEY);
+      }
+    } catch (_) {}
+  }
+
+  if (focusCardId && Array.isArray(nodes)) {
+    const targetNode = nodes.find(n => n.id === focusCardId || String(n.card?.id) === String(focusCardId));
+    if (targetNode) {
+      targetCamera.x = targetNode.x;
+      targetCamera.y = targetNode.y;
+      camera.x = targetNode.x;
+      camera.y = targetNode.y;
+      openNodeDetail(targetNode);
+    }
+  }
 
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);

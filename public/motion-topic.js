@@ -377,6 +377,9 @@ export function resolveCardMotionTopic(card, deckTitleOrOpts = '') {
 /** SessionStorage key storing the originating card ID when jumping from Card Mind Map to Motion Studio. */
 export const MOTION_SOURCE_CARD_KEY = 'lernin:motionStudioSourceCardId';
 
+/** SessionStorage key storing a target card ID to focus/open upon navigating back to the Card Mind Map. */
+export const MIND_MAP_FOCUS_CARD_KEY = 'lernin:mindMapFocusCardId';
+
 /** Maximum character length for the appended `[Context — ...]` pack. */
 export const MAX_CONTEXT_PACK_CHARS = 360;
 

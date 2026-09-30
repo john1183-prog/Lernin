@@ -24,6 +24,7 @@ import { generateMotion } from './motion-api.js';
 import { renderMotionManualImport } from './motion-manual-import.js';
 import { getApiConfig, getMotionScripts, getMotionScript, getDeck, getCardsByDeck } from './db.js';
 import { playMotionCue } from './sound.js';
+import { MOTION_SOURCE_CARD_KEY, MIND_MAP_FOCUS_CARD_KEY } from './motion-topic.js';
 
 export const MOTION_PREFILL_KEY = 'lernin:motionStudioPrefillTopic';
 
@@ -186,6 +187,12 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     const isDeckScoped = !!deck && !!deckId;
     const deckTitle = deck ? deck.title : '';
 
+    let sourceCardId = null;
+    try {
+      sourceCardId = sessionStorage.getItem(MOTION_SOURCE_CARD_KEY);
+    } catch (_) {}
+    const hasSourceCard = Boolean(sourceCardId && deckId);
+
     card.innerHTML = `
       <div class="ms-post-watch-title">Watched to the end! ✨</div>
       <div class="ms-post-watch-prompt">
@@ -194,6 +201,7 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
           : `Ready to explore further? Explain another concept or dive deeper.`}
       </div>
       <div class="ms-post-watch-actions">
+        ${hasSourceCard ? `<button class="btn-secondary ms-back-to-card-btn" id="msBackToCardBtn">← Back to card on Mind Map</button>` : ''}
         <button class="btn-primary ms-post-watch-cta" id="msPostWatchExplainBtn">Explain another topic</button>
         ${isDeckScoped ? `<button class="ms-suggest-btn" id="msSuggestBtn">💡 Suggest a concept from this deck’s tricky cards</button>` : ''}
         <button class="btn-secondary" id="msReplayBtn" style="font-size:12px; padding:6px 10px;">↺ Replay</button>
@@ -202,6 +210,20 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     `;
 
     postWatchArea.appendChild(card);
+
+    if (hasSourceCard) {
+      const backToCardBtn = card.querySelector('#msBackToCardBtn');
+      if (backToCardBtn) {
+        backToCardBtn.addEventListener('click', () => {
+          try {
+            sessionStorage.setItem(MIND_MAP_FOCUS_CARD_KEY, sourceCardId);
+            sessionStorage.removeItem(MOTION_SOURCE_CARD_KEY);
+          } catch (_) {}
+          if (player) player.destroy();
+          window.location.hash = `/mind-map/${deckId}`;
+        });
+      }
+    }
 
     // Primary action: focus topic input and scroll up smoothly
     card.querySelector('#msPostWatchExplainBtn').addEventListener('click', () => {
