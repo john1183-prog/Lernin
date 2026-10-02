@@ -14,8 +14,11 @@ import {
   getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck,
   getAllDocuments,
   MASTERY_STABILITY_DAYS,
-  DEFAULT_DAILY_REVIEW_CAP
+  DEFAULT_DAILY_REVIEW_CAP,
+  dismissCardFidelity,
+  updateCardContent
 } from './db.js';
+import { checkCardsFidelity } from './card-fidelity.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
@@ -2876,7 +2879,7 @@ async function handleExtractedText(text, deckId, config, filename) {
           });
         }).catch(err => console.error('saveDocument failed (non-fatal):', err));
       }
-      renderEditStep(result.cards, deckId);
+      renderEditStep(result.cards, deckId, text);
       return;
     }
     if (!navigator.onLine) return; // offline queue toast already shown by generateCards()
@@ -2947,7 +2950,7 @@ async function uploadVisionFile(file, deckId, config) {
   }
 }
 
-export function renderEditStep(cards, deckId) {
+export function renderEditStep(cards, deckId, sourceText = null) {
   const container = root || document.getElementById('root');
   if (container) {
     container.innerHTML = '';
@@ -2955,6 +2958,9 @@ export function renderEditStep(cards, deckId) {
   }
 
   const approved = [...cards];
+  if (sourceText && typeof sourceText === 'string' && sourceText.trim()) {
+    checkCardsFidelity(approved, sourceText);
+  }
   let discardedCount = 0;
 
   const wrap = document.createElement('div');
@@ -2983,12 +2989,108 @@ export function renderEditStep(cards, deckId) {
     for (let i = 0; i < approved.length; i++) {
       const card = approved[i];
       const row = document.createElement('div');
+      row.className = 'edit-card-row';
       row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); position:relative;';
 
       const typeBadge = document.createElement('span');
       typeBadge.style.cssText = 'position:absolute; top:10px; right:44px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
       typeBadge.textContent = card.type || 'basic';
       row.appendChild(typeBadge);
+
+      if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+        const fidelityBox = document.createElement('div');
+        fidelityBox.className = 'card-fidelity-banner';
+        fidelityBox.style.marginTop = '22px';
+
+        const bannerTop = document.createElement('div');
+        bannerTop.style.cssText = 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;';
+
+        const badge = document.createElement('span');
+        badge.className = 'card-fidelity-badge';
+        badge.innerHTML = '<span>🌿</span><span>Double-check source</span>';
+        bannerTop.appendChild(badge);
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex; align-items:center; gap:10px;';
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'fidelity-edit-btn';
+        editBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:600; color:#b45309; cursor:pointer; text-decoration:underline; padding:0;';
+        editBtn.textContent = 'Edit';
+        actions.appendChild(editBtn);
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'fidelity-dismiss-btn';
+        dismissBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:500; color:var(--ink-secondary); cursor:pointer; padding:0;';
+        dismissBtn.textContent = 'Keep anyway';
+        actions.appendChild(dismissBtn);
+
+        bannerTop.appendChild(actions);
+        fidelityBox.appendChild(bannerTop);
+
+        const note = document.createElement('div');
+        note.className = 'card-fidelity-note';
+        note.textContent = "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
+        fidelityBox.appendChild(note);
+
+        dismissBtn.addEventListener('click', () => {
+          card.fidelityFlag.status = 'dismissed';
+          fidelityBox.remove();
+          showToast('Source note dismissed.');
+        });
+
+        editBtn.addEventListener('click', () => {
+          if (row.querySelector('.inline-edit-fields')) return;
+          editBtn.style.display = 'none';
+
+          const editArea = document.createElement('div');
+          editArea.className = 'inline-edit-fields';
+          editArea.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-top:8px;';
+
+          const frontLabel = document.createElement('div');
+          frontLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
+          frontLabel.textContent = 'Front (question)';
+          editArea.appendChild(frontLabel);
+
+          const frontInput = document.createElement('textarea');
+          frontInput.rows = 2;
+          frontInput.value = card.front;
+          frontInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
+          editArea.appendChild(frontInput);
+
+          const backLabel = document.createElement('div');
+          backLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
+          backLabel.textContent = 'Back (answer)';
+          editArea.appendChild(backLabel);
+
+          const backInput = document.createElement('textarea');
+          backInput.rows = 3;
+          backInput.value = card.back;
+          backInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
+          editArea.appendChild(backInput);
+
+          const saveBtn = document.createElement('button');
+          saveBtn.type = 'button';
+          saveBtn.className = 'btn-primary';
+          saveBtn.style.cssText = 'padding:6px 14px; font-size:12px; align-self:flex-start; margin-top:4px;';
+          saveBtn.textContent = 'Save edits';
+
+          saveBtn.addEventListener('click', () => {
+            card.front = frontInput.value.trim() || card.front;
+            card.back = backInput.value.trim() || card.back;
+            card.fidelityFlag.status = 'dismissed';
+            renderCards();
+            showToast('Card updated.');
+          });
+
+          editArea.appendChild(saveBtn);
+          row.appendChild(editArea);
+        });
+
+        row.appendChild(fidelityBox);
+      }
 
       if (card.sourceInfo) {
         const provTag = document.createElement('div');
@@ -3476,6 +3578,15 @@ async function renderCardBrowser(deckId) {
       dot.style.background = CARD_STATE_COLOR[card.state] || CARD_STATE_COLOR.new;
       dot.title = card.state || 'new';
       corner.appendChild(dot);
+
+      if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+        const flagLeaf = document.createElement('span');
+        flagLeaf.className = 'card-tile-fidelity';
+        flagLeaf.textContent = '🌿';
+        flagLeaf.title = 'Double-check source';
+        corner.appendChild(flagLeaf);
+      }
+
       tile.appendChild(corner);
 
       const text = document.createElement('div');
@@ -3726,6 +3837,71 @@ async function renderCardDetailView(card, deck) {
 
   const body = document.createElement('div');
   body.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:12px;';
+
+  if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+    const banner = document.createElement('div');
+    banner.className = 'card-fidelity-banner';
+
+    const bannerTop = document.createElement('div');
+    bannerTop.style.cssText = 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;';
+
+    const badge = document.createElement('span');
+    badge.className = 'card-fidelity-badge';
+    badge.innerHTML = '<span>🌿</span><span>Double-check source</span>';
+    bannerTop.appendChild(badge);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex; align-items:center; gap:10px;';
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'fidelity-edit-btn';
+    editBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:600; color:#b45309; cursor:pointer; text-decoration:underline; padding:0;';
+    editBtn.textContent = 'Edit';
+    actions.appendChild(editBtn);
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
+    dismissBtn.className = 'fidelity-dismiss-btn';
+    dismissBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:500; color:var(--ink-secondary); cursor:pointer; padding:0;';
+    dismissBtn.textContent = 'Keep anyway';
+    actions.appendChild(dismissBtn);
+
+    bannerTop.appendChild(actions);
+    banner.appendChild(bannerTop);
+
+    const note = document.createElement('div');
+    note.className = 'card-fidelity-note';
+    note.textContent = "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
+    banner.appendChild(note);
+
+    dismissBtn.addEventListener('click', async () => {
+      await dismissCardFidelity(card.id);
+      card.fidelityFlag.status = 'dismissed';
+      banner.remove();
+      showToast('Source note dismissed.');
+    });
+
+    editBtn.addEventListener('click', () => {
+      const newFront = prompt('Edit card front:', card.front);
+      if (newFront !== null && newFront.trim()) {
+        const newBack = prompt('Edit card back:', card.back);
+        if (newBack !== null && newBack.trim()) {
+          updateCardContent(card.id, { front: newFront.trim(), back: newBack.trim() }).then((updated) => {
+            if (updated) {
+              card.front = updated.front;
+              card.back = updated.back;
+              card.fidelityFlag = updated.fidelityFlag;
+              showToast('Card updated.');
+              renderCardDetailView(card, deck);
+            }
+          });
+        }
+      }
+    });
+
+    body.appendChild(banner);
+  }
 
   const frontBlock = document.createElement('div');
   frontBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
@@ -4212,6 +4388,11 @@ if (typeof window !== 'undefined') {
     showUpdatePrompt,
     setTheme,
     cycleTheme
+  };
+  window.__fidelityDebug = {
+    renderEditStep,
+    applyTheme,
+    renderCardDetailView
   };
 }
 

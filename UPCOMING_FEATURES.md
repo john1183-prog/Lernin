@@ -1068,7 +1068,30 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
     - `test_very_late_emphasis_exit_shortened_within_duration`: verifies `at=4.85` on 5.0s scene sets hold to 0.0s, exit completes within 5.0s with opacity 0.
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
-  * Automated headless Chrome CDP verification confirmed: `createPlayer` running late emphasis script evaluated opacity at `t=5.0` as `0.0`, with canvas screenshot `motion_late_emphasis_faded.png`.
+
+**Tier 4 #1 — Cheap Verification Pass on Generated Cards (Flag Only, Never Auto-Fix) (`public/card-fidelity.js`, `public/db.js`, `public/app.js`, `public/manual-json-import.js`, `public/styles.css`, `public/sw.js`, `public/test_card_fidelity.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped client-side verification pass on newly generated and imported cards that flags unverified content against source text without auto-fixing or rewriting card text:
+- **Pure Deterministic Verifier (`public/card-fidelity.js`)**:
+  * Zero remote calls, zero bundler dependencies, pure synchronous check running offline-first in `/public`.
+  * Checks substantive entities, technical terms, cloze blanks (`{{cN::term}}`), and formula variables against source document text.
+  * Stamps `fidelityFlag: { status: 'unverified', reason: '...', flaggedAt: Date.now() }` on cards whose key terms cannot be grounded in the source text.
+  * Preserves full FSRS lifecycle integrity; `fidelityFlag` is an inert metadata property ignored by `scheduler.js`, `study.js`, and `reviewLog`. Cards retain clean default FSRS scheduling fields (`state: 'new'`, `difficulty: 0`, `stability: 0`, `reps: 0`, `lapses: 0`, `last_review: null`, `suspended: false`).
+- **Warm Review Step UX (`renderEditStep` in `public/app.js`)**:
+  * Unverified cards remain selected by default in `renderEditStep` so user agency is respected.
+  * Renders warm amber alert banner (`.card-fidelity-banner`) with brand-aligned rescuing copy: `🌿 Double-check source` ("Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.").
+  * Inline "Edit" action opens textarea editors for front and back; saving edits marks the flag dismissed and refreshes the card.
+  * "Keep anyway" action dismisses the banner immediately with a toast notification.
+- **Card Browser & Detail View Integration (`public/app.js`, `public/styles.css`)**:
+  * Per-deck card browser displays subtle `🌿` indicator on tile corners (`.card-tile-fidelity`) for unverified cards.
+  * Card detail view renders fidelity banner with inline Edit and Keep anyway actions.
+  * Database helpers `dismissCardFidelity(cardId)` and `updateCardContent(cardId, updates)` allow permanent dismissal or text updates in IndexedDB.
+- **Study Mode Silence**:
+  * Study Mode completely ignores fidelity flags during active recall; zero banners, zero badges, and zero interruptions on card face.
+- **Service Worker Shell Registration (`public/sw.js`)**:
+  * Registered `'/card-fidelity.js'` in `SHELL_ASSETS` and bumped `CACHE_VERSION` to `'lernin-shell-v30'`.
+- **Permanent Test Suite & Real-Path Headless Chrome CDP Verification**:
+  * Added `public/test_card_fidelity.mjs` with 10 comprehensive unit tests covering basic cards, cloze blanks, formula variables, case/punctuation insensitivity, empty text handling, and batch operations.
+  * Verified via automated headless Chrome CDP script (`fidelity_p1_editstep_light.png`, `fidelity_p1_editstep_dark.png`, `fidelity_p1_cardbrowser_light.png`, `fidelity_p1_detailview_light.png`, `fidelity_p1_studymode_light.png`) confirming 8 real DOM and IndexedDB assertions across Light and Dark themes.
 
 **Explain with Motion (Card Mind Map) — Phase 4 Polish: Post-Watch Back Link to Source Card (`public/motion-studio.js`, `public/mind-map.js`, `public/motion-topic.js`, `public/styles.css`, `public/sw.js`, `public/test_motion_topic_phase1.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped Phase 4 polish (post-watch navigation back to originating card on the Card Mind Map):

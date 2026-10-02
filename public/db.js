@@ -326,6 +326,9 @@ export async function saveNewCards(deckId, newCards) {
       if (card.sourceInfo) {
         record.sourceInfo = card.sourceInfo;
       }
+      if (card.fidelityFlag) {
+        record.fidelityFlag = card.fidelityFlag;
+      }
       await store.put(record);
     }
     await tx.done;
@@ -385,6 +388,9 @@ export async function saveManualCard(card) {
   }
   if (card.sourceInfo) {
     record.sourceInfo = card.sourceInfo;
+  }
+  if (card.fidelityFlag) {
+    record.fidelityFlag = card.fidelityFlag;
   }
 
   await db.put('cards', record);
@@ -521,6 +527,63 @@ export async function getCard(cardId) {
 export async function deleteCard(cardId) {
   const db = await getDB();
   return db.delete('cards', cardId);
+}
+
+/**
+ * Dismisses the source fidelity flag on a card.
+ * Leaves all FSRS and content fields completely untouched.
+ *
+ * @param {string} cardId
+ * @returns {Promise<object|null>} updated card or null if not found
+ */
+export async function dismissCardFidelity(cardId) {
+  const db = await getDB();
+  const tx = db.transaction('cards', 'readwrite');
+  const store = tx.objectStore('cards');
+  const card = await store.get(cardId);
+  if (!card) return null;
+  card.fidelityFlag = {
+    ...(card.fidelityFlag || {}),
+    status: 'dismissed',
+    dismissedAt: Date.now()
+  };
+  await store.put(card);
+  await tx.done;
+  return card;
+}
+
+/**
+ * Updates card text / content fields without touching FSRS scheduling fields.
+ * If the card had an unverified fidelity flag, marks it as dismissed/edited.
+ *
+ * @param {string} cardId
+ * @param {object} updates - { front, back, hint, formula, variables }
+ * @returns {Promise<object|null>} updated card or null if not found
+ */
+export async function updateCardContent(cardId, updates = {}) {
+  const db = await getDB();
+  const tx = db.transaction('cards', 'readwrite');
+  const store = tx.objectStore('cards');
+  const card = await store.get(cardId);
+  if (!card) return null;
+
+  if (updates.front !== undefined) card.front = updates.front;
+  if (updates.back !== undefined) card.back = updates.back;
+  if (updates.hint !== undefined) card.hint = updates.hint;
+  if (updates.formula !== undefined) card.formula = updates.formula;
+  if (updates.variables !== undefined) card.variables = updates.variables;
+
+  if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+    card.fidelityFlag = {
+      ...card.fidelityFlag,
+      status: 'dismissed',
+      editedAt: Date.now()
+    };
+  }
+
+  await store.put(card);
+  await tx.done;
+  return card;
 }
 
 /**
@@ -2127,6 +2190,8 @@ export async function saveCards(deckId, cardsArray) {
       suspended: false,
       leech: false
     };
+    if (c.sourceInfo) card.sourceInfo = c.sourceInfo;
+    if (c.fidelityFlag) card.fidelityFlag = c.fidelityFlag;
     store.add(card);
   }
   await tx.done;

@@ -5,6 +5,7 @@
 import { saveNewCards, saveDocument, getCardsByDeck } from './db.js';
 import { renderMath, showToast } from './app.js';
 import { parseAndRepairJSON } from './json-repair.js';
+import { checkCardFidelity } from './card-fidelity.js';
 
 export { parseAndRepairJSON };
 
@@ -233,7 +234,7 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
         skipped.push('Duplicate: ' + c.front.slice(0, 30));
         continue;
       }
-      newCards.push({
+      const cardRecord = {
         id: (typeof crypto !== 'undefined' && crypto.randomUUID)
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -245,7 +246,18 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
         assumptions: c.assumptions || null,
         commonMistakes: c.commonMistakes || null,
         applications: c.applications || null
-      });
+      };
+      if (extractedText && typeof extractedText === 'string' && extractedText.trim()) {
+        const check = checkCardFidelity(cardRecord, extractedText);
+        if (check.flagged) {
+          cardRecord.fidelityFlag = {
+            status: 'unverified',
+            reason: check.reason,
+            flaggedAt: Date.now()
+          };
+        }
+      }
+      newCards.push(cardRecord);
     }
 
     if (newCards.length === 0) {
