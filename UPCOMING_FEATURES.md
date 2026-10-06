@@ -1069,6 +1069,33 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Tier 4 #2 — Per-User FSRS Weight Fitting (w0–w3 Initial Stabilities, Local ReviewLog) (`public/fsrs-fit.js`, `public/scheduler.js`, `public/db.js`, `public/app.js`, `public/styles.css`, `public/sw.js`, `public/test_scheduler_fitting.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped client-side FSRS memory model calibration that personalizes initial stabilities ($w_0..w_3$) from the user's local `reviewLog` without cloud dependencies, without batch rescheduling spikes, and without scientific dashboard clutter:
+- **Pure Calibration Engine (`public/fsrs-fit.js`)**:
+  * Extracts empirical first-to-second review transitions $(G_1, \Delta t, y)$ from IndexedDB `reviewLog` without mutating historical records.
+  * Fits initial stabilities $w_0..w_3$ (first-review survival for Again, Hard, Good, Easy) using golden-section search minimizing regularized binary cross-entropy log-loss.
+  * Keeps deeper transition dynamics ($w_4..w_{20}$) locked to population defaults (`default_w`), preventing runaway intervals and overfitting on personal data.
+  * Clamps parameters to legal bounds (`CLAMP_PARAMETERS` / `clipParameters`) and enforces monotonicity ($w_0 \le w_1 \le w_2 \le w_3$).
+  * Compares candidate log-loss against baseline `default_w` loss; requires positive improvement before applying, gracefully retaining defaults otherwise (`reason: 'no_improvement'`).
+- **Dynamic Scheduler Integration (`public/scheduler.js`)**:
+  * Added `setSchedulerWeights`, `reloadSchedulerParams`, `getActiveWeights`, and `getActiveParams`.
+  * Dynamically reconfigures the live scheduler instance on Apply or Reset without requiring full app reloads.
+  * Avoids circular import deadlocks with `db.js` through dynamic loading.
+  * Invariant: personalized weights affect **future** `gradeCard` calls only; leaves existing card `due_date`, stability, and difficulty intact, protecting the learner's queue from sudden review avalanches.
+- **IndexedDB Helpers & Persistence (`public/db.js`)**:
+  * Added `countReviewLogs()` and `getAllReviewLogs()`.
+  * Persists fitted parameters under settings store key `'fsrsFittedWeights'` (`{ w: number[21], fittedAt, reviewCount, baselineLoss, fittedLoss, improvementPct }`); resetting cleanly clears the key and restores `default_w`.
+- **Warm Settings UI (`public/app.js`, `public/styles.css`)**:
+  * Added `Memory calibration` section in Settings.
+  * Below 300 reviews: displays warm progress copy (`🌿 Personalized pacing unlocks at 300 reviews. You've completed X so far.`) with disabled action button.
+  * At/above 300 reviews: enables `🌿 Tune my schedule` button; on completion, renders green `✓ Tuned to your rhythm` badge (`.calibration-badge`), review count provenance, and `Reset to standard pacing` affordance.
+  * Polished across Light and Dark themes (`.calibration-card`, `.calibration-badge`).
+- **Service Worker Shell Registration (`public/sw.js`)**:
+  * Added `'/fsrs-fit.js'` to `SHELL_ASSETS` and bumped `CACHE_VERSION` to `'lernin-shell-v32'`.
+- **Permanent Test Suite & Headless Chrome CDP Verification**:
+  * Permanent Node unit test suite `public/test_scheduler_fitting.mjs` (5/5 tests passing).
+  * Automated headless Chrome CDP verification confirming 320-review seed, calibration run, settings write, badge rendering, light & dark screenshots (`memory_calibration_tuned_light.png`, `memory_calibration_tuned_dark.png`), reset to defaults, and zero batch card due date mutation.
+
 **Tier 4 #4 — Motion Studio → SRS Bridge (1–2 Recall Cards Per Script) (`public/motion-card-extract.js`, `public/motion-studio.js`, `public/motion-player.js`, `public/styles.css`, `public/sw.js`, `public/test_motion_card_extract.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped optional, user-confirmed bridge feeding Motion Studio explainers into the SRS review queue without duplicating mind-map cards or auto-writing unreviewed flashcards:
 - **Pure Recall Card Extractor (`public/motion-card-extract.js`)**:

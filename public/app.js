@@ -16,9 +16,13 @@ import {
   MASTERY_STABILITY_DAYS,
   DEFAULT_DAILY_REVIEW_CAP,
   dismissCardFidelity,
-  updateCardContent
+  updateCardContent,
+  countReviewLogs,
+  getAllReviewLogs
 } from './db.js';
 import { checkCardsFidelity } from './card-fidelity.js';
+import { reloadSchedulerParams } from './scheduler.js';
+import { fitInitialStabilities } from './fsrs-fit.js';
 import { startStudySession, teardownStudySession } from './study.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
@@ -1205,12 +1209,14 @@ async function enterMotionStudio(deckId) {
 }
 
 export async function renderSettings() {
-  let existing, reminderSettings, smartOrderingEnabled, soundEffectsEnabled;
+  let existing, reminderSettings, smartOrderingEnabled, soundEffectsEnabled, totalReviewLogs, fittedWeightsConfig;
   try {
     existing = await getApiConfig();
     reminderSettings = await getReminderSettings();
     smartOrderingEnabled = (await getSetting('smartOrderingEnabled')) !== false;
     soundEffectsEnabled = (await getSetting('soundEffectsEnabled')) === true;
+    totalReviewLogs = (await countReviewLogs()) || 0;
+    fittedWeightsConfig = await getSetting('fsrsFittedWeights');
   } catch (err) {
     showToast('Failed to load settings.', 5000);
     return navigate('/');
@@ -1523,6 +1529,148 @@ export async function renderSettings() {
     }
   });
   wrap.appendChild(soundSection);
+
+  /* Memory calibration section */
+  const calibrationSection = makeSection('Memory calibration');
+  const calibrationIntro = document.createElement('p');
+  calibrationIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  calibrationIntro.textContent = 'Lernin paces your flashcards using FSRS, a modern memory model. As you study, Lernin can fine-tune your review intervals to match your personal memory rhythm.';
+  calibrationSection.appendChild(calibrationIntro);
+
+  const calCard = document.createElement('div');
+  calCard.className = 'calibration-card';
+
+  if (totalReviewLogs < 300) {
+    const progressText = document.createElement('div');
+    progressText.className = 'calibration-progress-text';
+    progressText.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+    progressText.innerHTML = `🌿 <strong>Personalized pacing unlocks at 300 reviews.</strong><br>You've completed <span style="font-weight:600; color:var(--ink);">${totalReviewLogs.toLocaleString()}</span> reviews so far. Keep studying at your own pace — once you reach 300, Lernin will have enough history to tune intervals to your memory.`;
+    calCard.appendChild(progressText);
+
+    const tuneBtn = document.createElement('button');
+    tuneBtn.className = 'btn-secondary';
+    tuneBtn.id = 'calibrationTuneBtn';
+    tuneBtn.disabled = true;
+    tuneBtn.style.cssText = 'padding:10px 14px; font-size:13px; align-self:flex-start; opacity:0.6; cursor:not-allowed;';
+    tuneBtn.textContent = '🌿 Tune my schedule';
+    calCard.appendChild(tuneBtn);
+  } else {
+    const isTuned = fittedWeightsConfig && Array.isArray(fittedWeightsConfig.w) && fittedWeightsConfig.w.length === 21;
+
+    if (isTuned) {
+      const statusRow = document.createElement('div');
+      statusRow.style.cssText = 'display:flex; align-items:center; gap:8px;';
+      const badge = document.createElement('span');
+      badge.className = 'calibration-badge';
+      badge.textContent = '✓ Tuned to your rhythm';
+      statusRow.appendChild(badge);
+      calCard.appendChild(statusRow);
+
+      const descText = document.createElement('div');
+      descText.className = 'calibration-status-desc';
+      descText.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+      const dateStr = fittedWeightsConfig.fittedAt ? new Date(fittedWeightsConfig.fittedAt).toLocaleDateString() : '';
+      const revCount = fittedWeightsConfig.reviewCount ? fittedWeightsConfig.reviewCount.toLocaleString() : totalReviewLogs.toLocaleString();
+      descText.textContent = `Calibrated on ${dateStr} from ${revCount} reviews. Initial review intervals are adapted to how quickly you learn new concepts.`;
+      calCard.appendChild(descText);
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex; gap:10px; margin-top:4px; flex-wrap:wrap;';
+
+      const retuneBtn = document.createElement('button');
+      retuneBtn.className = 'btn-secondary';
+      retuneBtn.id = 'calibrationTuneBtn';
+      retuneBtn.style.cssText = 'padding:10px 14px; font-size:13px; cursor:pointer;';
+      retuneBtn.textContent = '🌿 Re-tune schedule';
+      retuneBtn.addEventListener('click', handleRunCalibration);
+      btnRow.appendChild(retuneBtn);
+
+      const resetBtn = document.createElement('button');
+      resetBtn.className = 'btn-secondary';
+      resetBtn.id = 'calibrationResetBtn';
+      resetBtn.style.cssText = 'padding:10px 14px; font-size:13px; cursor:pointer;';
+      resetBtn.textContent = 'Reset to standard pacing';
+      resetBtn.addEventListener('click', async () => {
+        try {
+          await saveSetting('fsrsFittedWeights', null);
+          await reloadSchedulerParams();
+          showToast('Reset to standard review pacing.');
+          await renderSettings();
+        } catch (err) {
+          showToast('Failed to reset schedule pacing.');
+        }
+      });
+      btnRow.appendChild(resetBtn);
+      calCard.appendChild(btnRow);
+    } else {
+      const descText = document.createElement('div');
+      descText.className = 'calibration-status-desc';
+      descText.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+      descText.textContent = `You have ${totalReviewLogs.toLocaleString()} reviews in your library — enough history to calibrate review intervals to your learning pace.`;
+      calCard.appendChild(descText);
+
+      const tuneBtn = document.createElement('button');
+      tuneBtn.className = 'btn-primary';
+      tuneBtn.id = 'calibrationTuneBtn';
+      tuneBtn.style.cssText = 'padding:10px 16px; font-size:13px; align-self:flex-start; cursor:pointer;';
+      tuneBtn.textContent = '🌿 Tune my schedule';
+      tuneBtn.addEventListener('click', handleRunCalibration);
+      calCard.appendChild(tuneBtn);
+    }
+
+    async function handleRunCalibration() {
+      const tuneBtn = calCard.querySelector('#calibrationTuneBtn');
+      if (tuneBtn) {
+        tuneBtn.disabled = true;
+        tuneBtn.textContent = 'Calibrating…';
+      }
+      try {
+        const logs = await getAllReviewLogs();
+        const outcome = fitInitialStabilities(logs);
+        if (outcome.ok) {
+          await saveSetting('fsrsFittedWeights', {
+            w: outcome.weights,
+            fittedAt: outcome.fittedAt,
+            reviewCount: outcome.reviewCount,
+            baselineLoss: outcome.baselineLoss,
+            fittedLoss: outcome.fittedLoss,
+            improvementPct: outcome.improvementPct
+          });
+          await reloadSchedulerParams();
+          showToast('Memory schedule tuned to your rhythm.');
+          await renderSettings();
+        } else if (outcome.reason === 'no_improvement') {
+          showToast('Your current pacing already fits your rhythm closely — standard defaults kept.');
+          if (tuneBtn) {
+            tuneBtn.disabled = false;
+            tuneBtn.textContent = isTuned ? '🌿 Re-tune schedule' : '🌿 Tune my schedule';
+          }
+        } else if (outcome.reason === 'insufficient_transitions') {
+          showToast('Need more cards reviewed at least twice to calibrate pacing.');
+          if (tuneBtn) {
+            tuneBtn.disabled = false;
+            tuneBtn.textContent = isTuned ? '🌿 Re-tune schedule' : '🌿 Tune my schedule';
+          }
+        } else {
+          showToast('Could not calibrate pacing right now. Standard defaults kept.');
+          if (tuneBtn) {
+            tuneBtn.disabled = false;
+            tuneBtn.textContent = isTuned ? '🌿 Re-tune schedule' : '🌿 Tune my schedule';
+          }
+        }
+      } catch (err) {
+        console.error('Calibration error:', err);
+        showToast('Something went wrong during calibration. Standard defaults kept.');
+        if (tuneBtn) {
+          tuneBtn.disabled = false;
+          tuneBtn.textContent = isTuned ? '🌿 Re-tune schedule' : '🌿 Tune my schedule';
+        }
+      }
+    }
+  }
+
+  calibrationSection.appendChild(calCard);
+  wrap.appendChild(calibrationSection);
 
   const storageSection = makeSection('Storage');
   const storageUsageText = document.createElement('p');

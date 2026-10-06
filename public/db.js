@@ -1957,6 +1957,18 @@ export async function saveSetting(key, value) {
   return db.put('settings', { key, value });
 }
 
+/** Count lifetime reviewLog entries */
+export async function countReviewLogs() {
+  const db = await getDB();
+  return db.count('reviewLog');
+}
+
+/** Get all reviewLog entries across all cards */
+export async function getAllReviewLogs() {
+  const db = await getDB();
+  return db.getAll('reviewLog');
+}
+
 /** Alias for exportDeckData */
 export const exportDecks = exportDeckData;
 

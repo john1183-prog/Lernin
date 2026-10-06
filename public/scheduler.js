@@ -13,20 +13,83 @@ import { fsrs, generatorParameters, createEmptyCard, Rating, State } from './ven
 // the library's shipped default parameter set (trained on a large aggregate
 // dataset) — this is what every new user starts on.
 //
-// PER-USER OPTIMIZATION HOOK (not implemented for v1):
-// ts-fsrs ships a companion optimizer (`@open-spaced-repetition/binding`, or
-// the fsrs-rs trainer) that fits a personalized 19/21-weight set from a
-// user's own reviewLog history. When that's built, swap this line for:
-//   const params = generatorParameters({ w: userFittedWeights });
-// stored per-user (e.g. in a `settings` object in db.js) rather than hardcoded.
-// Nothing else in this file needs to change — gradeCard()'s signature is
-// stable regardless of where the weights come from.
-const params = generatorParameters({
+// PER-USER OPTIMIZATION HOOK:
+// Personalizes initial stabilities (w0..w3) fitted from the learner's own
+// local reviewLog history via public/fsrs-fit.js, loaded from the 'settings'
+// store (key 'fsrsFittedWeights'). Call reloadSchedulerParams() to re-sync.
+let currentParams = generatorParameters({
   enable_fuzz: true,
   enable_short_term: true
 });
 
-const scheduler = fsrs(params);
+let currentScheduler = fsrs(currentParams);
+let activeWeights = null; // null indicates standard population defaults
+
+/**
+ * Updates the active scheduler weights.
+ * Pass an array of 21 floats to apply personalized weights, or null to revert to defaults.
+ *
+ * @param {Array<number>|null} weights
+ * @returns {Array<number>|null} The applied weights or null if reverted
+ */
+export function setSchedulerWeights(weights) {
+  if (Array.isArray(weights) && weights.length === 21) {
+    activeWeights = [...weights];
+    currentParams = generatorParameters({
+      w: activeWeights,
+      enable_fuzz: true,
+      enable_short_term: true
+    });
+  } else {
+    activeWeights = null;
+    currentParams = generatorParameters({
+      enable_fuzz: true,
+      enable_short_term: true
+    });
+  }
+  currentScheduler = fsrs(currentParams);
+  return activeWeights ? [...activeWeights] : null;
+}
+
+/**
+ * Returns a copy of the active fitted weights, or null if using standard defaults.
+ */
+export function getActiveWeights() {
+  return activeWeights ? [...activeWeights] : null;
+}
+
+/**
+ * Returns the active generator parameters object.
+ */
+export function getActiveParams() {
+  return currentParams;
+}
+
+/**
+ * Re-reads 'fsrsFittedWeights' from IndexedDB settings and reconfigures the live scheduler.
+ * Dynamically imports db.js to preserve module dependency hierarchy.
+ *
+ * @returns {Promise<object|null>} The loaded fitted weights record or null
+ */
+export async function reloadSchedulerParams() {
+  try {
+    const { getSetting } = await import('./db.js');
+    const fitted = await getSetting('fsrsFittedWeights');
+    if (fitted && Array.isArray(fitted.w) && fitted.w.length === 21) {
+      setSchedulerWeights(fitted.w);
+      return fitted;
+    }
+  } catch (err) {
+    // Graceful fallback to defaults (e.g. during standalone testing or offline cold-start)
+  }
+  setSchedulerWeights(null);
+  return null;
+}
+
+// Kick off async initialization on browser startup if running in client context
+if (typeof window !== 'undefined') {
+  reloadSchedulerParams().catch(() => {});
+}
 
 // Leech threshold: total lifetime lapses (Rating.Again count) at which a
 // card is flagged rather than left to loop indefinitely. Anki uses the same
@@ -141,7 +204,7 @@ function reverseState(label) {
  */
 export function gradeCard(cardRecord, grade, now = new Date()) {
   const fsrsCard = fromStoredCard(cardRecord);
-  const result = scheduler.next(fsrsCard, now, grade);
+  const result = currentScheduler.next(fsrsCard, now, grade);
 
   const fsrsUpdate = toStoredCard(result.card);
 
@@ -180,7 +243,7 @@ export function gradeCard(cardRecord, grade, now = new Date()) {
  */
 export function previewIntervals(cardRecord, now = new Date()) {
   const fsrsCard = fromStoredCard(cardRecord);
-  const preview = scheduler.repeat(fsrsCard, now);
+  const preview = currentScheduler.repeat(fsrsCard, now);
 
   return {
     again: preview[Rating.Again].card.scheduled_days,

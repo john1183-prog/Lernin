@@ -3377,5 +3377,34 @@ input, textarea, select {
   cursor: pointer;
 }
 
+/* ---- Memory Calibration (Settings) ---- */
+.calibration-card {
+  padding: var(--space-md, 16px);
+  background: var(--surface);
+  border-radius: var(--radius-md, 12px);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
 
+[data-theme="dark"] .calibration-card {
+  border-color: rgba(255, 255, 255, 0.08);
+}
 
+.calibration-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(46, 125, 50, 0.12);
+  color: var(--moss, #2E7D32);
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .calibration-badge {
+  background: rgba(75, 116, 67, 0.25);
+  color: #81c784;
+}
