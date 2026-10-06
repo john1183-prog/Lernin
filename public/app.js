@@ -18,8 +18,11 @@ import {
   dismissCardFidelity,
   updateCardContent,
   countReviewLogs,
-  getAllReviewLogs
+  getAllReviewLogs,
+  getLatestTeachingNoteForCard,
+  updateLastReviewLogTeachingNote
 } from './db.js';
+import { shouldOfferTeachIt, formatRelativeTime } from './teach-it.js';
 import { checkCardsFidelity } from './card-fidelity.js';
 import { reloadSchedulerParams } from './scheduler.js';
 import { fitInitialStabilities } from './fsrs-fit.js';
@@ -3802,7 +3805,7 @@ const LEECH_GRADE_COLOR = {
  * so it's clear whether a card was one bad day among mostly-good reviews
  * or a genuine repeated miss, then lets you reset it back into the queue.
  */
-async function renderLeechView(deckId) {
+export async function renderLeechView(deckId) {
   let deck, leeches;
   try {
     deck = await getDeck(deckId);
@@ -3872,6 +3875,23 @@ async function renderLeechView(deckId) {
         // Non-fatal — the reset action still works without history dots.
       }
       row.appendChild(dotsWrap);
+
+      try {
+        const noteData = await getLatestTeachingNoteForCard(card.id);
+        if (noteData && noteData.teachingNote) {
+          const noteCallout = document.createElement('div');
+          noteCallout.className = 'leech-teaching-note';
+          noteCallout.style.cssText = 'margin:6px 0 12px 0; padding:10px 12px; background:var(--surface-hover); border-radius:var(--radius-sm); border-left:3px solid var(--accent); font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+          noteCallout.innerHTML = `
+            <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;">Your prior explanation</div>
+            <div style="font-style:italic; color:var(--ink); margin-bottom:4px;">“${escapeHtml(noteData.teachingNote)}”</div>
+            <div style="font-size:11px; color:var(--ink-muted);">Check if your mental model or mnemonic needs a slight refresh before resetting.</div>
+          `;
+          row.appendChild(noteCallout);
+        }
+      } catch (err) {
+        // Non-fatal
+      }
 
       const resetBtn = document.createElement('button');
       resetBtn.className = 'btn-secondary';
@@ -3966,7 +3986,7 @@ function buildRelationshipPicker(card, onLinked) {
   return addRelBlock;
 }
 
-async function renderCardDetailView(card, deck) {
+export async function renderCardDetailView(card, deck) {
   root.innerHTML = '';
   root.style.padding = '0';
 
@@ -4074,6 +4094,95 @@ async function renderCardDetailView(card, deck) {
     formulaBlock.innerHTML = `<div style="font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Formula</div><div style="font-family:var(--font-mono); font-size:15px; color:var(--ink);">$$${escapeHtml(card.formula)}$$</div>`;
     body.appendChild(formulaBlock);
   }
+
+  // Your explanation section
+  const explanationBlock = document.createElement('div');
+  explanationBlock.className = 'card-explanation-block';
+  explanationBlock.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm);';
+
+  const noteData = await getLatestTeachingNoteForCard(card.id);
+  if (noteData && noteData.teachingNote) {
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;';
+
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em;';
+    label.textContent = 'Your explanation';
+    topRow.appendChild(label);
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn-edit-explanation';
+    editBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:600; color:var(--accent); cursor:pointer; padding:0;';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', async () => {
+      const updated = prompt('Edit your explanation:', noteData.teachingNote);
+      if (updated !== null) {
+        const trimmed = updated.trim();
+        const ok = await updateLastReviewLogTeachingNote(card.id, trimmed || null);
+        if (!ok && trimmed) {
+          const { getDB } = await import('./db.js');
+          const db = await getDB();
+          await db.add('reviewLog', {
+            cardId: card.id,
+            grade: 'good',
+            reviewedAt: Date.now(),
+            elapsedDays: null,
+            teachingNote: trimmed
+          });
+        }
+        showToast(trimmed ? 'Explanation updated 🌿' : 'Explanation removed');
+        renderCardDetailView(card, deck);
+      }
+    });
+    topRow.appendChild(editBtn);
+    explanationBlock.appendChild(topRow);
+
+    const noteText = document.createElement('div');
+    noteText.className = 'card-explanation-text';
+    noteText.style.cssText = 'font-size:15px; color:var(--ink); line-height:1.6; margin-bottom:8px;';
+    noteText.textContent = noteData.teachingNote;
+    explanationBlock.appendChild(noteText);
+
+    const timeText = document.createElement('div');
+    timeText.className = 'card-explanation-time';
+    timeText.style.cssText = 'font-size:12px; color:var(--ink-muted);';
+    timeText.textContent = formatRelativeTime(noteData.reviewedAt);
+    explanationBlock.appendChild(timeText);
+  } else {
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;';
+    label.textContent = 'Your explanation';
+    explanationBlock.appendChild(label);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn-add-explanation';
+    addBtn.style.cssText = 'background:none; border:none; font-size:13px; font-weight:600; color:var(--accent); cursor:pointer; padding:4px 0; display:flex; align-items:center; gap:6px;';
+    addBtn.innerHTML = '<span>+ Add explanation</span>';
+    addBtn.addEventListener('click', async () => {
+      const entered = prompt('Explain this concept in your own words:');
+      if (entered !== null && entered.trim()) {
+        const trimmed = entered.trim();
+        const ok = await updateLastReviewLogTeachingNote(card.id, trimmed);
+        if (!ok) {
+          const { getDB } = await import('./db.js');
+          const db = await getDB();
+          await db.add('reviewLog', {
+            cardId: card.id,
+            grade: 'good',
+            reviewedAt: Date.now(),
+            elapsedDays: null,
+            teachingNote: trimmed
+          });
+        }
+        showToast('Explanation added 🌿');
+        renderCardDetailView(card, deck);
+      }
+    });
+    explanationBlock.appendChild(addBtn);
+  }
+  body.appendChild(explanationBlock);
 
   // Relationships
   const relsFrom = await getRelationshipsFrom(card.id);

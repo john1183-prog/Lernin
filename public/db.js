@@ -2250,6 +2250,41 @@ export async function updateLastReviewLogTeachingNote(cardId, teachingNote) {
   return false;
 }
 
+/**
+ * Scans the reviewLog for the most recent non-null teachingNote for a given card.
+ * Uses the by_cardId index in reverse ('prev') order.
+ *
+ * @param {string} cardId
+ * @returns {Promise<{ teachingNote: string, note: string, reviewedAt: number, toString: Function, valueOf: Function }|null>}
+ */
+export async function getLatestTeachingNoteForCard(cardId) {
+  const db = await getDB();
+  const tx = db.transaction('reviewLog', 'readonly');
+  const index = tx.store.index('by_cardId');
+
+  const range = IDBKeyRange.only(cardId);
+  let cursor = await index.openCursor(range, 'prev');
+
+  while (cursor) {
+    if (cursor.value && cursor.value.teachingNote && typeof cursor.value.teachingNote === 'string' && cursor.value.teachingNote.trim().length > 0) {
+      const note = cursor.value.teachingNote.trim();
+      const reviewedAt = cursor.value.reviewedAt || null;
+      await tx.done;
+      return {
+        teachingNote: note,
+        note,
+        reviewedAt,
+        toString() { return note; },
+        valueOf() { return note; }
+      };
+    }
+    cursor = await cursor.continue();
+  }
+
+  await tx.done;
+  return null;
+}
+
 
 /* =========================================================================
    Spatial learning stores (v8) — landmarks, study paths, annotations

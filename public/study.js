@@ -4,10 +4,12 @@
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
   getReviewLogForCard, getDeck, removeLastReviewLogForCard, updateLastReviewLogTeachingNote,
+  getLatestTeachingNoteForCard,
   getRelationshipsFrom, getSetting,
   DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP
 } from './db.js';
 import { gradeCard, previewIntervals, Grade } from './scheduler.js';
+import { shouldOfferTeachIt, formatRelativeTime } from './teach-it.js';
 import {
   initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete,
   playLeechBanish
@@ -78,6 +80,8 @@ let session = {
   startCardId: null,
   results: { again: 0, hard: 0, good: 0, easy: 0 },
   teachItQueue: [],
+  autoOfferedThisSession: 0,
+  cardsSinceLastAuto: Infinity,
   isActive: false,
   currentCard: null,
   isRevealed: false,
@@ -114,6 +118,8 @@ export async function startStudySession(container, opts = {}) {
     startCardId: opts.startCardId || null,
     results: { again: 0, hard: 0, good: 0, easy: 0 },
     teachItQueue: [],
+    autoOfferedThisSession: 0,
+    cardsSinceLastAuto: Infinity,
     isActive: true,
     currentCard: null,
     isRevealed: false,
@@ -446,6 +452,11 @@ async function showCard() {
   back.className = 'study-card-back';
   back.innerHTML = `<div class="study-card-content">${renderBack(card)}</div>`;
 
+  const noteArea = document.createElement('div');
+  noteArea.className = 'study-card-note-area';
+  back.querySelector('.study-card-content').appendChild(noteArea);
+  renderStudyNoteArea(noteArea, card);
+
   inner.appendChild(front);
   inner.appendChild(back);
   wrap.appendChild(inner);
@@ -513,6 +524,42 @@ function renderFormulaExtra(label, value) {
       <div class="formula-extra-value">${escapeHtml(value)}</div>
     </div>
   `;
+}
+
+async function renderStudyNoteArea(noteArea, card) {
+  noteArea.innerHTML = '';
+  try {
+    const noteData = await getLatestTeachingNoteForCard(card.id);
+    if (session.currentCard?.id !== card.id) return;
+
+    if (noteData && noteData.teachingNote) {
+      const noteBox = document.createElement('div');
+      noteBox.className = 'study-teaching-note';
+      noteBox.innerHTML = `
+        <div class="study-teaching-note-header">
+          <span class="study-teaching-note-label">Your explanation</span>
+          <span class="study-teaching-note-time">${formatRelativeTime(noteData.reviewedAt)}</span>
+        </div>
+        <div class="study-teaching-note-text">“${escapeHtml(noteData.teachingNote)}”</div>
+      `;
+      noteArea.appendChild(noteBox);
+    }
+
+    const onDemandBtn = document.createElement('button');
+    onDemandBtn.type = 'button';
+    onDemandBtn.className = 'study-explain-back-btn';
+    onDemandBtn.innerHTML = `<span>🌿</span> <span>${noteData?.teachingNote ? 'Update explanation' : 'Explain it back'}</span>`;
+    onDemandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showTeachIt(card, null, null, false, {
+        isPostGrade: false,
+        onSaved: () => renderStudyNoteArea(noteArea, card)
+      });
+    });
+    noteArea.appendChild(onDemandBtn);
+  } catch (err) {
+    // Non-fatal
+  }
 }
 
 /* ---------- Hint ---------- */
@@ -643,7 +690,9 @@ async function handleGrade(grade) {
   session.undoStack.push({
     card: snapshotCard,
     grade,
-    index: session.index
+    index: session.index,
+    autoOfferedThisSession: session.autoOfferedThisSession,
+    cardsSinceLastAuto: session.cardsSinceLastAuto
   });
 
   // gradeCard returns { fsrsUpdate, reviewLogEntry, leech } — never spread the
@@ -666,48 +715,100 @@ async function handleGrade(grade) {
   // Persist the grade to IndexedDB before opening Teach-It so Escape or session exit cannot drop it
   await persistGrade(card, fsrsUpdate, reviewLogEntry);
 
-  // Teach It for Good/Easy
-  if (grade === 'good' || grade === 'easy') {
-    showTeachIt(card, fsrsUpdate, reviewLogEntry, result.leech);
+  // Evaluate automatic Teach-It offer (locked milestone & pacing policy)
+  const autoOffer = shouldOfferTeachIt({
+    grade,
+    prevState: snapshotCard.state,
+    nextState: fsrsUpdate.state,
+    lapses: snapshotCard.lapses ?? 0,
+    autoOfferedThisSession: session.autoOfferedThisSession,
+    cardsSinceLastAuto: session.cardsSinceLastAuto
+  });
+
+  if (autoOffer) {
+    session.autoOfferedThisSession++;
+    session.cardsSinceLastAuto = 0;
+    showTeachIt(card, fsrsUpdate, reviewLogEntry, result.leech, { isPostGrade: true });
     return;
   }
 
+  session.cardsSinceLastAuto++;
   animateCardExit(result.leech);
 }
 
-function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false) {
-  const container = document.querySelector('.study-session');
+function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false, opts = {}) {
+  const isPostGrade = opts.isPostGrade ?? true;
+  const onSaved = opts.onSaved;
+
+  const container = document.querySelector('.study-session') || document.body;
   const sheet = document.createElement('div');
   sheet.className = 'teach-it-sheet';
   sheet.setAttribute('role', 'dialog');
   sheet.setAttribute('aria-modal', 'true');
   sheet.setAttribute('aria-label', 'Explain in your own words');
+
+  const subCopy = isPostGrade
+    ? 'Milestone reached! Quick: explain this concept in your own words to lock it in.'
+    : 'Quick: explain this concept in your own words. Putting it in your own voice strengthens memory.';
+
   sheet.innerHTML = `
     <div class="teach-it-title">Explain it back</div>
-    <div class="teach-it-sub">Quick: explain this concept in your own words. This strengthens memory.</div>
+    <div class="teach-it-sub">${escapeHtml(subCopy)}</div>
     <textarea class="teach-it-textarea" placeholder="Type your explanation here..." aria-label="Your explanation"></textarea>
     <div class="teach-it-actions">
-      <button class="teach-it-skip">Skip</button>
+      <button class="teach-it-skip">${isPostGrade ? 'Skip' : 'Cancel'}</button>
       <button class="teach-it-continue">Continue</button>
     </div>
   `;
   container.appendChild(sheet);
 
   const textarea = sheet.querySelector('textarea');
+
+  // Prefill with existing note if available
+  getLatestTeachingNoteForCard(card.id).then(existing => {
+    if (existing?.teachingNote && !textarea.value) {
+      textarea.value = existing.teachingNote;
+      textarea.select();
+    }
+  }).catch(() => {});
+
   textarea.focus();
 
   sheet.querySelector('.teach-it-skip').addEventListener('click', () => {
     sheet.remove();
-    animateCardExit(isLeech);
+    if (isPostGrade) {
+      animateCardExit(isLeech);
+    }
   });
 
   sheet.querySelector('.teach-it-continue').addEventListener('click', async () => {
     const note = textarea.value.trim() || null;
     if (note) {
-      await updateLastReviewLogTeachingNote(card.id, note);
+      const updated = await updateLastReviewLogTeachingNote(card.id, note);
+      if (!updated && !isPostGrade) {
+        // If card was never reviewed before and opened on-demand, create initial reviewLog entry
+        try {
+          const { getDB } = await import('./db.js');
+          const db = await getDB();
+          await db.add('reviewLog', {
+            cardId: card.id,
+            grade: 'good',
+            reviewedAt: Date.now(),
+            elapsedDays: null,
+            teachingNote: note
+          });
+        } catch (e) {
+          console.warn('Failed to add initial reviewLog with teaching note:', e);
+        }
+      }
     }
     sheet.remove();
-    animateCardExit(isLeech);
+    if (isPostGrade) {
+      animateCardExit(isLeech);
+    } else {
+      if (typeof onSaved === 'function') onSaved(note);
+      showToast(note ? 'Explanation saved 🌿' : 'Explanation cleared');
+    }
   });
 }
 
@@ -723,6 +824,13 @@ export async function undoLastGrade() {
 
   const lastAction = session.undoStack.pop();
   const card = lastAction.card;
+
+  if (lastAction.autoOfferedThisSession !== undefined) {
+    session.autoOfferedThisSession = lastAction.autoOfferedThisSession;
+  }
+  if (lastAction.cardsSinceLastAuto !== undefined) {
+    session.cardsSinceLastAuto = lastAction.cardsSinceLastAuto;
+  }
 
   try {
     // Restore card to previous state

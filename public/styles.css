@@ -1381,6 +1381,98 @@ body {
   transform: scale(0.97);
 }
 
+/* ---------- Study Mode Teaching Note & On-Demand Action ---------- */
+.study-card-note-area {
+  margin-top: var(--space-md);
+}
+
+.study-teaching-note {
+  margin-top: var(--space-sm);
+  padding: 10px 14px;
+  background: var(--surface-hover);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--accent);
+  text-align: left;
+}
+
+.study-teaching-note-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.study-teaching-note-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.study-teaching-note-time {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.study-teaching-note-text {
+  font-size: 13px;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.study-explain-back-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 0;
+  margin-top: var(--space-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+
+.study-explain-back-btn:hover {
+  opacity: 0.8;
+}
+
+/* ---------- Leech View Teaching Note ---------- */
+.leech-teaching-note {
+  margin: 6px 0 12px 0;
+  padding: 10px 12px;
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+}
+
+/* ---------- Card Detail Explanation Block ---------- */
+.card-explanation-block {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.card-explanation-text {
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.card-explanation-time {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
 /* ---------- Session Summary ---------- */
 .session-summary {
   padding: var(--space-xl);

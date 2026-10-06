@@ -1068,6 +1068,31 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
     - `test_very_late_emphasis_exit_shortened_within_duration`: verifies `at=4.85` on 5.0s scene sets hold to 0.0s, exit completes within 5.0s with opacity 0.
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
+**Tier 4 #3 — Teach-It Probabilistic/Milestone Pacing & Surface Teaching Note (`public/teach-it.js`, `public/study.js`, `public/db.js`, `public/app.js`, `public/styles.css`, `public/sw.js`, `public/test_teach_it.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped cognitive milestone pacing and surface retrieval for the Teach-It explanation flow, replacing repetitive every-good/easy modal sheets with meaningful comprehension beats and unlocking previously write-only personal explanations:
+- **Pure Pacing Engine (`public/teach-it.js`)**:
+  * Pure synchronous, zero-dependency helper `shouldOfferTeachIt({ grade, prevState, nextState, lapses, autoOfferedThisSession, cardsSinceLastAuto })`.
+  * Restricts automatic prompts strictly to `good` or `easy` on real cognitive milestones:
+    - *Graduation*: Card transitions from `learning` or `relearning` into `review` state.
+    - *Recovery*: Card had lapses ($lapses \ge 2$) and is answered `good` or `easy`.
+  * Session pacing invariants: at most 2 automatic Teach-It prompts per study session; at least 4 graded cards between auto prompts.
+  * Formats relative timestamps with `formatRelativeTime(timestamp)`.
+- **Study Mode Engine Integration (`public/study.js`)**:
+  * Replaced deterministic "every good/easy" modal interception with `shouldOfferTeachIt(...)`.
+  * Preserved Tier 1 #9 persistence guarantee: `await persistGrade(card, fsrsUpdate, reviewLogEntry)` commits to IndexedDB prior to sheet opening, guaranteeing Escape or session teardown never drops reviews.
+  * **On-Demand Recall Beat**: Added `Explain it back` / `Update explanation` affordance on the revealed card back; opens the Teach-It sheet without inventing artificial grade writes.
+  * **Compact Card Back Note**: When a prior note exists, surfaces a compact block under the answer during recall without overshadowing the primary card face.
+  * **Undo Support**: Cleanly tracks and restores `autoOfferedThisSession` and `cardsSinceLastAuto` in `undoStack`.
+- **IndexedDB Query Helper (`public/db.js`)**:
+  * Added `getLatestTeachingNoteForCard(cardId)`: traverses `reviewLog` via the `by_cardId` index in reverse (`'prev'`) order to retrieve the most recent non-empty `teachingNote` without schema mutations or denormalization.
+- **Card Detail & Leech View Surfaces (`public/app.js`, `public/styles.css`)**:
+  * **Card Detail View**: Added dedicated "Your explanation" block (`.card-explanation-block`) displaying personal note text, relative timestamp (`formatRelativeTime`), and "Edit" affordance; displays `+ Add explanation` if no note exists yet.
+  * **Leech View**: For suspended cards with a stored explanation, displays a warm diagnostic callout (`.leech-teaching-note`) above the Reset button to help learners inspect and adjust their mental models.
+- **Service Worker Shell Registration (`public/sw.js`)**:
+  * Added `'/teach-it.js'` to `SHELL_ASSETS` and bumped `CACHE_VERSION` to `'lernin-shell-v33'`.
+- **Permanent Unit Tests & Headless Chrome CDP Verification**:
+  * Permanent Node unit test suite `public/test_teach_it.mjs` (8/8 test blocks passing).
+  * Automated headless Chrome CDP verification confirming milestone graduation trigger, note entry & persistence to `reviewLog`, compact note display on card back, "Your explanation" section in Card Detail, warm Leech view callout, light & dark screenshots (`teach_it_detail_light.png`, `teach_it_detail_dark.png`, `teach_it_leech_light.png`, `teach_it_leech_dark.png`), and zero FSRS parameter corruption.
 
 **Tier 4 #2 — Per-User FSRS Weight Fitting (w0–w3 Initial Stabilities, Local ReviewLog) (`public/fsrs-fit.js`, `public/scheduler.js`, `public/db.js`, `public/app.js`, `public/styles.css`, `public/sw.js`, `public/test_scheduler_fitting.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped client-side FSRS memory model calibration that personalizes initial stabilities ($w_0..w_3$) from the user's local `reviewLog` without cloud dependencies, without batch rescheduling spikes, and without scientific dashboard clutter:
