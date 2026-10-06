@@ -2946,6 +2946,7 @@ input, textarea, select {
 /* Saved Explainers & Thumbnails */
 .ms-script-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
@@ -3149,5 +3150,232 @@ input, textarea, select {
   background: rgba(75, 116, 67, 0.08);
   transform: translateX(2px);
 }
+
+/* Motion Studio -> SRS Bridge */
+.ms-study-bridge-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: rgba(75, 116, 67, 0.08);
+  border: 1px solid var(--moss, #4B7443);
+  color: var(--moss, #4B7443);
+  border-radius: var(--radius-md);
+  transition: all 0.15s;
+}
+
+.ms-study-bridge-btn:hover {
+  background: rgba(75, 116, 67, 0.16);
+}
+
+.ms-study-bridge-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  border-color: var(--border);
+  color: var(--ink-muted);
+  background: transparent;
+}
+
+.ms-create-card-btn {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.ms-bridge-panel {
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
+  animation: msCardFadeIn 0.25s ease-out;
+}
+
+.ms-bridge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.ms-bridge-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ms-bridge-pill {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.ms-bridge-close-btn {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+}
+
+.ms-bridge-close-btn:hover {
+  color: var(--ink);
+}
+
+.ms-bridge-sub {
+  font-size: 12px;
+  color: var(--ink-secondary);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.ms-bridge-deck-row {
+  margin-bottom: 12px;
+}
+
+.ms-bridge-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.ms-bridge-deck-select {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+
+.ms-bridge-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ms-bridge-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.ms-bridge-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.ms-bridge-card-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ms-bridge-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.ms-bridge-remove-card {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.ms-bridge-remove-card:hover {
+  color: var(--danger);
+}
+
+.ms-bridge-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.ms-bridge-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ms-bridge-add-second-btn {
+  background: none;
+  border: none;
+  color: var(--moss, #4B7443);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  margin-bottom: 10px;
+  display: inline-block;
+}
+
+.ms-bridge-add-second-btn:hover {
+  text-decoration: underline;
+}
+
+.ms-bridge-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ms-bridge-save-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ms-bridge-cancel-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 
 

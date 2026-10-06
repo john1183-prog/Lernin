@@ -114,7 +114,8 @@ function rootLayers(layers) {
   return layers.filter(l => !l.parent || !names.has(l.parent) || l.parent === l.name);
 }
 function childrenOf(layers, parent) {
-  return layers.filter(l => l.parent === parent.name && l !== parent);
+  if (!parent || !parent.name) return [];
+  return layers.filter(l => Boolean(l.parent) && l.parent === parent.name && l !== parent);
 }
 
 const MAX_NEST_DEPTH = 25;

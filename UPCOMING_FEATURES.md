@@ -1069,6 +1069,31 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Tier 4 #4 — Motion Studio → SRS Bridge (1–2 Recall Cards Per Script) (`public/motion-card-extract.js`, `public/motion-studio.js`, `public/motion-player.js`, `public/styles.css`, `public/sw.js`, `public/test_motion_card_extract.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped optional, user-confirmed bridge feeding Motion Studio explainers into the SRS review queue without duplicating mind-map cards or auto-writing unreviewed flashcards:
+- **Pure Recall Card Extractor (`public/motion-card-extract.js`)**:
+  * Pure synchronous, zero-dependency, offline-first helper `extractMotionRecallCards(script, topic, opts)`.
+  * Extracts 1–2 draft recall cards strictly grounded in the animation script:
+    - Cloze cards when an emphasis layer matches a key term in an explainer caption.
+    - Formula cards from KaTeX formula layers (`format: 'formula'`) with math syntax intact.
+    - Conceptual process cards from sequential captions and topic prompts.
+  * Strictly non-mutating (`Object.freeze`-safe), hard-capped at $\le 2$ cards (default 1 card; reveals optional 2nd card affordance only when the script contains a formula layer or distinct secondary emphasis/caption).
+  * Automatically tags `sourceInfo: { type: 'motion', scriptId, topic }` on save; strictly avoids stamping `fidelityFlag` on motion-derived cards.
+- **Motion Studio Post-Watch & Saved Library Integration (`public/motion-studio.js`, `public/styles.css`)**:
+  * **Post-Watch Bridge Affordance (`showPostWatchCard`)**: Renders warm primary CTA `🌿 Turn into study card` (`#msStudyBridgeBtn`) on explainer completion.
+  * **Source-Card Suppression**: When `sessionStorage` contains `MOTION_SOURCE_CARD_KEY` (`'lernin:motionStudioSourceCardId'` from an "Explain with motion" mind-map node flow), the bridge button is cleanly suppressed to prioritize `← Back to card on Mind Map` and prevent duplicate cards.
+  * **Saved Explainer Drawer (`refreshScriptList`)**: Adds `🌿 Create card` button (`.ms-create-card-btn`) to every saved script row with an inline collapsible drawer (`.ms-script-card-drawer`).
+  * **Interactive Draft Panel (`renderBridgeDraftPanel`)**: Inline editing of Front/Back fields, type badges (`CLOZE`, `FORMULA`, `BASIC`), `+ Add a second card` button, and card removal.
+  * **Global Route Deck Target (`#/motion`)**: When accessed without a deck context (`deckId` null), dynamically presents an active deck selector (`getActiveDecks()`), keeping the Add button disabled until a deck is chosen.
+  * **FSRS Lifecycle Integrity**: Explicit user tap writes to IndexedDB via `saveNewCards(deckId, cards)` with clean default FSRS scheduling parameters (`state: 'new'`, `difficulty: 0`, `stability: 0`, `reps: 0`, `lapses: 0`, `last_review: null`, `due_date: Date.now()`, `suspended: false`).
+- **Player Thumbnail Tree Recursion Guard (`public/motion-player.js`)**:
+  * Fixed `childrenOf(layers, parent)` to require `parent && parent.name`, preventing an exponential $3^{25}$ call stack recursion freeze when rendering thumbnails for scripts whose layers lack explicit `name` attributes.
+- **Service Worker Shell Registration (`public/sw.js`)**:
+  * Registered `'/motion-card-extract.js'` in `SHELL_ASSETS` and bumped `CACHE_VERSION` to `'lernin-shell-v31'`.
+- **Permanent Test Suite & Headless Chrome CDP Verification**:
+  * Added `public/test_motion_card_extract.mjs` with 6 unit tests covering captions, formulas, cloze extraction, fallback resilience, Object.freeze non-mutation, and the 2-card ceiling.
+  * Verified end-to-end via headless Chrome CDP with 7 automated assertions and captured screenshots in Light and Dark themes (`motion_srs_bridge_draft_light.png`, `motion_srs_bridge_draft_dark.png`).
+
 **Tier 4 #1 — Cheap Verification Pass on Generated Cards (Flag Only, Never Auto-Fix) (`public/card-fidelity.js`, `public/db.js`, `public/app.js`, `public/manual-json-import.js`, `public/styles.css`, `public/sw.js`, `public/test_card_fidelity.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped client-side verification pass on newly generated and imported cards that flags unverified content against source text without auto-fixing or rewriting card text:
 - **Pure Deterministic Verifier (`public/card-fidelity.js`)**:
