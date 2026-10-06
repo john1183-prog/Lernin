@@ -673,6 +673,15 @@ export async function renderDeckList() {
     `;
     root.appendChild(hero);
     hero.querySelector('#heroStudy').addEventListener('click', () => navigate('/study/all'));
+  } else if (decks.length > 0) {
+    const hero = document.createElement('div');
+    hero.className = 'hero-cta hero-cta-caught-up';
+    const streakPrefix = streak > 0 ? `🔥 ${streak}-day streak alive` : 'Great pace';
+    hero.innerHTML = `
+      <div class="hero-cta-title">All caught up for today! 🌿</div>
+      <div class="hero-cta-sub" style="margin-bottom:0;">${streakPrefix} · No cards due right now. Enjoy your rest or explore below.</div>
+    `;
+    root.appendChild(hero);
   }
 
   if (dueToday > 0 || streak > 0 || (stats.weekTotal || 0) > 0) {
@@ -2138,7 +2147,7 @@ function renderHelp() {
       body: `
         <p><strong>Leeches</strong> — cards with too many lapses get suspended so they stop clogging every session. Open a deck's sheet and tap <strong>Leeches</strong> to review them deliberately, with recent grade history per card; reset when you have a better formulation or mnemonic.</p>
         <p><strong>Streaks</strong> — consecutive days you actually reviewed. Freezes (earned on longer streaks) can protect a missed day. Let it motivate you, not define you — the streak is a nice side effect, recall under pressure is the actual goal.</p>
-        <p><strong>Stats</strong> — retention, activity, per-deck breakdown. Use it to decide which palace wing to renovate this week.</p>
+        <p><strong>Stats</strong> — recall rate, activity, per-deck breakdown. Use it to decide which palace wing to renovate this week.</p>
       `
     },
     {
@@ -2546,8 +2555,16 @@ async function renderStats() {
   const metricsGrid = document.createElement('div');
   metricsGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; padding:var(--space-md);';
 
+  const rateValue = stats.recallRate30d != null
+    ? `${stats.recallRate30d}%`
+    : (stats.retention30d != null ? `${stats.retention30d}%` : '—');
+
   const metrics = [
-    { label: '30-day retention', value: stats.retention30d != null ? `${stats.retention30d}%` : '—' },
+    {
+      label: '30-day recall rate',
+      value: rateValue,
+      caption: 'Reviews graded Good or Easy · Normal learning is ~80–90%'
+    },
     { label: 'Longest streak', value: `${stats.longestStreak365d}d` },
     { label: 'Total reviews', value: (stats.totalReviewsLifetime || 0).toLocaleString() },
     { label: 'Cards studied', value: (stats.totalCardsStudied || 0).toLocaleString() },
@@ -2557,10 +2574,11 @@ async function renderStats() {
 
   for (const m of metrics) {
     const card = document.createElement('div');
-    card.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:var(--space-md); box-shadow:var(--shadow-sm); text-align:center;';
+    card.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:var(--space-md); box-shadow:var(--shadow-sm); text-align:center; display:flex; flex-direction:column; justify-content:center; align-items:center;';
     card.innerHTML = `
       <div style="font-size:24px; font-weight:700; color:var(--ink);">${m.value}</div>
       <div style="font-size:12px; color:var(--ink-muted); margin-top:2px;">${m.label}</div>
+      ${m.caption ? `<div class="metric-caption" style="font-size:10.5px; color:var(--ink-muted); margin-top:6px; line-height:1.35; font-style:italic;">${m.caption}</div>` : ''}
     `;
     metricsGrid.appendChild(card);
   }

@@ -940,6 +940,19 @@ export async function getReviewStats(now) {
 }
 
 /**
+ * Calculates 30-day recall rate percentage from a list of reviewLog entries.
+ * Returns null if the list is empty.
+ *
+ * @param {Array<{grade: string}>} entries
+ * @returns {number|null}
+ */
+export function computeRecallRate(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return null;
+  const goodOrEasy = entries.filter((e) => e && (e.grade === 'good' || e.grade === 'easy')).length;
+  return Math.round((goodOrEasy / entries.length) * 100);
+}
+
+/**
  * Aggregated stats for a dedicated statistics dashboard view (app.js) —
  * broader and slower than getReviewStats(), which is called on basically
  * every home-screen render and stays deliberately cheap. This is only
@@ -947,7 +960,8 @@ export async function getReviewStats(now) {
  *
  * @param {number} [now] - override "now" (epoch ms), mainly for testing
  * @returns {Promise<{
- *   retention30d: number|null,      -- % of reviews graded good/easy in the last 30 days, null if none
+ *   recallRate30d: number|null,     -- % of reviews graded good/easy in the last 30 days, null if none
+ *   retention30d: number|null,      -- backwards-compatible alias for recallRate30d
  *   dailyCounts30d: number[],       -- 30 entries, oldest to newest, ending today
  *   longestStreak365d: number,      -- longest run of consecutive studied days found in the past year
  *   totalReviewsLifetime: number,   -- full reviewLog count, not bounded to any window
@@ -973,12 +987,12 @@ export async function getDashboardStats(now) {
   const leechCount = allCards.filter((c) => (c.suspended || c.state === 'suspended') && !(c.fidelityFlag && c.fidelityFlag.status === 'unverified')).length;
   const totalReviewsLifetime = await db.count('reviewLog');
 
-  // 30-day window for retention + the daily activity chart.
+  // 30-day window for recall rate + the daily activity chart.
   const lookback30Start = startOfLocalDay(nowMs - 30 * 24 * 60 * 60 * 1000);
   const entries30d = await db.getAllFromIndex('reviewLog', 'by_reviewedAt', IDBKeyRange.lowerBound(lookback30Start));
 
-  const goodOrEasy = entries30d.filter((e) => e.grade === 'good' || e.grade === 'easy').length;
-  const retention30d = entries30d.length > 0 ? Math.round((goodOrEasy / entries30d.length) * 100) : null;
+  const recallRate30d = computeRecallRate(entries30d);
+  const retention30d = recallRate30d;
 
   const dailyCounts30d = [];
   for (let i = 29; i >= 0; i--) {
@@ -1011,6 +1025,7 @@ export async function getDashboardStats(now) {
   const freezeState = await getStreakFreezeState(nowMs);
 
   return {
+    recallRate30d,
     retention30d,
     dailyCounts30d,
     longestStreak365d,

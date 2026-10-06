@@ -356,6 +356,14 @@ body {
   margin-bottom: var(--space-lg);
 }
 
+.hero-cta.hero-cta-caught-up {
+  padding: var(--space-lg) var(--space-xl);
+}
+
+.hero-cta-caught-up .hero-cta-sub {
+  margin-bottom: 0;
+}
+
 .hero-cta-btn {
   width: 100%;
   padding: 14px;

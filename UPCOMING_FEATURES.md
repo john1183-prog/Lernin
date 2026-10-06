@@ -1069,6 +1069,28 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Tier 4 #6 — Honest 30-Day Recall Rate Label & Zero-Due Home Celebration (`public/db.js`, `public/app.js`, `public/styles.css`, `public/test_stats_metrics.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped honest metric labeling for 30-day review performance, replacing misleading "retention" nomenclature with a transparent recall rate definition and warm learning benchmark, while preserving atomic habit streak mechanics and celebrating zero-due backlog completion:
+- **Honest Metric Definition & DB Shape (`public/db.js`)**:
+  * Extracted pure helper `computeRecallRate(entries)`: evaluates $\text{round}\left( \frac{\text{good} + \text{easy}}{\text{entries.length}} \times 100 \right)$; cleanly returns `null` for empty or missing review windows.
+  * In `getDashboardStats()`: computes and exports `recallRate30d` as primary property; exposes `retention30d` as an identical backwards-compatible alias to safeguard existing integrations.
+- **Statistics Dashboard Transparency (`public/app.js`, `public/styles.css`)**:
+  * Updated Statistics metric grid label from `"30-day retention"` to **`"30-day recall rate"`**.
+  * Added warm, non-punitive supporting caption under the metric card:
+    `"Reviews graded Good or Easy · Normal learning is ~80–90%"`.
+  * Protects learner confidence: eliminates confusion between empirical review success and FSRS target retention parameters ($R = 0.90$), reassuring students that 80–90% is healthy active recall.
+- **Help Modal Alignment (`public/app.js`)**:
+  * Updated Help modal overview copy: changed `"retention"` to `"recall rate"`.
+- **Habit-Preserving Streak & Zero-Due Home Celebration (`public/app.js`, `public/styles.css`)**:
+  * Preserved daily practice streak logic ($\ge 1$ review or streak freeze); rejected punitive queue-clearing streak requirements that cause backlog dread and abandonment spirals.
+  * Added warm zero-due celebratory banner (`.hero-cta.hero-cta-caught-up`) on Home when $dueToday === 0$ and decks exist:
+    `"All caught up for today! 🌿"` with supporting copy `"🔥 X-day streak alive · No cards due right now. Enjoy your rest or explore below."`
+  * Study CTA when cards are due ($dueToday > 0$) remains completely untouched.
+- **Verification & Test Coverage (`public/test_stats_metrics.mjs`)**:
+  * Permanent unit test suite (`public/test_stats_metrics.mjs`) verifying: `computeRecallRate` returns `null` on empty/invalid inputs; correctly computes 63% and 90% on mixed grades; boundary checks (0% and 100%); strict equivalence `recallRate30d === retention30d`; streak freeze bounded pruning (`pruneFrozenDayKeys`); and streak habit invariants.
+  * Automated headless Chrome CDP verification confirming Statistics dashboard recall rate display, metric value (80%), and supporting caption across Light and Dark themes (`stats_recall_rate_light.png`, `stats_recall_rate_dark.png`), plus Home zero-due caught-up hero banner in Light and Dark themes (`home_zero_due_caught_up_light.png`, `home_zero_due_caught_up_dark.png`).
+  * Full regression integrity confirmed: all 7 existing Node test suites and Python 102 backend tests passing with exit code 0.
+
 **Tier 4 #5 — Two-Pass Card Approval for AI Decks (Draft Staging via Suspended + Fidelity) (`public/card-approval.js`, `public/app.js`, `public/db.js`, `public/api.js`, `public/manual-json-import.js`, `public/styles.css`, `public/sw.js`, `public/test_card_approval.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped two-pass approval and draft staging for AI-generated and imported cards, preventing hallucinated or unverified cards from flooding active review queues while avoiding card loss and review exhaustion:
 - **Pure Approval & Partitioning Helper (`public/card-approval.js`)**:
