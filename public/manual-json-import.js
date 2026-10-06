@@ -3,7 +3,7 @@
    User gives a prompt to an external AI, pastes the JSON response here. */
 
 import { saveNewCards, saveDocument, getCardsByDeck } from './db.js';
-import { renderMath, showToast } from './app.js';
+import { renderMath, showToast, renderEditStep } from './app.js';
 import { parseAndRepairJSON } from './json-repair.js';
 import { checkCardFidelity } from './card-fidelity.js';
 
@@ -265,11 +265,16 @@ export function renderManualJSONImport(container, deckId, onDone, extractedText,
       return;
     }
 
-    await saveNewCards(deckId, newCards);
     if (summary) {
-      await saveDocument({ id: crypto.randomUUID(), deckId, filename: 'Manual import', summary });
+      await saveDocument({ id: crypto.randomUUID(), deckId, filename: filename || 'Manual import', summary });
     }
 
+    if (extractedText && typeof extractedText === 'string' && extractedText.trim()) {
+      renderEditStep(newCards, deckId, extractedText);
+      return;
+    }
+
+    await saveNewCards(deckId, newCards);
     showToast(`Imported ${newCards.length} card${newCards.length !== 1 ? 's' : ''}${skipped.length ? `, skipped ${skipped.length}` : ''}`);
     if (onDone) onDone();
   });

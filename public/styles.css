@@ -704,6 +704,115 @@ body {
   line-height: 1.4;
 }
 
+/* --- Tier 4 #5: Two-pass card approval and draft staging --- */
+.edit-step-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-md);
+}
+
+.edit-step-section-header {
+  padding: 0 var(--space-xs);
+  margin-bottom: 2px;
+}
+
+.edit-step-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.edit-step-section-desc {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.edit-card-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.edit-card-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--moss);
+  cursor: pointer;
+}
+
+.browser-filter-bar {
+  display: flex;
+  gap: 8px;
+  padding: var(--space-sm) var(--space-md) 0;
+  overflow-x: auto;
+}
+
+.browser-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.browser-filter-chip:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.browser-filter-chip.is-active {
+  background: var(--moss);
+  border-color: var(--moss);
+  color: #fff;
+}
+
+[data-theme="dark"] .browser-filter-chip.is-active {
+  background: #34d399;
+  border-color: #34d399;
+  color: #064e3b;
+}
+
+.browser-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.browser-filter-chip.is-active .browser-filter-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
+}
+
+[data-theme="dark"] .browser-filter-chip.is-active .browser-filter-count {
+  background: rgba(0, 0, 0, 0.2);
+  color: inherit;
+}
+
 .deck-menu-btn {
   width: 32px;
   height: 32px;

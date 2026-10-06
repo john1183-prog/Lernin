@@ -17,6 +17,7 @@ import {
   getCardsByDeck,
   getApiConfig
 } from './db.js';
+import { checkCardsFidelity } from './card-fidelity.js';
 
 const GENERATE_ENDPOINT = '/api/generate-cards';
 
@@ -164,16 +165,32 @@ export async function retryQueuedGenerations() {
         ...c,
         id: c.id || cryptoRandomId()
       }));
+
+      if (item.rawText && typeof item.rawText === 'string') {
+        checkCardsFidelity(withIds, item.rawText);
+        for (const card of withIds) {
+          if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+            card.suspended = true;
+          }
+        }
+      }
+
       await saveNewCards(item.deckId, withIds);
 
       await clearQueuedGeneration(item.id);
+      const draftsCount = withIds.filter((c) => c.suspended).length;
+      const activeCount = withIds.length - draftsCount;
       emit('recall:generation-retry-done', {
         deckId: item.deckId,
-        cardCount: withIds.length
+        cardCount: withIds.length,
+        activeCount,
+        draftsCount
       });
       emit('recall:generation-success', {
         deckId: item.deckId,
-        cards: withIds
+        cards: withIds,
+        activeCount,
+        draftsCount
       });
     } catch {
       // Still offline or request failed — leave queued, don't throw.

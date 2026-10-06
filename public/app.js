@@ -22,8 +22,9 @@ import {
   getLatestTeachingNoteForCard,
   updateLastReviewLogTeachingNote
 } from './db.js';
-import { shouldOfferTeachIt, formatRelativeTime } from './teach-it.js';
+import { formatRelativeTime } from './teach-it.js';
 import { checkCardsFidelity } from './card-fidelity.js';
+import { isDraftCard, isLeechCard } from './card-approval.js';
 import { reloadSchedulerParams } from './scheduler.js';
 import { fitInitialStabilities } from './fsrs-fit.js';
 import { startStudySession, teardownStudySession } from './study.js';
@@ -3108,10 +3109,19 @@ export function renderEditStep(cards, deckId, sourceText = null) {
     container.style.padding = '0';
   }
 
-  const approved = [...cards];
+  const rawCards = cards.map(c => ({ ...c }));
   if (sourceText && typeof sourceText === 'string' && sourceText.trim()) {
-    checkCardsFidelity(approved, sourceText);
+    checkCardsFidelity(rawCards, sourceText);
   }
+
+  const workingItems = rawCards.map(c => {
+    const isUnverified = Boolean(c.fidelityFlag && c.fidelityFlag.status === 'unverified');
+    return {
+      card: c,
+      selected: !isUnverified
+    };
+  });
+
   let discardedCount = 0;
 
   const wrap = document.createElement('div');
@@ -3128,222 +3138,333 @@ export function renderEditStep(cards, deckId, sourceText = null) {
   header.querySelector('#editBack').addEventListener('click', () => navigate('/'));
 
   const sub = document.createElement('p');
-  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted);';
-  sub.textContent = "Tap the ✕ to discard cards you don't want. Then import the rest.";
+  sub.style.cssText = 'padding:0 var(--space-md); margin:var(--space-sm) 0 var(--space-md); font-size:13px; color:var(--ink-muted); line-height:1.4;';
+  sub.textContent = "Review your cards before adding them to study. Unverified cards are held in drafts until confirmed.";
   wrap.appendChild(sub);
 
   const list = document.createElement('div');
   list.style.cssText = 'padding:0 var(--space-md); display:flex; flex-direction:column; gap:8px;';
 
-  function renderCards() {
-    list.innerHTML = '';
-    for (let i = 0; i < approved.length; i++) {
-      const card = approved[i];
-      const row = document.createElement('div');
-      row.className = 'edit-card-row';
-      row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); position:relative;';
+  function createCardRow(item, isDraft) {
+    const card = item.card;
+    const row = document.createElement('div');
+    row.className = 'edit-card-row';
+    row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); position:relative;';
 
-      const typeBadge = document.createElement('span');
-      typeBadge.style.cssText = 'position:absolute; top:10px; right:44px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
-      typeBadge.textContent = card.type || 'basic';
-      row.appendChild(typeBadge);
+    const topBar = document.createElement('div');
+    topBar.style.cssText = 'display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; padding-right:36px;';
 
-      if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
-        const fidelityBox = document.createElement('div');
-        fidelityBox.className = 'card-fidelity-banner';
-        fidelityBox.style.marginTop = '22px';
+    const selectLabel = document.createElement('label');
+    selectLabel.className = 'edit-card-select-label';
 
-        const bannerTop = document.createElement('div');
-        bannerTop.style.cssText = 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'edit-card-checkbox';
+    checkbox.checked = item.selected;
 
-        const badge = document.createElement('span');
-        badge.className = 'card-fidelity-badge';
-        badge.innerHTML = '<span>🌿</span><span>Double-check source</span>';
-        bannerTop.appendChild(badge);
+    const selectText = document.createElement('span');
+    selectText.style.fontSize = '12px';
+    selectText.textContent = item.selected ? 'Study now' : 'Hold in drafts';
 
-        const actions = document.createElement('div');
-        actions.style.cssText = 'display:flex; align-items:center; gap:10px;';
+    checkbox.addEventListener('change', () => {
+      item.selected = checkbox.checked;
+      selectText.textContent = item.selected ? 'Study now' : 'Hold in drafts';
+      updateSummaryAndCTA();
+    });
 
-        const editBtn = document.createElement('button');
-        editBtn.type = 'button';
-        editBtn.className = 'fidelity-edit-btn';
-        editBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:600; color:#b45309; cursor:pointer; text-decoration:underline; padding:0;';
-        editBtn.textContent = 'Edit';
-        actions.appendChild(editBtn);
+    selectLabel.appendChild(checkbox);
+    selectLabel.appendChild(selectText);
+    topBar.appendChild(selectLabel);
 
-        const dismissBtn = document.createElement('button');
-        dismissBtn.type = 'button';
-        dismissBtn.className = 'fidelity-dismiss-btn';
-        dismissBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:500; color:var(--ink-secondary); cursor:pointer; padding:0;';
-        dismissBtn.textContent = 'Keep anyway';
-        actions.appendChild(dismissBtn);
+    const typeBadge = document.createElement('span');
+    typeBadge.style.cssText = 'padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); text-transform:uppercase;';
+    typeBadge.textContent = card.type || 'basic';
+    topBar.appendChild(typeBadge);
 
-        bannerTop.appendChild(actions);
-        fidelityBox.appendChild(bannerTop);
+    row.appendChild(topBar);
 
-        const note = document.createElement('div');
-        note.className = 'card-fidelity-note';
-        note.textContent = "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
-        fidelityBox.appendChild(note);
-
-        dismissBtn.addEventListener('click', () => {
-          card.fidelityFlag.status = 'dismissed';
-          fidelityBox.remove();
-          showToast('Source note dismissed.');
-        });
-
-        editBtn.addEventListener('click', () => {
-          if (row.querySelector('.inline-edit-fields')) return;
-          editBtn.style.display = 'none';
-
-          const editArea = document.createElement('div');
-          editArea.className = 'inline-edit-fields';
-          editArea.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-top:8px;';
-
-          const frontLabel = document.createElement('div');
-          frontLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
-          frontLabel.textContent = 'Front (question)';
-          editArea.appendChild(frontLabel);
-
-          const frontInput = document.createElement('textarea');
-          frontInput.rows = 2;
-          frontInput.value = card.front;
-          frontInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
-          editArea.appendChild(frontInput);
-
-          const backLabel = document.createElement('div');
-          backLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
-          backLabel.textContent = 'Back (answer)';
-          editArea.appendChild(backLabel);
-
-          const backInput = document.createElement('textarea');
-          backInput.rows = 3;
-          backInput.value = card.back;
-          backInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
-          editArea.appendChild(backInput);
-
-          const saveBtn = document.createElement('button');
-          saveBtn.type = 'button';
-          saveBtn.className = 'btn-primary';
-          saveBtn.style.cssText = 'padding:6px 14px; font-size:12px; align-self:flex-start; margin-top:4px;';
-          saveBtn.textContent = 'Save edits';
-
-          saveBtn.addEventListener('click', () => {
-            card.front = frontInput.value.trim() || card.front;
-            card.back = backInput.value.trim() || card.back;
-            card.fidelityFlag.status = 'dismissed';
-            renderCards();
-            showToast('Card updated.');
-          });
-
-          editArea.appendChild(saveBtn);
-          row.appendChild(editArea);
-        });
-
-        row.appendChild(fidelityBox);
-      }
-
-      if (card.sourceInfo) {
-        const provTag = document.createElement('div');
-        provTag.className = 'card-provenance-tag';
-        provTag.style.cssText = 'font-size:11px; color:var(--ink-muted); margin-bottom:4px; font-weight:500;';
-        const label = card.sourceInfo.pageRange
-          ? `${card.sourceInfo.pageRange} · Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`
-          : `Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`;
-        provTag.textContent = label;
-        row.appendChild(provTag);
-      }
-
-      const front = document.createElement('div');
-      front.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:60px;';
-      front.textContent = card.front;
-      row.appendChild(front);
-
-      const back = document.createElement('div');
-      back.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
-      back.textContent = card.back;
-      row.appendChild(back);
-
-      // Hint field (editable)
-      const hintWrap = document.createElement('div');
-      hintWrap.style.cssText = 'margin-top:8px;';
-      const hintLabel = document.createElement('div');
-      hintLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;';
-      hintLabel.textContent = 'Hint / Explanation';
-      hintWrap.appendChild(hintLabel);
-      const hintInput = document.createElement('textarea');
-      hintInput.rows = 2;
-      hintInput.placeholder = 'Optional hint shown before revealing the answer…';
-      hintInput.style.cssText = 'width:100%; padding:8px 10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:13px; font-family:inherit; resize:vertical; box-sizing:border-box;';
-      hintInput.value = card.hint || '';
-      hintInput.addEventListener('input', () => {
-        card.hint = hintInput.value.trim() || undefined;
-      });
-      hintWrap.appendChild(hintInput);
-      row.appendChild(hintWrap);
-
-      if (card.type === 'formula') {
-        if (card.formula) {
-          const formula = document.createElement('div');
-          formula.style.cssText = 'margin-top:8px; font-family:var(--font-mono); font-size:13px; color:var(--ink-secondary); background:var(--bg); padding:8px; border-radius:var(--radius-sm);';
-          formula.textContent = card.formula;
-          row.appendChild(formula);
-        }
-        if (card.variables && card.variables.length > 0) {
-          const vars = document.createElement('div');
-          vars.style.cssText = 'margin-top:6px; font-size:12px; color:var(--ink-muted);';
-          vars.textContent = card.variables.map(v => `${v.symbol || v.name}: ${v.meaning || v.description}`).join(' | ');
-          row.appendChild(vars);
-        }
-      }
-
-      const discardBtn = document.createElement('button');
-      discardBtn.type = 'button';
-      discardBtn.textContent = '✕';
-      discardBtn.style.cssText = 'position:absolute; top:10px; right:10px; width:28px; height:28px; border:none; background:var(--danger-soft); color:var(--danger); border-radius:50%; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center;';
-      discardBtn.addEventListener('click', () => {
-        approved.splice(i, 1);
+    const discardBtn = document.createElement('button');
+    discardBtn.type = 'button';
+    discardBtn.textContent = '✕';
+    discardBtn.setAttribute('aria-label', 'Discard card');
+    discardBtn.style.cssText = 'position:absolute; top:10px; right:10px; width:28px; height:28px; border:none; background:var(--danger-soft); color:var(--danger); border-radius:50%; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center;';
+    discardBtn.addEventListener('click', () => {
+      const idx = workingItems.indexOf(item);
+      if (idx !== -1) {
+        workingItems.splice(idx, 1);
         discardedCount++;
         renderCards();
-        updateSummary();
-      });
-      row.appendChild(discardBtn);
+      }
+    });
+    row.appendChild(discardBtn);
 
-      list.appendChild(row);
+    if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+      const fidelityBox = document.createElement('div');
+      fidelityBox.className = 'card-fidelity-banner';
+
+      const bannerTop = document.createElement('div');
+      bannerTop.style.cssText = 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;';
+
+      const badge = document.createElement('span');
+      badge.className = 'card-fidelity-badge';
+      badge.innerHTML = '<span>🌿</span><span>Double-check source</span>';
+      bannerTop.appendChild(badge);
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex; align-items:center; gap:10px;';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'fidelity-edit-btn';
+      editBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:600; color:#b45309; cursor:pointer; text-decoration:underline; padding:0;';
+      editBtn.textContent = 'Edit';
+      actions.appendChild(editBtn);
+
+      const dismissBtn = document.createElement('button');
+      dismissBtn.type = 'button';
+      dismissBtn.className = 'fidelity-dismiss-btn';
+      dismissBtn.style.cssText = 'background:none; border:none; font-size:12px; font-weight:500; color:var(--ink-secondary); cursor:pointer; padding:0;';
+      dismissBtn.textContent = 'Keep anyway';
+      actions.appendChild(dismissBtn);
+
+      bannerTop.appendChild(actions);
+      fidelityBox.appendChild(bannerTop);
+
+      const note = document.createElement('div');
+      note.className = 'card-fidelity-note';
+      note.textContent = card.fidelityFlag.reason || "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
+      fidelityBox.appendChild(note);
+
+      dismissBtn.addEventListener('click', () => {
+        card.fidelityFlag.status = 'dismissed';
+        item.selected = true;
+        renderCards();
+        showToast('Source note dismissed — marked ready for study. 🌿');
+      });
+
+      editBtn.addEventListener('click', () => {
+        if (row.querySelector('.inline-edit-fields')) return;
+        editBtn.style.display = 'none';
+
+        const editArea = document.createElement('div');
+        editArea.className = 'inline-edit-fields';
+        editArea.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-top:8px;';
+
+        const frontLabel = document.createElement('div');
+        frontLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
+        frontLabel.textContent = 'Front (question)';
+        editArea.appendChild(frontLabel);
+
+        const frontInput = document.createElement('textarea');
+        frontInput.rows = 2;
+        frontInput.value = card.front;
+        frontInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
+        editArea.appendChild(frontInput);
+
+        const backLabel = document.createElement('div');
+        backLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; color:var(--ink-muted);';
+        backLabel.textContent = 'Back (answer)';
+        editArea.appendChild(backLabel);
+
+        const backInput = document.createElement('textarea');
+        backInput.rows = 3;
+        backInput.value = card.back;
+        backInput.style.cssText = 'width:100%; padding:8px; border:1px solid rgba(0,0,0,0.15); border-radius:var(--radius-sm); font-size:13px; font-family:inherit; box-sizing:border-box; background:var(--surface); color:var(--ink);';
+        editArea.appendChild(backInput);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'btn-primary';
+        saveBtn.style.cssText = 'padding:6px 14px; font-size:12px; align-self:flex-start; margin-top:4px;';
+        saveBtn.textContent = 'Save edits';
+
+        saveBtn.addEventListener('click', () => {
+          card.front = frontInput.value.trim() || card.front;
+          card.back = backInput.value.trim() || card.back;
+          card.fidelityFlag.status = 'dismissed';
+          item.selected = true;
+          renderCards();
+          showToast('Card updated and marked ready for study. 🌿');
+        });
+
+        editArea.appendChild(saveBtn);
+        row.appendChild(editArea);
+      });
+
+      row.appendChild(fidelityBox);
     }
+
+    if (card.sourceInfo) {
+      const provTag = document.createElement('div');
+      provTag.className = 'card-provenance-tag';
+      provTag.style.cssText = 'font-size:11px; color:var(--ink-muted); margin-bottom:4px; font-weight:500;';
+      const label = card.sourceInfo.pageRange
+        ? `${card.sourceInfo.pageRange} · Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`
+        : `Section ${card.sourceInfo.chunkIndex} of ${card.sourceInfo.totalChunks}`;
+      provTag.textContent = label;
+      row.appendChild(provTag);
+    }
+
+    const front = document.createElement('div');
+    front.style.cssText = 'font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:60px;';
+    front.textContent = card.front;
+    row.appendChild(front);
+
+    const back = document.createElement('div');
+    back.style.cssText = 'font-size:13px; color:var(--ink-secondary); line-height:1.5;';
+    back.textContent = card.back;
+    row.appendChild(back);
+
+    const hintWrap = document.createElement('div');
+    hintWrap.style.cssText = 'margin-top:8px;';
+    const hintLabel = document.createElement('div');
+    hintLabel.style.cssText = 'font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:4px;';
+    hintLabel.textContent = 'Hint / Explanation';
+    hintWrap.appendChild(hintLabel);
+    const hintInput = document.createElement('textarea');
+    hintInput.rows = 2;
+    hintInput.placeholder = 'Optional hint shown before revealing the answer…';
+    hintInput.style.cssText = 'width:100%; padding:8px 10px; border:1px solid rgba(0,0,0,0.08); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:13px; font-family:inherit; resize:vertical; box-sizing:border-box;';
+    hintInput.value = card.hint || '';
+    hintInput.addEventListener('input', () => {
+      card.hint = hintInput.value.trim() || undefined;
+    });
+    hintWrap.appendChild(hintInput);
+    row.appendChild(hintWrap);
+
+    if (card.type === 'formula') {
+      if (card.formula) {
+        const formula = document.createElement('div');
+        formula.style.cssText = 'margin-top:8px; font-family:var(--font-mono); font-size:13px; color:var(--ink-secondary); background:var(--bg); padding:8px; border-radius:var(--radius-sm);';
+        formula.textContent = card.formula;
+        row.appendChild(formula);
+      }
+      if (card.variables && card.variables.length > 0) {
+        const vars = document.createElement('div');
+        vars.style.cssText = 'margin-top:6px; font-size:12px; color:var(--ink-muted);';
+        vars.textContent = card.variables.map(v => `${v.symbol || v.name}: ${v.meaning || v.description}`).join(' | ');
+        row.appendChild(vars);
+      }
+    }
+
+    return row;
+  }
+
+  function renderCards() {
+    list.innerHTML = '';
+
+    const readyItems = workingItems.filter(
+      item => !(item.card.fidelityFlag && item.card.fidelityFlag.status === 'unverified')
+    );
+    const draftItems = workingItems.filter(
+      item => item.card.fidelityFlag && item.card.fidelityFlag.status === 'unverified'
+    );
+
+    if (readyItems.length > 0) {
+      const readySection = document.createElement('div');
+      readySection.className = 'edit-step-section';
+
+      const secHeader = document.createElement('div');
+      secHeader.className = 'edit-step-section-header';
+      secHeader.innerHTML = `
+        <div class="edit-step-section-title">🌿 Ready to study (${readyItems.length})</div>
+        <div class="edit-step-section-desc">Grounded in your upload. Selected cards enter your active review schedule.</div>
+      `;
+      readySection.appendChild(secHeader);
+
+      for (const item of readyItems) {
+        readySection.appendChild(createCardRow(item, false));
+      }
+      list.appendChild(readySection);
+    }
+
+    if (draftItems.length > 0) {
+      const draftSection = document.createElement('div');
+      draftSection.className = 'edit-step-section';
+
+      const secHeader = document.createElement('div');
+      secHeader.className = 'edit-step-section-header';
+      secHeader.innerHTML = `
+        <div class="edit-step-section-title">⚠️ Check against source (${draftItems.length})</div>
+        <div class="edit-step-section-desc">Some details couldn't be confirmed. Unselected cards will be held in drafts so your study queue stays focused.</div>
+      `;
+      draftSection.appendChild(secHeader);
+
+      for (const item of draftItems) {
+        draftSection.appendChild(createCardRow(item, true));
+      }
+      list.appendChild(draftSection);
+    }
+
+    updateSummaryAndCTA();
   }
 
   wrap.appendChild(list);
 
   const summary = document.createElement('div');
   summary.style.cssText = 'padding:0 var(--space-md); margin:var(--space-md) 0; font-size:13px; color:var(--ink-muted); text-align:center;';
-  function updateSummary() {
-    summary.textContent = `${approved.length} of ${cards.length} cards selected${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
-  }
-  updateSummary();
   wrap.appendChild(summary);
 
   const importBtn = document.createElement('button');
   importBtn.className = 'btn-primary';
   importBtn.style.cssText = 'width:calc(100% - 32px); margin:0 var(--space-md) var(--space-md); padding:14px;';
-  importBtn.textContent = 'Import all selected';
+  importBtn.textContent = 'Import cards';
+
+  function updateSummaryAndCTA() {
+    const activeCount = workingItems.filter(item => item.selected).length;
+    const draftCount = workingItems.filter(item => !item.selected).length;
+
+    if (activeCount > 0 && draftCount > 0) {
+      summary.textContent = `${activeCount} card${activeCount !== 1 ? 's' : ''} ready to study · ${draftCount} held as draft${draftCount !== 1 ? 's' : ''}${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
+      importBtn.textContent = `Import ${activeCount} active · Hold ${draftCount} in drafts`;
+      importBtn.disabled = false;
+    } else if (activeCount > 0 && draftCount === 0) {
+      summary.textContent = `${activeCount} card${activeCount !== 1 ? 's' : ''} ready to study${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
+      importBtn.textContent = `Import ${activeCount} active card${activeCount !== 1 ? 's' : ''}`;
+      importBtn.disabled = false;
+    } else if (activeCount === 0 && draftCount > 0) {
+      summary.textContent = `${draftCount} card${draftCount !== 1 ? 's' : ''} held as drafts to review later${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
+      importBtn.textContent = `Hold ${draftCount} card${draftCount !== 1 ? 's' : ''} as draft${draftCount !== 1 ? 's' : ''}`;
+      importBtn.disabled = false;
+    } else {
+      summary.textContent = `No cards selected${discardedCount > 0 ? ` (${discardedCount} discarded)` : ''}`;
+      importBtn.textContent = 'No cards to import';
+      importBtn.disabled = true;
+    }
+  }
+
   importBtn.addEventListener('click', async () => {
-    if (approved.length === 0) {
-      showToast('No cards selected to import.', 5000);
+    const activeItems = workingItems.filter(item => item.selected);
+    const draftItems = workingItems.filter(item => !item.selected);
+    if (activeItems.length === 0 && draftItems.length === 0) {
+      showToast('No cards to save.', 4000);
       return;
     }
+
     importBtn.disabled = true;
-    importBtn.textContent = 'Importing...';
+    importBtn.textContent = 'Saving...';
     try {
-      await commitGeneratedCards(deckId, approved);
-      showToast(`Imported ${approved.length} card${approved.length !== 1 ? 's' : ''}.`);
+      const cardsToCommit = [
+        ...activeItems.map(item => ({ ...item.card, suspended: false })),
+        ...draftItems.map(item => ({ ...item.card, suspended: true }))
+      ];
+      await commitGeneratedCards(deckId, cardsToCommit);
+
+      if (activeItems.length > 0 && draftItems.length > 0) {
+        showToast(`Imported ${activeItems.length} active card${activeItems.length !== 1 ? 's' : ''} · Held ${draftItems.length} in drafts. 🌿`);
+      } else if (activeItems.length > 0) {
+        showToast(`Imported ${activeItems.length} card${activeItems.length !== 1 ? 's' : ''}.`);
+      } else {
+        showToast(`Saved ${draftItems.length} card${draftItems.length !== 1 ? 's' : ''} as drafts. Review them anytime in Card Browser.`);
+      }
       navigate('/');
     } catch (err) {
       showToast(err.message || 'Import failed.', 5000);
       importBtn.disabled = false;
-      importBtn.textContent = 'Import all selected';
+      updateSummaryAndCTA();
     }
   });
+
   wrap.appendChild(importBtn);
 
   if (container) container.appendChild(wrap);
@@ -3693,6 +3814,37 @@ async function renderCardBrowser(deckId) {
   searchWrap.appendChild(searchInput);
   wrap.appendChild(searchWrap);
 
+  const isDraft = (c) => isDraftCard(c);
+  const isLeech = (c) => isLeechCard(c);
+
+  let activeFilter = 'all'; // 'all' | 'drafts' | 'leeches'
+  let currentCards = cards;
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'browser-filter-bar';
+
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = 'browser-filter-chip is-active';
+  allBtn.innerHTML = `All <span class="browser-filter-count">${cards.length}</span>`;
+
+  const draftsCount = cards.filter(isDraft).length;
+  const draftsBtn = document.createElement('button');
+  draftsBtn.type = 'button';
+  draftsBtn.className = 'browser-filter-chip';
+  draftsBtn.innerHTML = `Drafts <span class="browser-filter-count">${draftsCount}</span>`;
+
+  const leechesCount = cards.filter(isLeech).length;
+  const leechesBtn = document.createElement('button');
+  leechesBtn.type = 'button';
+  leechesBtn.className = 'browser-filter-chip';
+  leechesBtn.innerHTML = `Leeches <span class="browser-filter-count">${leechesCount}</span>`;
+
+  filterBar.appendChild(allBtn);
+  filterBar.appendChild(draftsBtn);
+  filterBar.appendChild(leechesBtn);
+  wrap.appendChild(filterBar);
+
   const legend = document.createElement('p');
   legend.style.cssText = 'padding:8px var(--space-md) 0; margin:0; font-size:11px; color:var(--ink-muted);';
   legend.innerHTML = 'v Basic &nbsp; -&nbsp;- Cloze &nbsp; ÷ Formula &nbsp;·&nbsp; dot = review stage &nbsp;·&nbsp; || suspended';
@@ -3707,7 +3859,13 @@ async function renderCardBrowser(deckId) {
     if (filteredCards.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'grid-column:1/-1; text-align:center; padding:var(--space-xl) 0; color:var(--ink-muted); font-size:14px;';
-      empty.textContent = checkGreetingEasterEgg(query) || 'No cards found.';
+      if (activeFilter === 'drafts') {
+        empty.textContent = 'No draft cards in this deck. All concepts are in active study! 🌿';
+      } else if (activeFilter === 'leeches') {
+        empty.textContent = 'No leeched cards in this deck. Keep up the great recall!';
+      } else {
+        empty.textContent = checkGreetingEasterEgg(query) || 'No cards found.';
+      }
       list.appendChild(empty);
       return;
     }
@@ -3752,7 +3910,7 @@ async function renderCardBrowser(deckId) {
         const paused = document.createElement('span');
         paused.className = 'card-tile-heart';
         paused.innerHTML = CARD_SUSPENDED_ICON;
-        paused.title = 'Suspended — needs attention';
+        paused.title = isDraft(card) ? 'Draft — held for review' : 'Suspended — needs attention';
         tile.appendChild(paused);
       }
 
@@ -3761,20 +3919,49 @@ async function renderCardBrowser(deckId) {
     }
   }
 
-  renderCardList(cards);
+  function getFilteredCards(sourceCards) {
+    if (activeFilter === 'drafts') {
+      return sourceCards.filter(isDraft);
+    }
+    if (activeFilter === 'leeches') {
+      return sourceCards.filter(isLeech);
+    }
+    return sourceCards;
+  }
+
+  function applyFilterAndSearch() {
+    const query = searchInput.value.trim();
+    const filtered = getFilteredCards(currentCards);
+    renderCardList(filtered, query);
+  }
+
+  function setFilter(filter) {
+    activeFilter = filter;
+    allBtn.classList.toggle('is-active', filter === 'all');
+    draftsBtn.classList.toggle('is-active', filter === 'drafts');
+    leechesBtn.classList.toggle('is-active', filter === 'leeches');
+    applyFilterAndSearch();
+  }
+
+  allBtn.addEventListener('click', () => setFilter('all'));
+  draftsBtn.addEventListener('click', () => setFilter('drafts'));
+  leechesBtn.addEventListener('click', () => setFilter('leeches'));
+
+  applyFilterAndSearch();
 
   searchInput.addEventListener('input', async () => {
     const query = searchInput.value.trim();
     if (!query) {
-      renderCardList(cards);
+      currentCards = cards;
+      applyFilterAndSearch();
       return;
     }
     try {
       const byFront = await searchCardsByFront(query);
       const byBack = await searchCardsByAnswer(query);
       const merged = [...byFront, ...byBack].filter(c => c.deckId === deckId);
-      const unique = Array.from(new Map(merged.map(c => [c.id, c])).values());
-      renderCardList(unique, query);
+      currentCards = Array.from(new Map(merged.map(c => [c.id, c])).values());
+      applyFilterAndSearch();
     } catch (err) {
       console.error('Search failed:', err);
     }
@@ -4007,6 +4194,7 @@ export async function renderCardDetailView(card, deck) {
   body.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:12px;';
 
   if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
+    const isDraft = isDraftCard(card);
     const banner = document.createElement('div');
     banner.className = 'card-fidelity-banner';
 
@@ -4015,7 +4203,9 @@ export async function renderCardDetailView(card, deck) {
 
     const badge = document.createElement('span');
     badge.className = 'card-fidelity-badge';
-    badge.innerHTML = '<span>🌿</span><span>Double-check source</span>';
+    badge.innerHTML = isDraft
+      ? '<span>⚠️</span><span>Draft · Check against source</span>'
+      : '<span>🌿</span><span>Double-check source</span>';
     bannerTop.appendChild(badge);
 
     const actions = document.createElement('div');
@@ -4040,14 +4230,20 @@ export async function renderCardDetailView(card, deck) {
 
     const note = document.createElement('div');
     note.className = 'card-fidelity-note';
-    note.textContent = "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
+    note.textContent = isDraft
+      ? "Held as a draft because some details couldn't be confirmed in your upload. Edit to align with your source, or tap Keep anyway to activate for study."
+      : "Some details in this card weren't found in your uploaded text. We couldn't confirm this in your upload, but it might still be great to learn.";
     banner.appendChild(note);
 
     dismissBtn.addEventListener('click', async () => {
+      const wasDraft = isDraftCard(card);
       await dismissCardFidelity(card.id);
       card.fidelityFlag.status = 'dismissed';
+      if (wasDraft) {
+        card.suspended = false;
+      }
       banner.remove();
-      showToast('Source note dismissed.');
+      showToast(wasDraft ? 'Card approved for study! 🌿' : 'Source note dismissed.');
     });
 
     editBtn.addEventListener('click', () => {
@@ -4055,12 +4251,16 @@ export async function renderCardDetailView(card, deck) {
       if (newFront !== null && newFront.trim()) {
         const newBack = prompt('Edit card back:', card.back);
         if (newBack !== null && newBack.trim()) {
+          const wasDraft = isDraftCard(card);
           updateCardContent(card.id, { front: newFront.trim(), back: newBack.trim() }).then((updated) => {
             if (updated) {
               card.front = updated.front;
               card.back = updated.back;
               card.fidelityFlag = updated.fidelityFlag;
-              showToast('Card updated.');
+              if (wasDraft) {
+                card.suspended = false;
+              }
+              showToast(wasDraft ? 'Card approved for study! 🌿' : 'Card updated.');
               renderCardDetailView(card, deck);
             }
           });

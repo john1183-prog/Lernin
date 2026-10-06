@@ -1068,6 +1068,36 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
     - `test_very_late_emphasis_exit_shortened_within_duration`: verifies `at=4.85` on 5.0s scene sets hold to 0.0s, exit completes within 5.0s with opacity 0.
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
+
+**Tier 4 #5 — Two-Pass Card Approval for AI Decks (Draft Staging via Suspended + Fidelity) (`public/card-approval.js`, `public/app.js`, `public/db.js`, `public/api.js`, `public/manual-json-import.js`, `public/styles.css`, `public/sw.js`, `public/test_card_approval.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped two-pass approval and draft staging for AI-generated and imported cards, preventing hallucinated or unverified cards from flooding active review queues while avoiding card loss and review exhaustion:
+- **Pure Approval & Partitioning Helper (`public/card-approval.js`)**:
+  * Pure synchronous, zero-dependency helper module with `partitionCardsForApproval(cards, sourceText)`, `buildApprovalCommitPayload(items)`, `isDraftCard(card)`, and `isLeechCard(card)`.
+  * `isDraftCard`: Identifies held drafts strictly by `card.suspended && card.fidelityFlag?.status === 'unverified'`.
+  * `isLeechCard`: Identifies real recall leeches by `(card.suspended || card.state === 'suspended') && !isDraftCard(card)`, cleanly separating drafts from true memory lapses.
+- **Triage UX on Import (`renderEditStep` in `public/app.js`, `public/styles.css`)**:
+  * Partitions card candidates into two distinct sections:
+    - **🌿 Ready to study**: Grounded cards (no unverified flag) — selected by default (`checked: true`, "Study now").
+    - **⚠️ Check against source**: Unverified cards (`fidelityFlag.status === 'unverified'`) — unselected by default (`checked: false`, "Hold in drafts").
+  * Dynamic CTA reflects live counts in warm, protective copy: e.g. "Import N active · Hold M in drafts", "Import N active cards", or "Hold M cards as drafts".
+  * Respects user autonomy: users can check a draft to study immediately or uncheck a grounded card to hold it in drafts.
+  * Inline editing and "Keep anyway" immediately mark the card verified and update its staging to active.
+- **Staging Persistence & Query Isolation (`public/db.js`, `public/api.js`, `public/manual-json-import.js`)**:
+  * `saveNewCards(deckId, newCards)`: Respects incoming `suspended: card.suspended === true` while maintaining standard FSRS initialization (`state: 'new'`, `difficulty: 0`, `stability: 0`, `reps: 0`, `lapses: 0`, `due_date: Date.now()`).
+  * Due queue protection: `getCardsDueTodayOrEarlier()` queries with `excludeSuspended: true` (default), ensuring held drafts never enter active study sessions until explicitly approved.
+  * Leech query protection: `getSuspendedCards(deckId)` and `getDashboardStats()` exclude draft cards, preventing unverified drafts from cluttering leech reviews or skewing lapse statistics.
+  * Added `getDraftCards(deckId)` query helper for retrieving held drafts.
+  * `api.js`: `retryQueuedGenerations()` checks fidelity against `item.rawText`, stages unverified cards as `suspended: true`, and emits event with `draftsCount`.
+  * `manual-json-import.js`: Routes imports through `renderEditStep(newCards, deckId, extractedText)` when `extractedText` is present.
+- **Card Browser & Activation Flow (`public/app.js`, `public/db.js`)**:
+  * **Card Browser**: Added filter chip bar (`All`, `Drafts`, `Leeches`) with real-time count badges. Selecting "Drafts" filters exclusively to held drafts with warm empty states ("No draft cards in this deck. All concepts are in active study! 🌿").
+  * **Card Detail View**: Renders draft banner with warning badge (`⚠️ Draft · Check against source`) and warm explanation copy.
+  * **Approval / Activation**: Tapping "Keep anyway" or editing in Card Detail un-suspends the card (`suspended: false`), marks fidelity dismissed, displays warm toast `"Card approved for study! 🌿"`, and immediately admits the card into the due queue without altering its FSRS parameters.
+- **Verification & Test Coverage (`public/test_card_approval.mjs`)**:
+  * Permanent unit test suite (`public/test_card_approval.mjs`) covering 7 test suites: partitioning, sourceText verification, `isDraftCard` vs `isLeechCard` isolation, commit payload building, FSRS mathematical invariance across staging and activation, and defensive null/empty handling.
+  * Automated headless Chrome CDP verification confirming UI partitioning in Light and Dark themes (`card_approval_editstep_light.png`, `card_approval_editstep_dark.png`), live toggle CTA updates, DB queue isolation, Card Browser drafts filter (`card_approval_browser_drafts_light.png`), and draft activation with warm toast and due queue admission in Dark theme (`card_approval_detail_activated_dark.png`).
+  * Full regression integrity confirmed: `node public/test_motion_player_audio.mjs` and `python -m unittest discover -s api -p "test_*.py"` (102 tests) passing with exit code 0.
+
 **Tier 4 #3 — Teach-It Probabilistic/Milestone Pacing & Surface Teaching Note (`public/teach-it.js`, `public/study.js`, `public/db.js`, `public/app.js`, `public/styles.css`, `public/sw.js`, `public/test_teach_it.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped cognitive milestone pacing and surface retrieval for the Teach-It explanation flow, replacing repetitive every-good/easy modal sheets with meaningful comprehension beats and unlocking previously write-only personal explanations:
 - **Pure Pacing Engine (`public/teach-it.js`)**:

@@ -309,7 +309,8 @@ export async function saveNewCards(deckId, newCards) {
         type: card.type || 'basic', // 'basic' | 'cloze' | 'formula'
         createdAt: Date.now(),
         ...DEFAULT_FSRS_FIELDS,
-        due_date: Date.now() // explicit: new cards enter the due queue now
+        due_date: Date.now(), // explicit: new cards enter the due queue now
+        suspended: card.suspended === true
       };
       // Formula fields only exist for type === 'formula', but generated
       // cards (unlike saveManualCard's caller) may legitimately include
@@ -542,11 +543,15 @@ export async function dismissCardFidelity(cardId) {
   const store = tx.objectStore('cards');
   const card = await store.get(cardId);
   if (!card) return null;
+  const wasDraft = card.suspended && card.fidelityFlag && card.fidelityFlag.status === 'unverified';
   card.fidelityFlag = {
     ...(card.fidelityFlag || {}),
     status: 'dismissed',
     dismissedAt: Date.now()
   };
+  if (wasDraft) {
+    card.suspended = false;
+  }
   await store.put(card);
   await tx.done;
   return card;
@@ -554,7 +559,8 @@ export async function dismissCardFidelity(cardId) {
 
 /**
  * Updates card text / content fields without touching FSRS scheduling fields.
- * If the card had an unverified fidelity flag, marks it as dismissed/edited.
+ * If the card had an unverified fidelity flag, marks it as dismissed/edited
+ * and un-suspends it if it was held as a draft.
  *
  * @param {string} cardId
  * @param {object} updates - { front, back, hint, formula, variables }
@@ -579,6 +585,9 @@ export async function updateCardContent(cardId, updates = {}) {
       status: 'dismissed',
       editedAt: Date.now()
     };
+    if (card.suspended) {
+      card.suspended = false;
+    }
   }
 
   await store.put(card);
@@ -614,11 +623,26 @@ export async function resetLeech(cardId) {
  * in app.js is the only caller. Reuses the existing by_deckId index rather
  * than adding a new one; the suspended filter is cheap in JS since a deck's
  * leech count is expected to be small relative to its total card count.
+ * Excludes held draft cards (which are suspended for source verification, not lapses).
  */
 export async function getSuspendedCards(deckId) {
   const db = await getDB();
   const all = await db.getAllFromIndex('cards', 'by_deckId', deckId);
-  return all.filter((c) => c.suspended);
+  return all.filter((c) => c.suspended && !(c.fidelityFlag && c.fidelityFlag.status === 'unverified'));
+}
+
+/**
+ * Fetch all held draft cards (suspended with unresolved fidelity flag).
+ *
+ * @param {string} [deckId]
+ * @returns {Promise<Array<object>>}
+ */
+export async function getDraftCards(deckId) {
+  const db = await getDB();
+  const all = deckId
+    ? await db.getAllFromIndex('cards', 'by_deckId', deckId)
+    : await db.getAll('cards');
+  return all.filter((c) => c.suspended && c.fidelityFlag && c.fidelityFlag.status === 'unverified');
 }
 
 /**
@@ -946,7 +970,7 @@ export async function getDashboardStats(now) {
   }));
 
   const totalCardsStudied = allCards.filter((c) => (c.reps || 0) > 0).length;
-  const leechCount = allCards.filter((c) => c.suspended || c.state === 'suspended').length;
+  const leechCount = allCards.filter((c) => (c.suspended || c.state === 'suspended') && !(c.fidelityFlag && c.fidelityFlag.status === 'unverified')).length;
   const totalReviewsLifetime = await db.count('reviewLog');
 
   // 30-day window for retention + the daily activity chart.
