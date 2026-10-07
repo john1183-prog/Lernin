@@ -1555,6 +1555,30 @@ export async function exportDeckData(deckId, { includeProgress = true } = {}) {
 }
 
 /**
+ * Exports all decks in the library into a single backup bundle.
+ * Each entry in `decks` matches the payload shape of exportDeckData().
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeProgress=true]
+ * @returns {Promise<{formatVersion: number, exportedAt: number, sourceApp: string, deckCount: number, decks: Array<object>}>}
+ */
+export async function exportAllDecks({ includeProgress = true } = {}) {
+  const decks = await getAllDecks();
+  const exportedDecks = await Promise.all(
+    decks.map((d) => exportDeckData(d.id, { includeProgress }))
+  );
+  return {
+    formatVersion: EXPORT_FORMAT_VERSION,
+    exportedAt: Date.now(),
+    sourceApp: 'Lernin',
+    deckCount: exportedDecks.length,
+    decks: exportedDecks
+  };
+}
+
+export const exportLibraryData = exportAllDecks;
+
+/**
  * Imports a previously-exported deck as a brand-new deck (fresh deck id,
  * fresh card ids — old ids in the file are only used to remap reviewLog
  * entries during this one operation, never reused). Throws with a

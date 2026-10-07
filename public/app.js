@@ -8,7 +8,7 @@ import {
   removeRelationship, getCard, getDeck, getApiConfig, saveApiConfig, clearApiConfig,
   getReminderSettings, setReminderEnabled, markReminderShownToday, wipeAllData, saveDeck,
   clearIslandPosition, saveManualCard, searchCardsByFront, searchCardsByAnswer,
-  exportDeckData, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument, saveDocument,
+  exportDeckData, exportAllDecks, importDeckData, getDocumentsByDeck, getDashboardStats, deleteDocument, saveDocument,
   getSetting, saveSetting, getSuspendedCards, resetLeech, getReviewHistoryForCard,
   localDayKey,
   getActiveDecks, getArchivedDecks, archiveDeck, unarchiveDeck, deleteDeck,
@@ -1118,9 +1118,14 @@ async function openDeleteDeckConfirm(deck) {
       <p style="font-size:14px; line-height:1.5; color:var(--ink-secondary);">
         This will permanently remove this deck and its ${cardCount} card${cardCount === 1 ? '' : 's'}. If you just need a break from studying these, archiving keeps all your cards and progress safe instead.
       </p>
-      <div style="display:flex; gap:10px; margin-top:var(--space-xs);">
-        <button type="button" id="deleteCancelBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface-hover); color:var(--ink); font-size:15px; font-weight:500; cursor:pointer;">Keep deck</button>
-        <button type="button" id="deleteConfirmBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--danger); color:white; font-size:15px; font-weight:600; cursor:pointer;">Delete permanently</button>
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top:var(--space-xs);">
+        <button type="button" id="deleteExportBtn" style="width:100%; padding:11px 14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:14px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+          <span>💾</span><span>Export deck first</span>
+        </button>
+        <div style="display:flex; gap:10px;">
+          <button type="button" id="deleteCancelBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--surface-hover); color:var(--ink); font-size:15px; font-weight:500; cursor:pointer;">Keep deck</button>
+          <button type="button" id="deleteConfirmBtn" style="flex:1; padding:12px; border:none; border-radius:var(--radius-md); background:var(--danger); color:white; font-size:15px; font-weight:600; cursor:pointer;">Delete permanently</button>
+        </div>
       </div>
     </div>
   `;
@@ -1147,6 +1152,21 @@ async function openDeleteDeckConfirm(deck) {
   backdrop.addEventListener('click', closeConfirm);
   const handle = sheet.querySelector('.sheet-handle');
   if (handle) handle.addEventListener('click', closeConfirm);
+
+  const exportBtn = sheet.querySelector('#deleteExportBtn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async () => {
+      exportBtn.disabled = true;
+      try {
+        await exportDeck(deck.id, { includeProgress: true, toastMessage: 'Deck exported for safekeeping 🌿' });
+      } catch (err) {
+        console.error(err);
+        showToast('Could not export deck backup.', 4000);
+      } finally {
+        exportBtn.disabled = false;
+      }
+    });
+  }
 
   sheet.querySelector('#deleteCancelBtn').addEventListener('click', closeConfirm);
   sheet.querySelector('#deleteConfirmBtn').addEventListener('click', async () => {
@@ -1754,6 +1774,27 @@ export async function renderSettings() {
   dangerIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
   dangerIntro.textContent = 'Permanently deletes every deck, card, and review history on this device. This cannot be undone.';
   dangerSection.appendChild(dangerIntro);
+
+  const backupRow = document.createElement('div');
+  backupRow.style.cssText = 'margin-bottom:16px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);';
+  backupRow.innerHTML = `
+    <p style="font-size:13px; color:var(--ink-secondary); margin-bottom:10px; line-height:1.5;">
+      We strongly recommend saving a backup before resetting. You can restore your decks and progress anytime.
+    </p>
+    <button type="button" id="backupLibraryBtn" style="padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-hover); color:var(--ink); font-size:14px; font-weight:500; cursor:pointer; display:inline-flex; align-items:center; gap:8px;">
+      <span>💾</span><span>Download full library backup</span>
+    </button>
+  `;
+  const backupBtn = backupRow.querySelector('#backupLibraryBtn');
+  backupBtn.addEventListener('click', async () => {
+    backupBtn.disabled = true;
+    try {
+      await exportFullLibraryBackup();
+    } finally {
+      backupBtn.disabled = false;
+    }
+  });
+  dangerSection.appendChild(backupRow);
 
   const resetBtn = document.createElement('button');
   resetBtn.type = 'button';
@@ -4602,7 +4643,7 @@ export async function triggerDeckImport() {
   input.click();
 }
 
-async function exportDeck(deckId, { includeProgress = true } = {}) {
+async function exportDeck(deckId, { includeProgress = true, toastMessage } = {}) {
   try {
     const data = await exportDeckData(deckId, { includeProgress });
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -4612,9 +4653,26 @@ async function exportDeck(deckId, { includeProgress = true } = {}) {
     a.download = includeProgress ? `lernin-deck-${deckId}.json` : `lernin-deck-${deckId}-share.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(includeProgress ? 'Deck exported.' : 'Share copy exported.');
+    showToast(toastMessage || (includeProgress ? 'Deck exported.' : 'Share copy exported.'));
   } catch (err) {
     showToast(err.message || 'Export failed.', 5000);
+  }
+}
+
+async function exportFullLibraryBackup() {
+  try {
+    const data = await exportAllDecks({ includeProgress: true });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lernin-backup-all-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Full library backup exported! 🌿');
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || 'Backup failed.', 5000);
   }
 }
 

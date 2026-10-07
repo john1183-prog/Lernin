@@ -1069,6 +1069,32 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Tier 4 #7 Phase A — Pre-Wipe Export Reminder & Full Library Backup Download (`public/db.js`, `public/app.js`, `public/test_export_backup.mjs`, `UPCOMING_FEATURES.md`)** —
+shipped protective pre-wipe export affordances and full library backup downloads safeguarding learner data against irreversible data loss without blocking friction or nag modals (Phase A complete; Phase B session core unification remains open):
+- **Full Library Export Bundle (`public/db.js`)**:
+  * Added and exported `exportAllDecks({ includeProgress = true })` (and alias `exportLibraryData`).
+  * Iterates across all decks (both active and archived) via `getAllDecks()` and aggregates per-deck payloads using `exportDeckData(d.id, { includeProgress })`.
+  * Assembles single, offline-first backup bundle:
+    `{ formatVersion: 1, exportedAt: number, sourceApp: 'Lernin', deckCount: number, decks: [ ... ] }`.
+  * Safe and robust on empty libraries (`deckCount: 0`, `decks: []`).
+- **Deck Delete Confirm Protection (`openDeleteDeckConfirm` in `public/app.js`)**:
+  * Added non-blocking secondary action: `[💾 Export deck first]` (`#deleteExportBtn`).
+  * Downloads complete deck backup with progress (`includeProgress: true`) via `exportDeck`.
+  * Displays warm confirmation toast: `"Deck exported for safekeeping 🌿"`.
+  * **Dialog stays open**: The delete confirmation sheet remains visible and active, allowing the learner to proceed with "Keep deck" or "Delete permanently" with complete agency.
+- **Settings Danger Zone Full Reset Backup (`renderSettings` in `public/app.js`)**:
+  * Added dedicated pre-reset protective card in Settings Danger Zone above the reset control:
+    *"We strongly recommend saving a backup before resetting. You can restore your decks and progress anytime."*
+  * Renders explicit download action: `[💾 Download full library backup]` (`#backupLibraryBtn`).
+  * Triggers download of `lernin-backup-all-${Date.now()}.json` via `exportFullLibraryBackup()` and toasts `"Full library backup exported! 🌿"`.
+  * Does **not** bypass or alter the typing `RESET` confirmation gate (`confirmWrap`).
+- **Permanent Unit Tests & Headless Chrome CDP Verification**:
+  * Added permanent unit test suite `public/test_export_backup.mjs` (5 test blocks passing): verifies empty library bundle shape, single-deck export with progress, progress-free share copy, multi-deck library bundle with archived decks, JSON round-trip invariance, and missing deck error handling.
+  * Automated headless Chrome CDP verification confirming:
+    - Deck delete confirm sheet `#deleteExportBtn` presence, click handling, dialog retention, and screenshots across Light and Dark themes (`deck_delete_export_light.png`, `deck_delete_export_dark.png`).
+    - Settings Danger Zone protective copy and `#backupLibraryBtn` presence, click download trigger, warm toast, and screenshots across Light and Dark themes (`settings_backup_cta_light.png`, `settings_backup_cta_dark.png`).
+  * Full regression integrity confirmed: all 8 Node unit suites and Python 102 backend tests passing with exit code 0.
+
 **Tier 4 #6 — Honest 30-Day Recall Rate Label & Zero-Due Home Celebration (`public/db.js`, `public/app.js`, `public/styles.css`, `public/test_stats_metrics.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped honest metric labeling for 30-day review performance, replacing misleading "retention" nomenclature with a transparent recall rate definition and warm learning benchmark, while preserving atomic habit streak mechanics and celebrating zero-due backlog completion:
 - **Honest Metric Definition & DB Shape (`public/db.js`)**:
