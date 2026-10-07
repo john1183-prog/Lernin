@@ -2,13 +2,25 @@
    Active recall loop with flip animation, hints, keyboard, swipe, teach-it */
 
 import {
-  getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard, updateCardAfterReview,
-  getReviewLogForCard, getDeck, removeLastReviewLogForCard, updateLastReviewLogTeachingNote,
+  getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard,
+  getDeck, updateLastReviewLogTeachingNote,
   getLatestTeachingNoteForCard,
-  getRelationshipsFrom, getSetting,
+  getSetting,
   DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP
 } from './db.js';
-import { gradeCard, previewIntervals, Grade } from './scheduler.js';
+import { previewIntervals } from './scheduler.js';
+import {
+  prepareStudyQueue,
+  interleaveQueue,
+  gradeAndPersistCard,
+  undoGradeCard,
+  calculateSessionSummary,
+  formatInterval,
+  GRADE_MAP,
+  GRADE_TO_RATING,
+  toRating,
+  Grade
+} from './study-session-core.js';
 import { shouldOfferTeachIt, formatRelativeTime } from './teach-it.js';
 import {
   initSoundSetting, playFlip, playAgain, playHard, playGood, playEasy, playSessionComplete,
@@ -17,22 +29,7 @@ import {
 import { renderMath, showToast } from './app.js';
 import { checkCleanSweep } from './secrets.js';
 
-
-const GRADE_MAP = { '1': 'again', '2': 'hard', '3': 'good', '4': 'easy' };
-
-/** Map UI grade strings to ts-fsrs Rating numbers. */
-const GRADE_TO_RATING = {
-  again: Grade.AGAIN,
-  hard: Grade.HARD,
-  good: Grade.GOOD,
-  easy: Grade.EASY
-};
-
-function toRating(grade) {
-  const r = GRADE_TO_RATING[grade];
-  if (r == null) throw new Error(`Unknown grade: ${grade}`);
-  return r;
-}
+export { interleaveQueue };
 
 /* ---------- Reusable Quick Actions ---------- */
 
@@ -130,26 +127,14 @@ export async function startStudySession(container, opts = {}) {
     onExit: opts.onExit || null
   };
 
-  let cards;
-  if (session.deckId) {
-    cards = await getCardsDueForDeck(session.deckId);
-  } else {
-    cards = await getCardsDueTodayOrEarlier();
-  }
+  const queue = await prepareStudyQueue({
+    deckId: session.deckId,
+    startCardId: session.startCardId,
+    reviewCap,
+    newCap
+  });
 
-  // Filter out suspended
-  cards = cards.filter(c => !c.suspended);
-
-  // If a specific card was requested to study (e.g. from Territory Map L3 or Mind Map),
-  // ensure it is present in cards even if not otherwise due today.
-  if (session.startCardId) {
-    const specificCard = await getCard(session.startCardId);
-    if (specificCard && !specificCard.suspended && !cards.some(c => c.id === session.startCardId)) {
-      cards.unshift(specificCard);
-    }
-  }
-
-  if (cards.length === 0) {
+  if (queue.length === 0) {
     container.innerHTML = `
       <div class="study-session" style="justify-content:center;align-items:center;">
         <div class="empty-state">
@@ -167,148 +152,22 @@ export async function startStudySession(container, opts = {}) {
     return teardownStudySession;
   }
 
-  // Interleave new and review with soft caps and overdue-first ordering
-  session.queue = interleaveQueue(cards, { reviewCap, newCap });
-  session.capInfo = {
-    totalNew: session.queue.totalNew ?? cards.filter(c => c.state === 'new').length,
-    queuedNew: session.queue.queuedNew ?? session.queue.filter(c => c.state === 'new').length,
-    newTruncated: session.queue.newTruncated ?? (cards.filter(c => c.state === 'new').length > session.queue.filter(c => c.state === 'new').length),
-    totalReviews: session.queue.totalReviews ?? cards.filter(c => c.state !== 'new').length,
-    queuedReviews: session.queue.queuedReviews ?? session.queue.filter(c => c.state !== 'new').length,
-    reviewsTruncated: session.queue.reviewsTruncated ?? (cards.filter(c => c.state !== 'new').length > session.queue.filter(c => c.state !== 'new').length)
-  };
+  session.queue = queue;
+  session.capInfo = queue.capInfo;
 
   // Surface session cap if cards were truncated so large imports are never silent
-  if (session.capInfo.newTruncated && session.capInfo.reviewsTruncated) {
+  if (session.capInfo?.newTruncated && session.capInfo?.reviewsTruncated) {
     showToast(`${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new cards and ${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews in this session — more tomorrow! 🌿`, 5000);
-  } else if (session.capInfo.newTruncated) {
+  } else if (session.capInfo?.newTruncated) {
     showToast(`${session.capInfo.queuedNew} of ${session.capInfo.totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿`, 5000);
-  } else if (session.capInfo.reviewsTruncated) {
+  } else if (session.capInfo?.reviewsTruncated) {
     showToast(`${session.capInfo.queuedReviews} of ${session.capInfo.totalReviews} reviews in this session — more tomorrow. Steady pacing keeps recall strong! 🌿`, 5000);
-  }
-
-  // Smart ordering: soft-reorder so prerequisites (dependsOn) come
-  // before their dependents when both are already in today's queue.
-  // Never blocks, never injects cards from outside the queue — see
-  // UPCOMING_FEATURES.md for the full spec and reasoning.
-  try {
-    const smartOrderingEnabled = await getSetting('smartOrderingEnabled');
-    if (smartOrderingEnabled !== false) {
-      session.queue = await applyPrerequisiteOrdering(session.queue);
-    }
-  } catch (err) {
-    // Non-fatal — study with the plain interleaved order if this fails.
-  }
-
-  // Rotate to startCardId if specified — guaranteed to be at front even if outside soft cap
-  if (session.startCardId) {
-    const idx = session.queue.findIndex(c => c.id === session.startCardId);
-    if (idx > 0) {
-      const [card] = session.queue.splice(idx, 1);
-      session.queue.unshift(card);
-    } else if (idx === -1) {
-      const specificCard = await getCard(session.startCardId);
-      if (specificCard && !specificCard.suspended) {
-        session.queue.unshift(specificCard);
-      }
-    }
   }
 
   renderStudyUI(container);
   await showCard();
   attachKeyboard();
   return teardownStudySession;
-}
-
-export function interleaveQueue(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, newCap = DEFAULT_NEW_CARD_CAP } = {}) {
-  const allNews = cards.filter(c => c.state === 'new');
-  const allReviews = cards.filter(c => c.state !== 'new');
-
-  const news = allNews.slice(0, newCap);
-  const reviews = allReviews
-    .sort((a, b) => {
-      const timeA = a.due_date ? new Date(a.due_date).getTime() : 0;
-      const timeB = b.due_date ? new Date(b.due_date).getTime() : 0;
-      return timeA - timeB; // most overdue first (due_date ASC)
-    })
-    .slice(0, reviewCap);
-
-  const result = [];
-  let n = 0, r = 0;
-  while (n < news.length || r < reviews.length) {
-    if (n < news.length) result.push(news[n++]);
-    if (r < reviews.length) result.push(reviews[r++]);
-  }
-
-  result.totalNew = allNews.length;
-  result.queuedNew = news.length;
-  result.newTruncated = allNews.length > news.length;
-  result.totalReviews = allReviews.length;
-  result.queuedReviews = reviews.length;
-  result.reviewsTruncated = allReviews.length > reviews.length;
-
-  return result;
-}
-
-/**
- * Soft prerequisite-first reordering. For each card in the queue, pulls
- * its `dependsOn` prerequisites earlier if they're also in the queue
- * but currently positioned later — so a prerequisite gets reviewed (or
- * introduced) right before its dependent in the same session.
- *
- * Deliberately does NOT: exclude/block anything (a due review always
- * still appears — this only changes order), or pull in cards that
- * aren't already in the queue (a prerequisite in another deck, or one
- * that isn't due today, is simply left alone — this is what makes
- * cross-deck dependsOn safe without extra cross-deck logic). Suspended
- * prerequisites are treated as satisfied (skipped), since a leech
- * elsewhere shouldn't reorder an unrelated card.
- */
-async function applyPrerequisiteOrdering(queue) {
-  if (queue.length < 2) return queue;
-
-  const idSet = new Set(queue.map(c => c.id));
-  const prereqMap = new Map();
-
-  for (const card of queue) {
-    try {
-      const rels = await getRelationshipsFrom(card.id);
-      const prereqs = rels
-        .filter(r => r.type === 'dependsOn' && r.cardId !== card.id && idSet.has(r.cardId))
-        .map(r => r.cardId);
-      if (prereqs.length) prereqMap.set(card.id, prereqs);
-    } catch (err) {
-      // Non-fatal — skip reordering for this one card if lookup fails.
-    }
-  }
-
-  if (prereqMap.size === 0) return queue; // common case — nothing to do
-
-  const result = [...queue];
-  const maxPasses = result.length * 3; // safety valve against cycles
-  let passes = 0;
-  let moved = true;
-
-  while (moved && passes < maxPasses) {
-    moved = false;
-    passes++;
-    for (let i = 0; i < result.length; i++) {
-      const prereqs = prereqMap.get(result[i].id);
-      if (!prereqs) continue;
-      for (const prereqId of prereqs) {
-        const pIdx = result.findIndex(c => c.id === prereqId);
-        if (pIdx > i && !result[pIdx].suspended) {
-          const [p] = result.splice(pIdx, 1);
-          result.splice(i, 0, p);
-          moved = true;
-          break;
-        }
-      }
-      if (moved) break;
-    }
-  }
-
-  return result;
 }
 
 /* ---------- UI Rendering ---------- */
@@ -695,31 +554,16 @@ async function handleGrade(grade) {
     cardsSinceLastAuto: session.cardsSinceLastAuto
   });
 
-  // gradeCard returns { fsrsUpdate, reviewLogEntry, leech } — never spread the
-  // whole object onto the card record.
-  const result = gradeCard(card, toRating(grade));
-  const fsrsUpdate = result.fsrsUpdate;
-  const reviewLogEntry = {
-    grade,
-    reviewedAt: result.reviewLogEntry?.reviewedAt ?? Date.now(),
-    elapsedDays: result.reviewLogEntry?.elapsedDays ?? null,
-    teachingNote: null
-  };
-
-  // Keep the in-memory queue in sync so later undos / previews see new FSRS fields
-  Object.assign(card, fsrsUpdate);
-  if (session.queue[session.index]) Object.assign(session.queue[session.index], fsrsUpdate);
+  const res = await gradeAndPersistCard({ card, grade });
+  if (session.queue[session.index]) Object.assign(session.queue[session.index], res.fsrsUpdate);
 
   session.results[grade]++;
-
-  // Persist the grade to IndexedDB before opening Teach-It so Escape or session exit cannot drop it
-  await persistGrade(card, fsrsUpdate, reviewLogEntry);
 
   // Evaluate automatic Teach-It offer (locked milestone & pacing policy)
   const autoOffer = shouldOfferTeachIt({
     grade,
     prevState: snapshotCard.state,
-    nextState: fsrsUpdate.state,
+    nextState: res.nextState,
     lapses: snapshotCard.lapses ?? 0,
     autoOfferedThisSession: session.autoOfferedThisSession,
     cardsSinceLastAuto: session.cardsSinceLastAuto
@@ -728,12 +572,12 @@ async function handleGrade(grade) {
   if (autoOffer) {
     session.autoOfferedThisSession++;
     session.cardsSinceLastAuto = 0;
-    showTeachIt(card, fsrsUpdate, reviewLogEntry, result.leech, { isPostGrade: true });
+    showTeachIt(card, res.fsrsUpdate, res.reviewLogEntry, res.leech, { isPostGrade: true });
     return;
   }
 
   session.cardsSinceLastAuto++;
-  animateCardExit(result.leech);
+  animateCardExit(res.leech);
 }
 
 function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false, opts = {}) {
@@ -812,10 +656,6 @@ function showTeachIt(card, fsrsUpdate, reviewLogEntry, isLeech = false, opts = {
   });
 }
 
-async function persistGrade(card, fsrsUpdate, reviewLogEntry) {
-  await updateCardAfterReview(card.id, fsrsUpdate, reviewLogEntry);
-}
-
 export async function undoLastGrade() {
   if (session.undoStack.length === 0) return;
 
@@ -833,21 +673,8 @@ export async function undoLastGrade() {
   }
 
   try {
-    // Restore card to previous state
-    await updateCardAfterReview(card.id, {
-      state: card.state,
-      difficulty: card.difficulty,
-      stability: card.stability,
-      reps: card.reps,
-      lapses: card.lapses,
-      last_review: card.last_review,
-      due_date: card.due_date,
-      suspended: card.suspended ?? false,
-      leech: card.leech ?? false
-    }, null);
-
-    // Remove the last review log entry
-    await removeLastReviewLogForCard(card.id);
+    // Restore card to previous state and remove the last review log entry
+    await undoGradeCard(card);
 
     // Decrement result count
     session.results[lastAction.grade]--;
@@ -1075,8 +902,9 @@ async function renderSessionSummary() {
   const container = document.querySelector('.study-session');
   if (!container) return;
 
-  const total = session.results.again + session.results.hard + session.results.good + session.results.easy;
-  const accuracy = total > 0 ? Math.round(((session.results.good + session.results.easy) / total) * 100) : 0;
+  const summary = calculateSessionSummary(session.results);
+  const total = summary.total;
+  const accuracy = summary.accuracy;
   const circumference = 2 * Math.PI * 52;
   const offset = circumference - (accuracy / 100) * circumference;
   const cleanSweepMsg = checkCleanSweep(session.results);
@@ -1128,7 +956,7 @@ async function renderSessionSummary() {
           <div class="session-summary-stat-label">Again</div>
         </div>
         <div class="session-summary-stat">
-          <div class="session-summary-stat-value">${session.results.good + session.results.easy}</div>
+          <div class="session-summary-stat-value">${summary.goodPlus}</div>
           <div class="session-summary-stat-label">Good+</div>
         </div>
       </div>
@@ -1206,13 +1034,6 @@ export function endStudySession() {
 }
 
 /* ---------- Utilities ---------- */
-function formatInterval(days) {
-  if (days < 1 / 1440) return '<1m';
-  if (days < 1 / 24) return `${Math.round(days * 1440)}m`;
-  if (days < 1) return `${Math.round(days * 24)}h`;
-  if (days < 30) return `${Math.round(days)}d`;
-  return `${Math.round(days / 30)}mo`;
-}
 
 function escapeHtml(str) {
   const div = document.createElement('div');

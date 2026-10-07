@@ -1,15 +1,41 @@
 /* spatial-study.js — Review cards at their map positions
-   Uses the same FSRS scheduler as study.js but renders card modals
+   Uses the unified study-session-core.js engine but renders card modals
    over the live map instead of replacing the root DOM.
+
+   Invariants:
+   - Self-contained DOM feedback: NEVER imports app.js (prevents circular dependencies with canvas.js).
+   - No Teach-It sheets in spatial view (map camera/path context only).
 */
 
+import { getCard } from './db.js';
+import { previewIntervals } from './scheduler.js';
 import {
-  getCardsDueForDeck, getCardsDueTodayOrEarlier, updateCardAfterReview, getCard,
-  DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP, getSetting
-} from './db.js';
-import { gradeCard, previewIntervals, Grade } from './scheduler.js';
-import { showToast } from './app.js';
-import { interleaveQueue } from './study.js';
+  prepareStudyQueue,
+  gradeAndPersistCard,
+  calculateSessionSummary,
+  formatInterval
+} from './study-session-core.js';
+
+/**
+ * Lightweight, self-contained toast helper for spatial review.
+ * Appends to the global .toast-container without introducing a circular module import from app.js.
+ */
+function showToast(message, duration = 4000) {
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('is-leaving');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, duration);
+}
 
 /**
  * @param {HTMLElement} container  map root (canvas lives inside)
@@ -35,13 +61,9 @@ export async function startSpatialReview(container, deckId, opts = {}) {
       _notDue: (c.due_date || 0) > now || c.suspended
     }));
   } else {
-    cards = await getCardsDueForDeck(deckId);
-    cards = cards.filter(c => !c.suspended);
-    const reviewCap = (await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP;
-    const newCap = DEFAULT_NEW_CARD_CAP;
-    cards = interleaveQueue(cards, { reviewCap, newCap });
-    if (cards.newTruncated) {
-      showToast(`${cards.queuedNew} of ${cards.totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿`, 5000);
+    cards = await prepareStudyQueue({ deckId });
+    if (cards.capInfo?.newTruncated) {
+      showToast(`${cards.capInfo.queuedNew} of ${cards.capInfo.totalNew} new cards in this session — more tomorrow. Pacing keeps learning durable! 🌿`, 5000);
     }
   }
 
@@ -125,10 +147,10 @@ export async function startSpatialReview(container, deckId, opts = {}) {
     if (!actions) return;
     actions.innerHTML = `
       <div class="spatial-grade-bar">
-        <button data-g="again">Again<br><small>${fmt(intervals.again)}</small></button>
-        <button data-g="hard">Hard<br><small>${fmt(intervals.hard)}</small></button>
-        <button data-g="good">Good<br><small>${fmt(intervals.good)}</small></button>
-        <button data-g="easy">Easy<br><small>${fmt(intervals.easy)}</small></button>
+        <button data-g="again">Again<br><small>${formatInterval(intervals.again)}</small></button>
+        <button data-g="hard">Hard<br><small>${formatInterval(intervals.hard)}</small></button>
+        <button data-g="good">Good<br><small>${formatInterval(intervals.good)}</small></button>
+        <button data-g="easy">Easy<br><small>${formatInterval(intervals.easy)}</small></button>
       </div>
     `;
     actions.querySelectorAll('button[data-g]').forEach(btn => {
@@ -139,48 +161,28 @@ export async function startSpatialReview(container, deckId, opts = {}) {
   async function handleGrade(grade) {
     const card = state.queue[state.index];
     if (!card._notDue) {
-      const GRADE_TO_RATING = {
-        again: Grade.AGAIN,
-        hard: Grade.HARD,
-        good: Grade.GOOD,
-        easy: Grade.EASY
-      };
-      const rating = GRADE_TO_RATING[grade];
-      if (rating == null) {
-        console.error('Unknown grade', grade);
-        state.index++;
-        showCurrent();
-        return;
+      try {
+        await gradeAndPersistCard({ card, grade });
+        state.results[grade]++;
+        opts.onGrade?.(card.id, grade);
+      } catch (err) {
+        console.error('Failed to grade card in spatial review:', err);
       }
-      // gradeCard returns { fsrsUpdate, reviewLogEntry, leech }
-      const result = gradeCard(card, rating);
-      const fsrsUpdate = result.fsrsUpdate;
-      await updateCardAfterReview(card.id, fsrsUpdate, {
-        grade,
-        reviewedAt: result.reviewLogEntry?.reviewedAt ?? Date.now(),
-        elapsedDays: result.reviewLogEntry?.elapsedDays ?? null,
-        teachingNote: null
-      });
-      Object.assign(card, fsrsUpdate);
-      state.results[grade]++;
-      opts.onGrade?.(card.id, grade);
     }
     state.index++;
     showCurrent();
   }
 
   function renderSummary() {
-    const total = state.results.again + state.results.hard + state.results.good + state.results.easy;
-    const accuracy = total > 0
-      ? Math.round(((state.results.good + state.results.easy) / total) * 100) : 0;
+    const summary = calculateSessionSummary(state.results);
     cardHost.innerHTML = `
       <div class="spatial-review-card spatial-summary">
-        <div class="spatial-summary-score">${accuracy}%</div>
+        <div class="spatial-summary-score">${summary.accuracy}%</div>
         <div class="spatial-summary-label">Session accuracy</div>
         <div class="spatial-summary-stats">
-          <span>${total} cards</span>
-          <span>${state.results.again} again</span>
-          <span>${state.results.good + state.results.easy} good+</span>
+          <span>${summary.total} cards</span>
+          <span>${summary.again} again</span>
+          <span>${summary.goodPlus} good+</span>
         </div>
         <button class="btn-primary" id="spDone">Back to map</button>
       </div>
@@ -208,14 +210,6 @@ export async function startSpatialReview(container, deckId, opts = {}) {
   document.addEventListener('keydown', onKey);
 
   showCurrent();
-}
-
-function fmt(days) {
-  if (days < 1 / 1440) return '<1m';
-  if (days < 1 / 24) return `${Math.round(days * 1440)}m`;
-  if (days < 1) return `${Math.round(days * 24)}h`;
-  if (days < 30) return `${Math.round(days)}d`;
-  return `${Math.round(days / 30)}mo`;
 }
 
 function escapeHtml(str) {

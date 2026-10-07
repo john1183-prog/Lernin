@@ -6,7 +6,7 @@
 // "don't cache it" — api.js's own offline queue (genQueue in db.js) is what
 // handles a failed /generate-cards request, not this file.
 
-const CACHE_VERSION = 'lernin-shell-v34';
+const CACHE_VERSION = 'lernin-shell-v35';
 
 // Bump CACHE_VERSION on every release that changes app code, assets, or styles.
 // When bumped, the browser installs the new shell in the background into a fresh
@@ -26,6 +26,7 @@ const SHELL_ASSETS = [
   '/scheduler.js',
   '/fsrs-fit.js',
   '/teach-it.js',
+  '/study-session-core.js',
   '/study.js',
   '/sound.js',
   '/canvas.js',

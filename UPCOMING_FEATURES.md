@@ -1069,6 +1069,35 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Tier 4 #7 Phase B — Study Session Core Unification & Spatial Dependency Fix (`public/study-session-core.js`, `public/study.js`, `public/spatial-study.js`, `public/sw.js`, `public/test_study_session_core.mjs`, `UPCOMING_FEATURES.md`)** —
+unified shared study session queue preparation, rating interval formatting, grading & persistence contracts (with milestone signals), and session summary calculations into `public/study-session-core.js`, refactored `study.js` and `spatial-study.js` to consume the unified core, eliminated illegal circular dependencies on `app.js` from `spatial-study.js` by using self-contained DOM toast helpers, precached the new module in Service Worker (`lernin-shell-v35`), and verified across classic and spatial review:
+- **Study Session Engine Core (`public/study-session-core.js`)**:
+  * Created strictly self-contained core module importing only `db.js` and `scheduler.js` (zero imports from `app.js` or `study.js`, preserving AGENTS.md module hierarchy invariants).
+  * `prepareStudyQueue({ deckId, cards, startCardId, reviewCap, newCap, enableSmartOrdering })`: fetches or normalizes cards, excludes suspended cards (drafts and leeches), enforces soft daily caps (`DEFAULT_DAILY_REVIEW_CAP`, `DEFAULT_NEW_CARD_CAP`), applies overdue-first review sorting and interleaving, soft-orders prerequisites (`dependsOn`) via `applyPrerequisiteOrdering`, guarantees `startCardId` priority at index 0, and attaches `capInfo`.
+  * `interleaveQueue(cards, opts)` & `applyPrerequisiteOrdering(queue)`: pure queue assembly and prerequisite soft-ordering algorithms extracted into shared engine.
+  * `formatInterval(days)` & `previewCardIntervals(card)`: unified interval preview strings (`<1m`, `10m`, `4h`, `3d`, `2mo`) across study buttons.
+  * `gradeAndPersistCard({ card, grade, now, teachingNote })`: standard contract mapping grade string/rating $\rightarrow$ executing FSRS `gradeCard` $\rightarrow$ persisting to IndexedDB via `updateCardAfterReview` $\rightarrow$ syncing in-memory card $\rightarrow$ returning `{ card, grade, rating, fsrsUpdate, reviewLogEntry, leech, prevState, nextState, isGraduation, isRecovery }`.
+  * `undoGradeCard(cardSnapshot)`: restores pre-grade card state and removes last reviewLog entry.
+  * `calculateSessionSummary(results, startTime, endTime)`: pure calculation of `{ total, again, hard, good, easy, goodPlus, accuracy, durationMs }`.
+- **Classic Study Integration (`public/study.js`)**:
+  * Refactored `startStudySession`, `handleGrade`, `undoLastGrade`, and `renderSessionSummary` to consume `study-session-core.js`.
+  * Re-exported `interleaveQueue` for backwards compatibility.
+  * Preserved all classic features: Teach-It sheets on milestones, Web Audio oscillator sounds, leech banish animation, and full undo stack.
+- **Spatial Review & Architecture Invariant Fix (`public/spatial-study.js`)**:
+  * Consumed `prepareStudyQueue`, `gradeAndPersistCard`, `calculateSessionSummary`, and `formatInterval` from `study-session-core.js`.
+  * **Eliminated `app.js` import**: replaced `showToast` from `app.js` with a lightweight, self-contained helper appending directly to `.toast-container`, strictly honoring the AGENTS.md canvas module hierarchy rule that canvas subsystems must never depend on `app.js`.
+  * **Eliminated `study.js` import**: removed duplicate `interleaveQueue` import.
+  * Maintained spatial design contract: zero Teach-It sheets on canvas/spatial view (context remains dedicated to map camera and path nodes).
+- **Service Worker Shell Update (`public/sw.js`)**:
+  * Added `'/study-session-core.js'` to `SHELL_ASSETS` precache list.
+  * Bumped shell cache version to `'lernin-shell-v35'`.
+- **Permanent Unit Tests & Headless Chrome CDP Verification**:
+  * Added permanent unit test suite `public/test_study_session_core.mjs` (8 test blocks passing): `formatInterval` formatting across minute/hour/day/month thresholds, `previewCardIntervals`, `interleaveQueue` caps and overdue sorting, `applyPrerequisiteOrdering`, `prepareStudyQueue` suspended filtering & startCardId priority, `gradeAndPersistCard` milestone signals & DB persistence, `undoGradeCard`, and `calculateSessionSummary`.
+  * Headless Chrome CDP automated verification:
+    - Classic study session: card display, revealed interval hints (`<1m`), grade persist (`reviewLog` write), screenshots across Light and Dark themes (`study_core_classic_light.png`, `study_core_classic_dark.png`).
+    - Spatial review session over canvas map: card modal over map, 4 interval grade buttons, grading card, no Teach-It sheet present, summary calculation (`100%`), zero console errors / zero circular dependency errors, screenshots across Light and Dark themes (`study_core_spatial_light.png`, `study_core_spatial_dark.png`).
+  * Full regression integrity: all 9 Node test suites (`test_study_session_core.mjs`, `test_export_backup.mjs`, `test_stats_metrics.mjs`, `test_card_approval.mjs`, `test_card_fidelity.mjs`, `test_teach_it.mjs`, `test_scheduler_fitting.mjs`, `test_motion_card_extract.mjs`, `test_motion_player_audio.mjs`) and Python backend test suite (102 tests) passing with exit code 0.
+
 **Tier 4 #7 Phase A — Pre-Wipe Export Reminder & Full Library Backup Download (`public/db.js`, `public/app.js`, `public/test_export_backup.mjs`, `UPCOMING_FEATURES.md`)** —
 shipped protective pre-wipe export affordances and full library backup downloads safeguarding learner data against irreversible data loss without blocking friction or nag modals (Phase A complete; Phase B session core unification remains open):
 - **Full Library Export Bundle (`public/db.js`)**:
