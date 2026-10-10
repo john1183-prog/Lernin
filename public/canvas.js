@@ -121,7 +121,8 @@ export async function initCanvasView(targetContainer, opts = {}) {
   container.className = 'map-root';
   container.style.position = 'relative';
   container.style.width = '100%';
-  container.style.height = '100%';
+  container.style.height = '100vh';
+  container.style.height = '100dvh';   // visible height, so the toolbar is never under the URL bar
   container.style.overflow = 'hidden';
 
   canvasEl = document.createElement('canvas');
@@ -787,12 +788,23 @@ function drawTerritory(territory, viewport) {
   }
   // Territory label
   if (camera.zoom > 0.35 && territory.id !== 'uncategorized') {
-    const s = worldToScreen(territory.center.x, territory.center.y - 80);
+    // Anchor to the islands themselves: territory.center is nominal and can sit far from where
+    // islands were actually placed, which left the label floating over empty sea.
+    let topY = territory.center.y, sumX = 0;
+    if (territory.islands.length) {
+      topY = Math.min(...territory.islands.map(i => i.pos.y));
+      sumX = territory.islands.reduce((a, i) => a + i.pos.x, 0) / territory.islands.length;
+    }
+    const s = worldToScreen(territory.islands.length ? sumX : territory.center.x, topY - ISLAND_RADIUS_BASE);
     ctx.fillStyle = MAP_INK;
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.7;
     ctx.font = `600 ${Math.max(11, 13 * camera.zoom)}px system-ui,sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(territory.id, s.x, s.y);
+    let label = String(territory.id);
+    const maxW = Math.min(canvasEl.clientWidth - 24, 280);
+    while (label.length > 2 && ctx.measureText(label).width > maxW) label = label.slice(0, -2).trimEnd() + '…';
+    const tw = ctx.measureText(label).width;
+    ctx.fillText(label, Math.max(tw / 2 + 12, Math.min(canvasEl.clientWidth - tw / 2 - 12, s.x)), s.y - 12);
     ctx.globalAlpha = 1;
   }
 }

@@ -180,6 +180,16 @@ console.log('=== 2. previewCardIntervals returns raw and formatted intervals ===
   assert.ok(typeof preview.formatted.good === 'string');
   assert.ok(typeof preview.formatted.easy === 'string');
   console.log('  ok - previewCardIntervals returns formatted strings for all 4 ratings');
+
+  // Learning and relearning steps are minutes, and ts-fsrs reports scheduled_days = 0 for them,
+  // so labels built from it read "<1m" on Again/Hard/Good. They must come from due - now.
+  for (const key of ['again', 'hard', 'good']) {
+    assert.ok(preview.intervals[key] > 0, `${key} has a real wait`);
+    assert.notEqual(preview.formatted[key], '<1m', `${key} label is a real interval, not "<1m"`);
+  }
+  assert.ok(preview.intervals.again < preview.intervals.good, 'Again waits less than Good');
+  assert.ok(preview.intervals.good < preview.intervals.easy, 'Good waits less than Easy');
+  console.log('  ok - Again/Hard/Good labels are real waits (not "<1m") and ordered Again < Good < Easy');
 }
 
 console.log('=== 3. interleaveQueue caps, overdue-first sorting, and interleaving ===');

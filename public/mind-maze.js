@@ -1496,7 +1496,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
 
   const wrap = document.createElement('div');
   wrap.className = 'mind-maze-view';
-  wrap.style.cssText = 'position:relative; width:100%; height:100%; min-height:520px; display:flex; flex-direction:column; overflow:hidden; user-select:none;';
+  wrap.style.cssText = 'position:relative; width:100%; height:100vh; height:100dvh; min-height:520px; display:flex; flex-direction:column; overflow:hidden; user-select:none;';
 
   const deckTitle = deck?.title || deckId || 'Territory';
 

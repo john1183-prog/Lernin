@@ -59,7 +59,7 @@ function fitCameraToContent() {
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  const spanX = Math.max(200, maxX - minX + 160);
+  const spanX = Math.max(200, maxX - minX + 340);   // labels hang ~110px outside the outer nodes
   const spanY = Math.max(200, maxY - minY + 160);
   const rect = canvasEl.getBoundingClientRect();
   const zoom = rect.width && rect.height ? Math.min(rect.width / spanX, rect.height / spanY, 1.4) : 1;
@@ -281,7 +281,7 @@ export async function renderDocumentMindMap(rootEl, documentId, opts = {}) {
   container.style.padding = '0';
 
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column;';
+  wrap.style.cssText = 'position:relative; width:100%; height:100vh; height:100dvh; display:flex; flex-direction:column;';
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `

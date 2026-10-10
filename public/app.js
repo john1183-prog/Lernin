@@ -219,7 +219,17 @@ function formatUploadDate(ts) {
 
 /* ---------- Routing ---------- */
 export function navigate(path) {
+  // Same-hash navigation fires no hashchange, so run the route ourselves —
+  // otherwise tapping something that points at the page you are "on" silently does nothing.
+  if (window.location.hash === '#' + path) { handleRoute(); return; }
   window.location.hash = path;
+}
+
+// Views leave their layout on #root (the study screen turns it into a position:fixed layer,
+// maps set overflow:hidden and inline sizes). Every route starts from a clean shell.
+function resetRootChrome() {
+  root.className = '';
+  root.removeAttribute('style');
 }
 
 function goBack() {
@@ -259,6 +269,10 @@ async function handleRoute() {
   runViewCleanup();
 
   document.querySelectorAll('.sheet-backdrop, .sheet').forEach(el => el.remove());
+
+  // Clean shell + top of page for every route
+  resetRootChrome();
+  window.scrollTo({ top: 0, behavior: 'instant' });
 
   switch (route) {
     case '/': await renderDeckList(); break;
@@ -529,6 +543,8 @@ async function handleUseStreakFreeze(onSuccess) {
 }
 
 export async function renderDeckList() {
+  const keepY = window.scrollY;   // in-place re-renders (view toggle, archive, ...) keep their place
+  resetRootChrome();
   root.innerHTML = '';
   root.style.padding = '0';
   maybePlayIdentityChime();
@@ -832,6 +848,7 @@ export async function renderDeckList() {
     list.style.padding = '0 var(--space-md)';
   } else if (viewMode === 'horizontal') {
     list.style.display = 'flex';
+    list.style.flexDirection = 'row';
     list.style.overflowX = 'auto';
     list.style.gap = 'var(--space-sm)';
     list.style.padding = '0 var(--space-md)';
@@ -917,6 +934,7 @@ export async function renderDeckList() {
   root.appendChild(newBtn);
 
   renderMath(root);
+  if (keepY) window.scrollTo({ top: keepY, behavior: 'instant' });
 }
 
 async function buildDeckTile(deck) {
@@ -3847,6 +3865,7 @@ async function renderCardBrowser(deckId) {
     showToast('Failed to load cards.', 5000);
     return goBack();
   }
+  if (!deck) return goBack();   // deleted/unknown deck (stale link): same guard renderDocuments has
 
   root.innerHTML = '';
   root.style.padding = '0';
@@ -4060,6 +4079,7 @@ export async function renderLeechView(deckId) {
     showToast('Failed to load leeches.', 5000);
     return goBack();
   }
+  if (!deck) return goBack();   // deleted/unknown deck (stale link): same guard renderDocuments has
 
   root.innerHTML = '';
   root.style.padding = '0';
@@ -4250,7 +4270,7 @@ export async function renderCardDetailView(card, deck) {
   header.querySelector('#detailBack').addEventListener('click', () => navigate(`/cards/${deck.id}`));
 
   const body = document.createElement('div');
-  body.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:12px;';
+  body.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:12px; overflow-wrap:anywhere;';
 
   if (card.fidelityFlag && card.fidelityFlag.status === 'unverified') {
     const isDraft = isDraftCard(card);
@@ -4527,11 +4547,11 @@ async function renderDocuments(deckId) {
       const row = document.createElement('div');
       row.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); margin-bottom:8px; display:flex; align-items:center; justify-content:space-between;';
       row.innerHTML = `
-        <div>
-          <div style="font-size:14px; font-weight:600; color:var(--ink);">${escapeHtml(doc.filename)}</div>
+        <div style="min-width:0; flex:1;">
+          <div style="font-size:14px; font-weight:600; color:var(--ink); overflow-wrap:anywhere;">${escapeHtml(doc.filename)}</div>
           <div style="font-size:12px; color:var(--ink-muted);">${formatFileSize(doc.size)} · ${formatUploadDate(doc.uploadedAt)}</div>
         </div>
-        <div style="display:flex; align-items:center; gap:4px;">
+        <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
           <button class="doc-mindmap-btn" data-id="${doc.id}" title="Mind Map" aria-label="Mind Map" style="width:32px;height:32px;border:none;background:transparent;color:var(--ink-secondary);font-size:16px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🧠</button>
           <button class="doc-delete-btn" data-id="${doc.id}" style="width:32px;height:32px;border:none;background:transparent;color:var(--danger);font-size:18px;cursor:pointer;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🗑</button>
         </div>
@@ -4605,7 +4625,7 @@ async function renderCourseRecapView(deckId) {
       const block = document.createElement('div');
       block.style.cssText = 'background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-sm); margin-bottom:12px;';
       block.innerHTML = `
-        <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtml(doc.filename)}</div>
+        <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; overflow-wrap:anywhere;">${escapeHtml(doc.filename)}</div>
         <div style="font-size:13px; color:var(--ink-secondary); line-height:1.6;">${escapeHtml(doc.summary || 'No summary available.')}</div>
       `;
       body.appendChild(block);

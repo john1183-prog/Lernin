@@ -253,7 +253,7 @@ export async function renderMindMap(rootEl, deckId, opts = {}) {
   container.style.padding = '0';
 
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column;';
+  wrap.style.cssText = 'position:relative; width:100%; height:100vh; height:100dvh; display:flex; flex-direction:column;';
 
   const header = document.createElement('div');
   header.className = 'app-header';

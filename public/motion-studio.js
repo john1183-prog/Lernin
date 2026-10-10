@@ -78,7 +78,7 @@ export async function renderMotionStudio(rootEl, deckId, opts = {}) {
     <div class="ms-body" style="padding: var(--space-md); max-width: 640px; margin: 0 auto;">
       <div class="ms-row" style="display:flex; gap:var(--space-sm); align-items:flex-start; margin-bottom:var(--space-md);">
         <input class="ms-topic-input" id="msTopicInput" type="text" placeholder="e.g. how a capacitor charges"
-               style="flex:1; padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--ink-secondary); font-size:15px; background:var(--surface); color:var(--ink);" />
+               style="flex:1; min-width:0; padding:10px 12px; border-radius:var(--radius-md); border:1px solid var(--ink-secondary); font-size:15px; background:var(--surface); color:var(--ink);" />
         <button class="btn-primary" id="msGenerateBtn">Generate</button>
       </div>
       <div id="msStatusArea" style="font-size:13px; color:var(--ink-muted); margin-bottom:8px;"></div>

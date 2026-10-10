@@ -21,6 +21,7 @@ body {
   color: var(--ink);
   line-height: 1.5;
   min-height: 100vh;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -176,6 +177,7 @@ body {
 /* ---------- App Shell ---------- */
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
   padding-bottom: env(safe-area-inset-bottom);
 }
 
@@ -415,8 +417,9 @@ body {
 /* ---------- Stats Strip ---------- */
 .stats-strip {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-lg);
+  gap: var(--space-sm) var(--space-lg);
   margin: 0 var(--space-md) var(--space-md);
   padding: var(--space-md) var(--space-lg);
   background: var(--surface);
@@ -438,7 +441,10 @@ body {
   font-size: 16px;
 }
 
+.stat-item { white-space: nowrap; }
+
 .stat-link {
+  white-space: nowrap;
   margin-left: auto;
   font-size: 14px;
   color: var(--accent);
@@ -1093,6 +1099,7 @@ body {
   max-width: 560px;
   aspect-ratio: 3/4;
   max-height: 70vh;
+  max-height: min(70dvh, 100%);   /* never taller than the space the card area really has (landscape phones) */
 }
 
 .study-card-inner {
@@ -1129,8 +1136,10 @@ body {
 .study-card-content {
   flex: 1;
   display: flex;
-  align-items: center;
+  flex-direction: column;       /* text block, then the note area underneath it */
+  align-items: stretch;
   justify-content: center;
+  justify-content: safe center; /* centred, but a long card scrolls from its top instead of cutting it off */
   font-size: 18px;
   line-height: 1.7;
   color: var(--ink);
@@ -1139,6 +1148,15 @@ body {
 
 .study-card-content .katex-display {
   margin: var(--space-md) 0;
+}
+
+/* The card text is ONE block, so cloze highlights and inline markup stay in the same line of text */
+.study-card-text {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin-inline: auto;
+  overflow-x: auto;             /* a very wide formula scrolls inside the card instead of being cut off */
 }
 
 /* Hint area inside card */
@@ -1704,6 +1722,8 @@ body {
   bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
+  width: max-content;                       /* left:50% limited shrink-to-fit to half the screen (180px on a phone) */
+  max-width: calc(100vw - 2 * var(--space-md));
   z-index: 200;
   pointer-events: none;
 }
@@ -1717,7 +1737,8 @@ body {
   font-size: 14px;
   font-weight: 500;
   animation: toastIn 0.3s ease;
-  pointer-events: auto;
+  pointer-events: none;
+  text-align: center;
 }
 
 .toast.is-leaving {
@@ -1758,6 +1779,7 @@ body {
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--accent-soft);
   max-width: min(92vw, 440px);
+  pointer-events: auto;          /* it holds Refresh / Later; plain toasts let taps through to the page */
 }
 
 .update-prompt-text {
@@ -2000,6 +2022,22 @@ input, textarea, select {
   border-radius: 3px;
 }
 
+/* Short screens (landscape phones): overlays scroll instead of hiding their buttons, and the summary compacts */
+.study-shortcuts-overlay { align-items: safe center; overflow-y: auto; }
+.study-session { overflow-y: auto; }
+@media (max-height: 480px) {
+  .session-summary { padding-block: var(--space-md); }
+  .session-summary-ring { width: 84px; height: 84px; margin-bottom: var(--space-md); }
+  .session-summary-ring svg { width: 100%; height: 100%; }   /* the SVG has a viewBox: let it scale with the ring */
+  .session-summary-label { margin-bottom: var(--space-md); }
+  .session-summary-stats { margin-bottom: var(--space-md); }
+}
+
+/* KaTeX display math: scroll sideways inside its own box rather than widening the page */
+.katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+
+.deck-list > .empty-state { grid-column: 1 / -1; }
+
 /* Responsive */
 @media (min-width: 768px) {
   .study-card-wrap {
@@ -2014,6 +2052,7 @@ input, textarea, select {
 /* ---------- Manual JSON Import ---------- */
 .manual-import-view {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
 }
 

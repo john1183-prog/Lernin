@@ -304,12 +304,12 @@ async function showCard() {
   // Front
   const front = document.createElement('div');
   front.className = 'study-card-front';
-  front.innerHTML = `<div class="study-card-content">${renderFront(card)}</div>`;
+  front.innerHTML = `<div class="study-card-content"><div class="study-card-text">${renderFront(card)}</div></div>`;
 
   // Back (hidden until flip)
   const back = document.createElement('div');
   back.className = 'study-card-back';
-  back.innerHTML = `<div class="study-card-content">${renderBack(card)}</div>`;
+  back.innerHTML = `<div class="study-card-content"><div class="study-card-text">${renderBack(card)}</div></div>`;
 
   const noteArea = document.createElement('div');
   noteArea.className = 'study-card-note-area';

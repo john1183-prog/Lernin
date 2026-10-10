@@ -245,11 +245,14 @@ export function previewIntervals(cardRecord, now = new Date()) {
   const fsrsCard = fromStoredCard(cardRecord);
   const preview = currentScheduler.repeat(fsrsCard, now);
 
+  // scheduled_days is 0 for every learning/relearning step (those are minutes), which printed
+  // "<1m" on Again/Hard/Good. due - now is the real wait in all states.
+  const days = (r) => Math.max(0, (preview[r].card.due.getTime() - now.getTime()) / 86400000);
   return {
-    again: preview[Rating.Again].card.scheduled_days,
-    hard: preview[Rating.Hard].card.scheduled_days,
-    good: preview[Rating.Good].card.scheduled_days,
-    easy: preview[Rating.Easy].card.scheduled_days
+    again: days(Rating.Again),
+    hard: days(Rating.Hard),
+    good: days(Rating.Good),
+    easy: days(Rating.Easy)
   };
 }
 
