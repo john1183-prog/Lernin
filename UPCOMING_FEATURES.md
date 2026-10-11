@@ -1093,7 +1093,7 @@ fixed the layout and state bugs behind three phone screenshots (Study with "Expl
   * Bumped the shell cache to `lernin-shell-v36` so installed copies pick the fixes up through the existing "New version ready — refresh?" prompt.
 - **Permanent Unit Test & Headless Chrome Verification**:
   * `public/test_study_session_core.mjs` block 2 now asserts that Again/Hard/Good labels for a new card are real waits (not `<1m`) and ordered Again < Good < Easy; the assertion fails on `6820465` and passes now.
-  * Headless Chromium (Playwright) sweeps of 73 screen states (Home variants, every study card layout, maps, mind maps, sheets, settings, help) at 11 viewports from 320×568 to 1920×1080 in light, 3 of them also in dark, comparing `6820465` with this change: horizontal overflow, squeezed content and unreachable controls went to 0 at every viewport (at 320×568: 19, 15 and 21 before), with zero JS errors. Mind-map canvases at phone width went from 26% to 92% of the screen. Real-device and iOS Safari confirmation is still open.
+  * Headless Chromium (Playwright) sweeps of 66 screen states (70 at 360 px, which adds four rotate-to-landscape checks; Home variants, every study card layout, maps, mind maps, sheets, settings, help) at 11 viewports from 320×568 to 1920×1080 in light, 3 of them also in dark, comparing `6820465` with this change: horizontal overflow and squeezed content went to 0 at every viewport, and unreachable controls too except at 1920×1080, where two Reading Toolkit "Copy" buttons inside closed accordion sections are still reported (they only exist once the section opens). At 320×568 the three counts were 19, 15 and 21 before. Zero JS errors. Mind-map canvases at phone width went from 26% to 92% of the screen. Real-device and iOS Safari confirmation is still open.
   * Full regression integrity: `node public/test_motion_player_audio.mjs` and `python -m unittest discover -s api -p "test_*.py"` (102 tests) exit 0, as do the other Node suites (`test_motion_frontend.mjs` run against a fresh local backend with `fake-indexeddb`).
 
 **Tier 4 #7 Phase B — Study Session Core Unification & Spatial Dependency Fix (`public/study-session-core.js`, `public/study.js`, `public/spatial-study.js`, `public/sw.js`, `public/test_study_session_core.mjs`, `UPCOMING_FEATURES.md`)** —
@@ -1670,9 +1670,12 @@ shipped residual Home-screen polish fixes following the UI/UX architecture build
   * Replaced low-contrast light-sage gradient in dark theme with a deep, saturated pine / forest green
     gradient (`linear-gradient(135deg, #14351C 0%, #0D2313 100%)`) with a subtle green border
     (`rgba(102, 187, 106, 0.28)`) and elevated shadow.
-  * Title text rendered in crisp pure white (`#FFFFFF`, ~12.2:1 contrast), subtitle in soft sage
-    (`#A3C4A8`, ~7.5:1 contrast), and CTA button in vibrant mint (`#66BB6A` with `#08160B` dark text,
-    ~10.4:1 contrast). Light theme remains untouched with deep forest green gradient and white text.
+  * Title text rendered in crisp pure white (`#FFFFFF`, 13.5:1 contrast on the lighter gradient end
+    `#14351C`, 16.6:1 on the darker end), subtitle in soft sage (`#A3C4A8`, 7.1:1 on `#14351C`, 8.7:1
+    on `#0D2313`), and CTA button in vibrant mint (`#66BB6A` with `#08160B` dark text, 7.9:1; 9.2:1 on
+    hover `#81C784`). All are above the 4.5:1 text minimum. Light theme remains untouched with deep
+    forest green gradient and white text. (Ratios re-measured from the CSS values on 2026-10-11; the
+    first version of this entry quoted ~12.2, ~7.5 and ~10.4:1, which did not match them.)
 - **Deck Progress Meter Trough & Alignment** (`public/app.js`, `public/styles.css`):
   * Replaced the thin 4px hairline under the header with a dedicated metric row (`.deck-tile-metrics`).
   * Progress bar (`.deck-tile-bar`) given a 6px height with fully rounded pill ends (`border-radius: 999px`)
