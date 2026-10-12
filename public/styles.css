@@ -540,6 +540,10 @@ body {
   font-size: 17px;
   font-weight: 600;
   color: var(--ink);
+  min-width: 0;                 /* the title gives way to the ⋮ button instead of pushing it out of the tile */
+  overflow-wrap: anywhere;      /* a very long word breaks rather than overflowing */
+  -webkit-hyphens: auto;
+  hyphens: auto;                /* where the browser has a dictionary it breaks at a syllable, not mid-letter */
 }
 
 .deck-tile-badge {
@@ -828,8 +832,10 @@ body {
 }
 
 .deck-menu-btn {
-  width: 32px;
-  height: 32px;
+  flex: 0 0 44px;               /* never squeezed by a long title (it used to measure 18 px wide) */
+  width: 44px;
+  height: 44px;
+  margin: -6px -20px -6px 0;    /* a 44 px tap target that borrows the tile's own padding, so it neither makes the tile taller nor takes room from the title */
   border: none;
   background: transparent;
   color: var(--ink-secondary);
@@ -955,6 +961,16 @@ body {
   height: 1px;
   background: rgba(0,0,0,0.06);
   margin: var(--space-xs) var(--space-lg);
+}
+
+/* Group captions in the deck menu (Study / Edit / Manage) */
+.sheet-group-label {
+  padding: var(--space-sm) var(--space-lg) 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
 }
 
 [data-theme="dark"] .sheet-divider {

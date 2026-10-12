@@ -28,6 +28,7 @@ import { isDraftCard, isLeechCard } from './card-approval.js';
 import { reloadSchedulerParams } from './scheduler.js';
 import { fitInitialStabilities } from './fsrs-fit.js';
 import { startStudySession, teardownStudySession } from './study.js';
+import { countSessionCards } from './study-session-core.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
 import { renderMindMap } from './mind-map.js';
@@ -683,17 +684,21 @@ export async function renderDeckList() {
   });
 
   const reviewCap = (await getSetting('dailyReviewCap')) || DEFAULT_DAILY_REVIEW_CAP;
-  const dueToday = dueCards.length;
+  // The hero announces what "Study now" will really open: reviews up to the daily cap PLUS the new cards
+  // the session adds (they have their own cap). It is counted by the code that builds the session, so the
+  // number here is the "Card 1 of N" the session opens on.
+  const plan = countSessionCards(dueCards, { reviewCap });
+  const dueToday = plan.due;
   const streak = stats.streakDays || 0;
   const freezes = stats.freezesAvailable || 0;
 
-  if (dueToday > 0) {
+  if (plan.total > 0) {
     const hero = document.createElement('div');
     hero.className = 'hero-cta';
-    const isCapped = dueToday > reviewCap;
-    const titleText = isCapped ? `${reviewCap} cards to study today` : `${dueToday} card${dueToday !== 1 ? 's' : ''} due today`;
+    const isCapped = plan.truncated;
+    const titleText = isCapped ? `${plan.total} cards to study today` : `${plan.total} card${plan.total !== 1 ? 's' : ''} due today`;
     const streakPrefix = streak > 0 ? `🔥 ${streak}-day streak` : 'Start building your streak';
-    const subText = isCapped ? `${streakPrefix} · ${dueToday} total in backlog` : streakPrefix;
+    const subText = isCapped ? `${streakPrefix} · ${plan.due} total in backlog` : streakPrefix;
 
     hero.innerHTML = `
       <div class="hero-cta-title">${titleText}</div>
@@ -1023,55 +1028,89 @@ function openBottomSheet(deck) {
   sheet.setAttribute('aria-label', `${escapeHtml(deck.title)} actions`);
 
   const isArchived = !!deck.archived;
-  const actions = [
-    { label: 'Study', icon: '▶️', primary: true, action: () => navigate(`/study/${deck.id}`) },
-    { label: 'Import PDF', icon: '📄', action: () => renderPDFImport(deck.id) },
-    { label: '+ Card', icon: '➕', action: () => navigate(`/new-card/${deck.id}`) },
-    { label: 'Cards', icon: '🃏', action: () => navigate(`/cards/${deck.id}`) },
-    { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
-    { label: 'Map', icon: '🗺️', action: () => navigate(`/map/${deck.id}`) },
-    { label: 'Wander MindMaze', icon: '🧭', action: () => navigate(`/maze/${deck.id}`) },
-    { label: 'Mind Map', icon: '🕸️', action: () => navigate(`/mind-map/${deck.id}`) },
-    { label: 'Motion', icon: '🎬', action: () => navigate(`/motion/${deck.id}`) },
-    { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) },
-    { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) },
-    { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
-    isArchived
-      ? {
-          label: 'Unarchive',
-          icon: '📦',
-          action: async () => {
-            await unarchiveDeck(deck.id);
-            showToast('Welcome back! Deck restored to your active study list.');
-            renderDeckList();
-          }
-        }
-      : {
-          label: 'Archive',
-          icon: '📦',
-          action: async () => {
-            await archiveDeck(deck.id);
-            showToast('Tucked away in archive — your progress is safe whenever you want to revisit.');
-            renderDeckList();
-          }
-        },
+  // Grouped by what you are doing: learn the deck, change what is in it, look after it.
+  // Delete sits alone at the very end behind its own divider, away from the actions you tap most.
+  // The first group has no visible caption (it opens with the "Study" button itself, and a caption
+  // would push "Cards" below the fold); it is still announced as the Study group to screen readers.
+  const groups = [
     {
-      label: 'Delete',
-      icon: '🗑️',
-      danger: true,
-      action: () => openDeleteDeckConfirm(deck)
+      label: 'Study',
+      showCaption: false,
+      actions: [
+        { label: 'Study', icon: '▶️', primary: true, action: () => navigate(`/study/${deck.id}`) },
+        { label: 'Map', icon: '🗺️', action: () => navigate(`/map/${deck.id}`) },
+        { label: 'Wander MindMaze', icon: '🧭', action: () => navigate(`/maze/${deck.id}`) },
+        { label: 'Mind Map', icon: '🕸️', action: () => navigate(`/mind-map/${deck.id}`) },
+        { label: 'Motion', icon: '🎬', action: () => navigate(`/motion/${deck.id}`) },
+        { label: 'Documents', icon: '📑', action: () => navigate(`/documents/${deck.id}`) }
+      ]
+    },
+    {
+      label: 'Edit',
+      showCaption: true,
+      actions: [
+        { label: 'Import PDF', icon: '📄', action: () => renderPDFImport(deck.id) },
+        { label: '+ Card', icon: '➕', action: () => navigate(`/new-card/${deck.id}`) },
+        { label: 'Cards', icon: '🃏', action: () => navigate(`/cards/${deck.id}`) },
+        { label: 'Leeches', icon: '🩹', action: () => navigate(`/leeches/${deck.id}`) },
+        { label: 'Edit', icon: '✏️', action: () => renderDeckEdit(deck) }
+      ]
+    },
+    {
+      label: 'Manage',
+      showCaption: true,
+      actions: [
+        { label: 'Export', icon: '⬆️', action: () => openExportOptionsSheet(deck.id) },
+        isArchived
+          ? {
+              label: 'Unarchive',
+              icon: '📦',
+              action: async () => {
+                await unarchiveDeck(deck.id);
+                showToast('Welcome back! Deck restored to your active study list.');
+                renderDeckList();
+              }
+            }
+          : {
+              label: 'Archive',
+              icon: '📦',
+              action: async () => {
+                await archiveDeck(deck.id);
+                showToast('Tucked away in archive — your progress is safe whenever you want to revisit.');
+                renderDeckList();
+              }
+            }
+      ]
+    },
+    {
+      label: null,
+      actions: [
+        {
+          label: 'Delete',
+          icon: '🗑️',
+          danger: true,
+          action: () => openDeleteDeckConfirm(deck)
+        }
+      ]
     }
   ];
+  // One flat list in on-screen order, so the click wiring below can go by index
+  const actions = groups.flatMap(g => g.actions);
 
   let html = '<div class="sheet-handle"></div>';
-  actions.forEach((a, i) => {
-    if (i === 4 || i === 12) html += '<div class="sheet-divider"></div>';
-    html += `
-      <button class="sheet-action ${a.primary ? 'is-primary' : ''} ${a.danger ? 'is-danger' : ''}">
-        <span class="sheet-action-icon">${a.icon}</span>
-        ${escapeHtml(a.label)}
-      </button>
-    `;
+  groups.forEach((g, gi) => {
+    if (gi > 0) html += '<div class="sheet-divider"></div>';
+    html += `<div role="group"${g.label ? ` aria-label="${g.label}"` : ''}>`;
+    if (g.label && g.showCaption) html += `<div class="sheet-group-label" aria-hidden="true">${g.label}</div>`;
+    g.actions.forEach((a) => {
+      html += `
+        <button class="sheet-action ${a.primary ? 'is-primary' : ''} ${a.danger ? 'is-danger' : ''}">
+          <span class="sheet-action-icon">${a.icon}</span>
+          ${escapeHtml(a.label)}
+        </button>
+      `;
+    });
+    html += '</div>';
   });
   sheet.innerHTML = html;
   document.body.appendChild(sheet);

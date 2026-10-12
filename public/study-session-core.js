@@ -119,6 +119,37 @@ export function interleaveQueue(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, n
 }
 
 /**
+ * What a study session over these cards will hold, without building one.
+ *
+ * Runs the same suspended-card filter and the same interleaveQueue() that prepareStudyQueue() uses,
+ * so a screen that announces "N cards to study today" (the Home hero) can never disagree with the
+ * "Card 1 of N" the session opens on. The two daily caps apply separately (reviews and new cards),
+ * which is why the session can be larger than the review cap alone.
+ *
+ * @param {Array<object>} cards - the cards due now (a deck's, or all decks')
+ * @param {object} [opts]
+ * @param {number} [opts.reviewCap]
+ * @param {number} [opts.newCap]
+ * @returns {{ total: number, reviews: number, newCards: number, due: number, waiting: number, truncated: boolean }}
+ *   total: cards the session will hold (reviews + newCards); reviews / newCards: each after its cap;
+ *   due: every due card that is not suspended, before the caps; waiting: due - total, left for another
+ *   session; truncated: whether a cap cut anything off.
+ */
+export function countSessionCards(cards, { reviewCap = DEFAULT_DAILY_REVIEW_CAP, newCap = DEFAULT_NEW_CARD_CAP } = {}) {
+  const active = (cards || []).filter(c => !c.suspended);
+  const queue = interleaveQueue(active, { reviewCap, newCap });
+  const due = queue.totalReviews + queue.totalNew;
+  return {
+    total: queue.length,
+    reviews: queue.queuedReviews,
+    newCards: queue.queuedNew,
+    due,
+    waiting: due - queue.length,
+    truncated: queue.reviewsTruncated || queue.newTruncated
+  };
+}
+
+/**
  * Soft prerequisite-first reordering. For each card in the queue, pulls
  * its `dependsOn` prerequisites earlier if they're also in the queue
  * but currently positioned later — so a prerequisite gets reviewed (or

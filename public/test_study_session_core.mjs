@@ -138,6 +138,7 @@ const {
   previewCardIntervals,
   interleaveQueue,
   applyPrerequisiteOrdering,
+  countSessionCards,
   prepareStudyQueue,
   gradeAndPersistCard,
   undoGradeCard,
@@ -218,6 +219,57 @@ console.log('=== 3. interleaveQueue caps, overdue-first sorting, and interleavin
   // Interleaved: n1, r2, n2, r1
   assert.deepEqual(queue.map(c => c.id), ['n1', 'r2', 'n2', 'r1']);
   console.log('  ok - interleaveQueue correctly caps, sorts overdue-first, and interleaves');
+}
+
+console.log('=== 3b. countSessionCards matches the session that interleaveQueue/prepareStudyQueue build ===');
+{
+  const now = Date.now();
+  const makeCards = (reviews, news, extra = {}) => [
+    ...Array.from({ length: reviews }, (_, i) => ({ id: `r${i}`, deckId: 'd1', state: 'review', due_date: now - (i + 1) * 60000, ...extra })),
+    ...Array.from({ length: news }, (_, i) => ({ id: `n${i}`, deckId: 'd1', state: 'new', due_date: now, ...extra }))
+  ];
+
+  // The Home hero bug: 60 reviews + 16 new used to read "50" on Home while the session opened at "Card 1 of 66".
+  const bug = countSessionCards(makeCards(60, 16));
+  assert.deepEqual(bug, { total: 66, reviews: 50, newCards: 16, due: 76, waiting: 10, truncated: true });
+
+  // Both caps bite: 100 reviews -> 50, 30 new -> 20
+  const both = countSessionCards(makeCards(100, 30));
+  assert.deepEqual(both, { total: 70, reviews: 50, newCards: 20, due: 130, waiting: 60, truncated: true });
+
+  // Only the new-card cap bites
+  const onlyNew = countSessionCards(makeCards(10, 30));
+  assert.deepEqual(onlyNew, { total: 30, reviews: 10, newCards: 20, due: 40, waiting: 10, truncated: true });
+
+  // Under both caps: nothing waits, nothing is truncated
+  const small = countSessionCards(makeCards(12, 5));
+  assert.deepEqual(small, { total: 17, reviews: 12, newCards: 5, due: 17, waiting: 0, truncated: false });
+
+  // Nothing due, and no input at all
+  assert.deepEqual(countSessionCards([]), { total: 0, reviews: 0, newCards: 0, due: 0, waiting: 0, truncated: false });
+  assert.equal(countSessionCards(undefined).total, 0);
+
+  // Caps passed in are honoured (a user-set review cap)
+  assert.equal(countSessionCards(makeCards(60, 16), { reviewCap: 25, newCap: 5 }).total, 30);
+  assert.equal(countSessionCards(makeCards(60, 16), { reviewCap: 100, newCap: 100 }).total, 76);
+
+  // Suspended cards (drafts, leeches) are not part of a session, so they are not counted
+  const withSuspended = [...makeCards(8, 2), ...makeCards(5, 5, { suspended: true }).map(c => ({ ...c, id: `s-${c.id}` }))];
+  const sus = countSessionCards(withSuspended);
+  assert.equal(sus.total, 10);
+  assert.equal(sus.due, 10);
+
+  // Same answer as the queue itself, and the input is not reordered or modified
+  const input = makeCards(60, 16);
+  const before = input.map(c => c.id).join(',');
+  assert.equal(countSessionCards(input).total, interleaveQueue(input).length);
+  assert.equal(input.map(c => c.id).join(','), before, 'countSessionCards must not reorder its input');
+
+  // ...and the same answer as prepareStudyQueue, the thing the session really opens with
+  dbState.cards = makeCards(60, 16);
+  const prepared = await prepareStudyQueue({ cards: dbState.cards, reviewCap: 50, newCap: 20, enableSmartOrdering: false });
+  assert.equal(prepared.length, countSessionCards(dbState.cards, { reviewCap: 50, newCap: 20 }).total);
+  console.log('  ok - countSessionCards: 60 reviews + 16 new = 66 (not 50), both caps, suspended excluded, equals the real queue');
 }
 
 console.log('=== 4. applyPrerequisiteOrdering pulls prerequisites earlier ===');
