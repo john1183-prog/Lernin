@@ -3061,6 +3061,25 @@ input, textarea, select {
   line-height: 1.35;
 }
 
+/* Phones: the four feature tiles become one swipeable row, so the first deck is on the first screen */
+@media (max-width: 639px) {
+  .feature-grid {
+    display: flex;
+    gap: var(--space-sm);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: var(--space-md);   /* snap to the padded edge, not to the screen edge */
+    padding-top: 4px;
+    padding-bottom: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    scrollbar-width: none;
+  }
+  .feature-grid::-webkit-scrollbar { display: none; }
+  .feature-tile { flex: 0 0 136px; scroll-snap-align: start; padding: var(--space-sm) var(--space-md); }
+  .feature-tile-art { height: 34px; }
+  .feature-tile-desc { display: none; }
+}
+
 /* Secondary Deck Section Header */
 .deck-section-header {
   display: flex;

@@ -56,6 +56,7 @@ export function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', effective);
   const toggleBtn = document.getElementById('themeToggle');
   if (toggleBtn) {
+    toggleBtn.textContent = theme === 'dark' ? '🌙' : theme === 'light' ? '☀️' : '🌓';
     toggleBtn.setAttribute('aria-label', `Toggle theme (current: ${theme})`);
     toggleBtn.setAttribute('title', `Theme: ${theme}`);
   }
@@ -232,12 +233,12 @@ function resetRootChrome() {
   root.removeAttribute('style');
 }
 
+// "Back" returns to the previous screen of THIS app. Opened straight onto a screen (bookmark,
+// PWA relaunch, a stale link) there is no previous screen here: go Home instead of leaving the app.
+let routeChanges = 0;
 function goBack() {
-  if (window.history.length > 1) {
-    window.history.back();
-  } else {
-    navigate('/');
-  }
+  if (routeChanges > 1) window.history.back();
+  else window.location.replace('#/');
 }
 
 /* Active view teardown — study/map attach document/window listeners. */
@@ -254,6 +255,8 @@ function runViewCleanup() {
 }
 
 let hasNavigatedOnce = false;
+let previousWasHome = false;
+let homeScrollY = 0;
 
 async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
@@ -265,6 +268,10 @@ async function handleRoute() {
   if (hasNavigatedOnce) playNavigate();
   hasNavigatedOnce = true;
 
+  routeChanges++;
+  // Remember how far Home was scrolled so coming back lands where you left off
+  if (previousWasHome) homeScrollY = window.scrollY;
+
   // Tear down previous view (keyboard, map rAF, gestures) before swapping DOM
   runViewCleanup();
 
@@ -273,9 +280,10 @@ async function handleRoute() {
   // Clean shell + top of page for every route
   resetRootChrome();
   window.scrollTo({ top: 0, behavior: 'instant' });
+  let goingHome = false;
 
   switch (route) {
-    case '/': await renderDeckList(); break;
+    case '/': goingHome = true; await renderDeckList(); break;
     case 'settings': await renderSettings(); break;
     case 'help': renderHelp(); break;
     case 'stats': await renderStats(); break;
@@ -300,8 +308,13 @@ async function handleRoute() {
       break;
     case 'documents': await renderDocuments(id); break;
     case 'new-card': await renderNewCardForm(id); break;
-    default: await renderDeckList();
+    default: goingHome = true; await renderDeckList();
   }
+
+  if (goingHome && !previousWasHome && homeScrollY) {
+    window.scrollTo({ top: homeScrollY, behavior: 'instant' });
+  }
+  previousWasHome = goingHome;
 }
 
 /* ---------- Home Screen ---------- */
@@ -577,7 +590,7 @@ export async function renderDeckList() {
     <div class="app-header-title">Lernin</div>
     <div class="app-header-actions">
       <button class="icon-btn" id="viewToggle" aria-label="Change view">${viewIcon}</button>
-      <button class="icon-btn" id="themeToggle" aria-label="Toggle theme (current: ${currentTheme})" title="Theme: ${currentTheme}">🌓</button>
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle theme (current: ${currentTheme})" title="Theme: ${currentTheme}">${currentTheme === 'dark' ? '🌙' : currentTheme === 'light' ? '☀️' : '🌓'}</button>
       <div class="header-overflow-wrap">
         <button class="icon-btn" id="overflowBtn" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋮</button>
         <div class="header-overflow-menu" id="headerOverflowMenu" role="menu" hidden>
@@ -826,11 +839,13 @@ export async function renderDeckList() {
           <div class="empty-state-title">No decks yet</div>
           <div class="empty-state-text">Create a deck or import a PDF to get started with active recall.</div>
           <div class="empty-state-actions">
-            <button class="btn-secondary" id="emptyImportBtn">📥 Import deck</button>
+            <button class="btn-primary" id="emptyNewBtn">+ Create your first deck</button>
+            <button class="btn-secondary" id="emptyImportBtn">📥 Import a deck file</button>
             <button class="btn-secondary" id="emptyHelpBtn">❓ How Lernin works</button>
           </div>
         </div>
       `;
+      list.querySelector('#emptyNewBtn').addEventListener('click', () => renderNewDeckForm());
       list.querySelector('#emptyImportBtn').addEventListener('click', triggerDeckImport);
       list.querySelector('#emptyHelpBtn').addEventListener('click', () => navigate('/help'));
     }
@@ -1207,7 +1222,7 @@ async function openDeleteDeckConfirm(deck) {
 async function enterStudy(deckId) {
   root.innerHTML = '';
   const targetId = deckId === 'all' ? null : deckId;
-  const cleanup = await startStudySession(root, { deckId: targetId });
+  const cleanup = await startStudySession(root, { deckId: targetId, onExit: goBack });
   return cleanup || teardownStudySession;
 }
 
@@ -2815,8 +2830,11 @@ async function openDeckSheet(existingDeck = null) {
         }
         showToast('Deck updated.');
       } else {
-        await addDeck({ title, courseTerritoryId: territory });
-        showToast('Deck created.');
+        const newDeckId = await addDeck({ title, courseTerritoryId: territory });
+        showToast('Deck created — let\'s add your first card 🌱');
+        closeSheet();
+        navigate('/new-card/' + newDeckId);
+        return;
       }
       closeSheet();
       await renderDeckList();
@@ -4492,7 +4510,8 @@ export async function renderCardDetailView(card, deck) {
   studyBtn.addEventListener('click', async () => {
     runViewCleanup();
     root.innerHTML = '';
-    const cleanup = await startStudySession(root, { deckId: deck.id, startCardId: card.id });
+    // "×" goes Home through the router, so the address bar says Home too (it used to keep saying #/cards/…)
+    const cleanup = await startStudySession(root, { deckId: deck.id, startCardId: card.id, onExit: () => navigate('/') });
     activeViewCleanup = cleanup || teardownStudySession;
   });
   body.appendChild(studyBtn);

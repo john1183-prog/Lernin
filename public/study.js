@@ -3,7 +3,7 @@
 
 import {
   getCardsDueTodayOrEarlier, getCardsDueForDeck, getCard,
-  getDeck, updateLastReviewLogTeachingNote,
+  getDeck, getCardsByDeck, updateLastReviewLogTeachingNote,
   getLatestTeachingNoteForCard,
   getSetting,
   DEFAULT_DAILY_REVIEW_CAP, DEFAULT_NEW_CARD_CAP
@@ -135,7 +135,21 @@ export async function startStudySession(container, opts = {}) {
   });
 
   if (queue.length === 0) {
-    container.innerHTML = `
+    let deckIsEmpty = false;
+    if (session.deckId) {
+      try { deckIsEmpty = (await getCardsByDeck(session.deckId)).length === 0; } catch (e) { /* fall through to the default message */ }
+    }
+    container.innerHTML = deckIsEmpty ? `
+      <div class="study-session" style="justify-content:center;align-items:center;">
+        <div class="empty-state">
+          <div class="empty-state-icon">🌱</div>
+          <div class="empty-state-title">This deck is waiting for its first card</div>
+          <div class="empty-state-text">Add a card, or import a PDF, and we'll bring it back to you at just the right moment.</div>
+          <button class="btn-primary" style="margin-top:var(--space-lg);" id="addFirstCard">+ Add a card</button>
+          <button class="btn-secondary" style="margin-top:var(--space-sm);" id="backHome">Back to decks</button>
+        </div>
+      </div>
+    ` : `
       <div class="study-session" style="justify-content:center;align-items:center;">
         <div class="empty-state">
           <div class="empty-state-icon">🎉</div>
@@ -145,6 +159,8 @@ export async function startStudySession(container, opts = {}) {
         </div>
       </div>
     `;
+    const addFirst = container.querySelector('#addFirstCard');
+    if (addFirst) addFirst.addEventListener('click', () => window.location.replace('#/new-card/' + session.deckId));
     container.querySelector('#backHome').addEventListener('click', () => {
       if (typeof session.onExit === 'function') session.onExit();
       else import('./app.js').then(m => m.renderDeckList());

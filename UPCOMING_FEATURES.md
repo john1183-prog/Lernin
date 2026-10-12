@@ -1069,6 +1069,24 @@ clamped emphasis layer exit timing to ensure late-appearing emphasis elements co
   * Full Python backend test suite passed: 78/78 tests passing (up from 75).
   * Node audio regression suite (`node public/test_motion_player_audio.mjs`) passed with zero regressions.
 
+**Approved UI/UX Decisions, Round 1 — Back/Exit Routing, New-Deck Flow, Theme Icon, Empty Deck, First-Run Create, Phone Feature Strip (`public/app.js`, `public/study.js`, `public/styles.css`, `public/sw.js`, `UPCOMING_FEATURES.md`)** —
+shipped option A of decisions 1–6 from the "Lernin UI/UX review at HEAD 6820465" document, as chosen by John on 2026-10-11. Decision 7 (a centred column for wide screens) is held back on purpose: wide screens are part of the wider "liveliness" discussion, not a fixed 960 px column. Decision 8 needs no work: the "N of M reviews" notice stays at the bottom as on `8bc931d`:
+- **Back and × land somewhere that exists (`public/app.js`)**:
+  * `goBack()` uses `history.back()` only when the app itself has changed route at least twice since it loaded. Opened straight onto a screen (a bookmark, a PWA relaunch, a stale link) it replaces the entry with Home instead of leaving the app (at `8bc931d`: `about:blank`).
+  * The routed study screen passes `goBack` as its exit, so × and the summary buttons return to Home and rewrite the address bar (at `8bc931d` it stayed on `#/study/all`, so a reload re-entered the finished session). "Study this card" on a card's detail page now exits through `navigate('/')` for the same reason (it used to leave `#/cards/<deck>` in the address bar).
+  * Home remembers its scroll position when you leave it and restores it when you come back from another screen; every other screen still opens at the top.
+- **After saving a new deck, its add-a-card screen opens (`public/app.js`)**: toast "Deck created — let's add your first card 🌱". Editing an existing deck still returns to Home.
+- **Theme button shows the mode (`public/app.js`)**: ☀️ light, 🌙 dark, 🌓 follow system, set on first draw and refreshed by `applyTheme`.
+- **Tapping an empty deck (`public/study.js`)**: "This deck is waiting for its first card" with "+ Add a card" and "Back to decks". A deck that has cards that are merely not due keeps "All caught up!".
+- **First-run Home (`public/app.js`)**: "+ Create your first deck" is the main button, with "📥 Import a deck file" and "❓ How Lernin works" as secondary buttons.
+- **Phones: feature tiles as one swipeable row (`public/styles.css`)**: under 640 px the four tiles become a snapping row without the descriptions, so the first deck is on the first screen. Wider screens keep the grid.
+- **Service Worker Shell Update (`public/sw.js`)**:
+  * Bumped the shell cache to `lernin-shell-v37` for the "New version ready — refresh?" prompt.
+- **Verification** (Playwright + headless Chromium, 360 × 760 phone with the 56 px URL bar emulated, light and dark; `8bc931d` measured the same way):
+  * On-screen ← and × matrix: Settings ←, Cards ← (Home scroll 500 → restored to 500; was 0), Study ×, a cold-opened Cards ← and a cold-opened Study × all land on Home with `#/` in the address bar. A study session started from a card's detail page also exits to `#/`.
+  * First card by hand: 9 taps at `8bc931d`, 6 now ("Create your first deck", title, Save, front, back, Save), landing on `#/new-card/<id>` after the deck is saved. First deck tile at y = 786 before, 571 now (573 in dark). The empty deck shows the new message and "+ Add a card" opens `#/new-card/<id>`. The theme button cycles 🌓 ☀️ 🌙 🌓.
+  * `node public/test_motion_player_audio.mjs` and `python -m unittest discover -s api -p "test_*.py"` (102 tests) exit 0, as do the other Node suites except `test_motion_frontend.mjs`, which needs a local backend and is run with the final batch. Real-device and iOS Safari confirmation is still open.
+
 **UI Defect Pass — Study Card Notes, Real Grade Intervals, Stuck Home Layout, Map & Mind-Map Sizing (`public/app.js`, `public/study.js`, `public/scheduler.js`, `public/canvas.js`, `public/mind-map.js`, `public/mind-map-doc.js`, `public/mind-maze.js`, `public/motion-studio.js`, `public/styles.css`, `public/sw.js`, `public/test_study_session_core.mjs`, `UPCOMING_FEATURES.md`)** —
 fixed the layout and state bugs behind three phone screenshots (Study with "Explain it back", Territory Map, Document Mind Map) and the older bug underneath them. Each was reproduced at `6820465` on a 360 px phone with the Chrome URL bar showing before anything was changed. No design decisions were taken here: back/exit routing and any Home layout changes stay open until chosen:
 - **Study card: "Explain it back" squeezed into a vertical strip (`public/study.js`, `public/styles.css`)**:
