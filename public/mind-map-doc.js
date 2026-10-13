@@ -13,14 +13,18 @@
      loading -> (no map yet: generate CTA) -> generating -> rendered
                                              -> retryable error -> (retry)
                                              -> hard error -> manual import
+
+   "Rendered" has two faces of the same map: the canvas (pan / zoom / tap) and an outline list. A
+   map of more than about a dozen nodes cannot show its labels on a phone without zooming in, so
+   there it opens as the list and one header button swaps to the canvas (and back). Which face opens
+   first is decided by mind-map-outline.js; on every screen size the button is there.
 */
 
 import { getDocument, getMindMapForDocument, getApiConfig } from './db.js';
 import { generateMindMap } from './mind-map-doc-api.js';
 import { renderMindMapManualImport } from './mind-map-doc-manual-import.js';
 import { MOTION_PREFILL_KEY } from './motion-studio.js';
-
-const DEPTH_COLORS = ['#e8a33d', '#4a90d9', '#7fbf7f', '#c77fbf'];
+import { depthColor, shouldStartAsOutline, buildOutlineTree } from './mind-map-outline.js';
 
 function escapeHtmlLocal(str) {
   const div = document.createElement('div');
@@ -37,11 +41,20 @@ let rafId = null, idleTimeoutId = null;
 let dpr = 1;
 let hoveredNode = null;
 let pointerDownNode = null;
+let selectedNode = null; // the node whose detail panel is open: drawn with a ring so you can see which one it is
 let isPanning = false;
 let lastPointer = null;
 let dragMoved = 0;
 const DRAG_THRESHOLD = 4;
 let detailPanelEl = null;
+
+// The two faces of the map. `bodyEl` is the element both are drawn into; `currentView` is null until a
+// map is on screen ('map' | 'outline'); `viewToggleBtn` is the header button that swaps them.
+let bodyEl = null;
+let currentView = null;
+let viewToggleBtn = null;
+let fallbackBadgeOn = false;
+let cameraFitted = false;
 
 function scheduleFrame(delayMs) {
   if (delayMs === 0) {
@@ -143,36 +156,44 @@ function onWheel(e) {
   scheduleFrame(0);
 }
 
+/** Hand a topic to Motion Studio (used by the canvas detail panel and by the outline rows). */
+function explainWithMotion(node) {
+  // Same one-shot handoff pattern motion-studio.js expects — see its
+  // own MOTION_PREFILL_KEY comment. Not importing navigate() from
+  // app.js here to avoid a circular import (app.js already imports
+  // this module); setting the hash directly is exactly what
+  // navigate() does anyway.
+  sessionStorage.setItem(MOTION_PREFILL_KEY, node.title);
+  window.location.hash = `/motion/${currentDeckId}`;
+}
+
 function openNodeDetail(node) {
   detailPanelEl?.remove();
+  selectedNode = node;
+  scheduleFrame(0);
   const p = document.createElement('div');
   p.style.cssText = 'position:absolute; left:12px; right:12px; bottom:12px; background:var(--surface); border-radius:var(--radius-md); padding:14px; box-shadow:var(--shadow-lg); max-height:40%; overflow-y:auto;';
   p.innerHTML = `
-    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px;">${escapeHtmlLocal(node.title)}</div>
+    <div style="font-size:14px; font-weight:600; color:var(--ink); margin-bottom:6px; padding-right:32px;">${escapeHtmlLocal(node.title)}</div>
     ${node.detail ? `<div style="font-size:13px; color:var(--ink-secondary); line-height:1.5; margin-bottom:10px;">${escapeHtmlLocal(node.detail)}</div>` : ''}
-    ${currentDeckId ? `<button class="btn-secondary" id="dmmExplainBtn" style="font-size:13px;">🎬 Explain with motion</button>` : ''}
+    ${currentDeckId ? `<button class="btn-secondary" id="dmmExplainBtn" style="font-size:13px; min-height:44px;">🎬 Explain with motion</button>` : ''}
   `;
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'Close');
   closeBtn.textContent = '\u2715';
-  closeBtn.style.cssText = 'position:absolute; top:8px; right:10px; border:none; background:none; color:var(--ink-muted); font-size:14px; cursor:pointer;';
-  closeBtn.addEventListener('click', () => p.remove());
+  // 44 x 44 hit area around the same small glyph (it used to be just the glyph, ~14 px).
+  closeBtn.style.cssText = 'position:absolute; top:0; right:0; width:44px; height:44px; padding:0; border:none; background:none; color:var(--ink-secondary); font-size:14px; cursor:pointer;';
+  closeBtn.addEventListener('click', () => {
+    p.remove();
+    if (detailPanelEl === p) { detailPanelEl = null; selectedNode = null; scheduleFrame(0); }
+  });
   p.appendChild(closeBtn);
   canvasEl.parentElement.appendChild(p);
   detailPanelEl = p;
 
   const explainBtn = p.querySelector('#dmmExplainBtn');
-  if (explainBtn) {
-    explainBtn.addEventListener('click', () => {
-      // Same one-shot handoff pattern motion-studio.js expects — see its
-      // own MOTION_PREFILL_KEY comment. Not importing navigate() from
-      // app.js here to avoid a circular import (app.js already imports
-      // this module); setting the hash directly is exactly what
-      // navigate() does anyway.
-      sessionStorage.setItem(MOTION_PREFILL_KEY, node.title);
-      window.location.hash = `/motion/${currentDeckId}`;
-    });
-  }
+  if (explainBtn) explainBtn.addEventListener('click', () => explainWithMotion(node));
 }
 
 function renderLoop() {
@@ -189,6 +210,7 @@ function renderLoop() {
   const edgeColor = isDark ? 'rgba(160,176,162,0.3)' : 'rgba(90,107,92,0.35)';
   const nodeText = isDark ? '#EDEFF1' : '#1A1F1B';
   const nodeBorder = isDark ? '#223024' : '#FFFFFF';
+  const ringColor = isDark ? '#66BB6A' : '#2E7D32'; // the app's --accent
 
   for (const n of nodes) {
     if (!n.parentId) continue;
@@ -211,11 +233,19 @@ function renderLoop() {
 
     ctx.beginPath();
     ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = DEPTH_COLORS[(n.depth - 1) % DEPTH_COLORS.length];
+    ctx.fillStyle = depthColor(n.depth);
     ctx.fill();
     ctx.lineWidth = isHi ? 3 : 2;
     ctx.strokeStyle = nodeBorder;
     ctx.stroke();
+
+    if (n === selectedNode) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 5, 0, Math.PI * 2);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = ringColor;
+      ctx.stroke();
+    }
 
     if (camera.zoom > 0.35) {
       ctx.fillStyle = nodeText;
@@ -233,7 +263,8 @@ function renderLoop() {
   scheduleFrame(isActive ? 0 : 250);
 }
 
-function destroy() {
+/** Everything the canvas face owns: the frame loop, the listeners and the detail panel. Safe to call twice. */
+function stopCanvas() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   if (idleTimeoutId) clearTimeout(idleTimeoutId);
@@ -241,21 +272,29 @@ function destroy() {
   window.removeEventListener('resize', resizeCanvas);
   detailPanelEl?.remove();
   detailPanelEl = null;
+  canvasEl = null; ctx = null;
+  hoveredNode = null; pointerDownNode = null; selectedNode = null;
+  lastPointer = null; isPanning = false; dragMoved = 0;
+}
+
+function destroy() {
+  stopCanvas();
   nodes = []; nodeById = new Map();
-  container = null; canvasEl = null; ctx = null;
-  hoveredNode = null; pointerDownNode = null;
-  lastPointer = null; isPanning = false;
+  container = null; bodyEl = null; viewToggleBtn = null;
+  currentView = null;
+  fallbackBadgeOn = false;
+  cameraFitted = false;
   currentDeckId = null;
 }
 
-function setupCanvasView(bodyEl) {
-  bodyEl.innerHTML = ''; // every call site hands this a container that still
+function setupCanvasView(target) {
+  target.innerHTML = ''; // every call site hands this a container that still
   // has its previous state (a loading message, the manual-import form,
   // etc.) — this function fully takes over the element, so it's
   // responsible for clearing it, not each caller individually
   canvasEl = document.createElement('canvas');
   canvasEl.style.cssText = 'display:block; width:100%; height:100%; touch-action:none;';
-  bodyEl.appendChild(canvasEl);
+  target.appendChild(canvasEl);
   ctx = canvasEl.getContext('2d');
 
   canvasEl.addEventListener('pointerdown', onPointerDown);
@@ -267,10 +306,185 @@ function setupCanvasView(bodyEl) {
   resizeCanvas();
 }
 
-function loadResolvedMap(resolved) {
+// ---------------------------------------------------------------------------
+// One map, two faces: the canvas and the outline list
+// ---------------------------------------------------------------------------
+
+// Header-button icons (programmatic SVG, no assets). Each one pictures the face you would switch TO.
+const LIST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>';
+const MAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10.84 7.32L6.66 15.68M13.16 7.32L17.34 15.68"/><circle cx="12" cy="5" r="2.6"/><circle cx="5.5" cy="18" r="2.6"/><circle cx="18.5" cy="18" r="2.6"/></svg>';
+
+function reducedMotion() {
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
+}
+
+function makeFallbackBadge(inline) {
+  const badge = document.createElement('div');
+  badge.className = inline ? 'dmm-badge dmm-badge--inline' : 'dmm-badge';
+  badge.textContent = 'Generated from summary · lower detail than a fresh upload';
+  return badge;
+}
+
+/** The header button: hidden until a map is on screen, then names the face it will switch to. */
+function updateViewToggle() {
+  const btn = viewToggleBtn;
+  if (!btn) return;
+  if (!currentView) {
+    btn.disabled = true;
+    btn.innerHTML = '';
+    btn.removeAttribute('aria-label');
+    btn.removeAttribute('title');
+    return;
+  }
+  const toList = currentView === 'map';
+  btn.disabled = false;
+  const label = toList ? 'Show as a list' : 'Show as a map';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.innerHTML = (toList ? LIST_ICON : MAP_ICON) + '<span>' + (toList ? 'List' : 'Map') + '</span>';
+}
+
+/**
+ * Put a finished map on screen. A big map on a small screen opens as the outline list (see
+ * mind-map-outline.js for the rule); everything else opens as the canvas.
+ */
+function presentMap(body, resolved, { fallbackBadge = false } = {}) {
+  // Generating and importing are async: if the person has already left this screen (destroy() has run
+  // and body is detached), drawing now would start a frame loop and a resize listener that nothing
+  // would ever stop.
+  if (!body.isConnected) return;
+  bodyEl = body;
   nodes = resolved.nodes;
   nodeById = new Map(nodes.map(n => [n.id, n]));
-  fitCameraToContent();
+  fallbackBadgeOn = fallbackBadge;
+  cameraFitted = false;
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  if (shouldStartAsOutline(nodes.length, viewport)) showOutlineView(); else showMapView();
+}
+
+function showMapView() {
+  if (!bodyEl) return;
+  stopCanvas();
+  currentView = 'map';
+  setupCanvasView(bodyEl); // clears bodyEl, builds the canvas, wires pan / zoom / tap
+  canvasEl.setAttribute('role', 'img');
+  canvasEl.setAttribute('aria-label', 'Mind map drawing. The List button in the header shows the same map as a text outline.');
+  if (fallbackBadgeOn) bodyEl.appendChild(makeFallbackBadge(false));
+  // Fit once, on the first time the canvas is shown; later switches keep wherever the person had panned to.
+  if (!cameraFitted) { fitCameraToContent(); cameraFitted = true; }
+  scheduleFrame(0);
+  updateViewToggle();
+}
+
+function showOutlineView() {
+  if (!bodyEl) return;
+  stopCanvas();
+  currentView = 'outline';
+  bodyEl.innerHTML = '';
+  bodyEl.appendChild(buildOutlineView());
+  updateViewToggle();
+}
+
+/** The outline: every node once, nested the way the map branches, each row opening to its detail. */
+function buildOutlineView() {
+  const scroller = document.createElement('div');
+  scroller.className = 'dmm-outline';
+  if (fallbackBadgeOn) scroller.appendChild(makeFallbackBadge(true));
+
+  const count = document.createElement('p');
+  count.className = 'dmm-outline-count';
+  count.textContent = `${nodes.length} topic${nodes.length === 1 ? '' : 's'} · tap one for its detail`;
+  scroller.appendChild(count);
+
+  const list = document.createElement('ul');
+  list.className = 'dmm-outline-list';
+  renderOutlineLevel(list, buildOutlineTree(nodes), { n: 0 });
+  scroller.appendChild(list);
+  return scroller;
+}
+
+function renderOutlineLevel(listEl, entries, counter) {
+  for (const { node, children } of entries) {
+    const idx = counter.n++;
+    const item = document.createElement('li');
+    item.className = 'dmm-outline-item';
+
+    const detailId = `dmm-outline-detail-${idx}`;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = node.depth === 1 ? 'dmm-outline-row dmm-outline-row--root' : 'dmm-outline-row';
+    row.setAttribute('aria-expanded', 'false');
+    row.setAttribute('aria-controls', detailId);
+
+    const dot = document.createElement('span');
+    dot.className = 'dmm-outline-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    dot.style.background = depthColor(node.depth);
+
+    const title = document.createElement('span');
+    title.className = 'dmm-outline-title';
+    title.textContent = node.title;
+
+    const chev = document.createElement('span');
+    chev.className = 'dmm-outline-chev';
+    chev.setAttribute('aria-hidden', 'true');
+
+    row.append(dot, title, chev);
+
+    const detail = document.createElement('div');
+    detail.className = 'dmm-outline-detail';
+    detail.id = detailId;
+    detail.hidden = true;
+    if (node.detail) {
+      const text = document.createElement('p');
+      text.className = 'dmm-outline-detail-text';
+      text.textContent = node.detail;
+      detail.appendChild(text);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'dmm-outline-actions';
+    const showBtn = document.createElement('button');
+    showBtn.type = 'button';
+    showBtn.className = 'btn-secondary dmm-outline-action';
+    showBtn.textContent = 'Show on map';
+    showBtn.addEventListener('click', () => focusOnNode(node));
+    actions.appendChild(showBtn);
+    if (currentDeckId) {
+      const motionBtn = document.createElement('button');
+      motionBtn.type = 'button';
+      motionBtn.className = 'btn-secondary dmm-outline-action';
+      motionBtn.textContent = '🎬 Explain with motion';
+      motionBtn.addEventListener('click', () => explainWithMotion(node));
+      actions.appendChild(motionBtn);
+    }
+    detail.appendChild(actions);
+
+    row.addEventListener('click', () => {
+      const open = row.getAttribute('aria-expanded') !== 'true';
+      row.setAttribute('aria-expanded', String(open));
+      detail.hidden = !open;
+    });
+
+    item.append(row, detail);
+    if (children.length) {
+      const sub = document.createElement('ul');
+      sub.className = 'dmm-outline-list';
+      renderOutlineLevel(sub, children, counter);
+      item.appendChild(sub);
+    }
+    listEl.appendChild(item);
+  }
+}
+
+/** "Show on map": switch to the canvas, glide to this node and open its detail panel. */
+function focusOnNode(node) {
+  showMapView();
+  const rect = canvasEl.getBoundingClientRect();
+  const zoom = Math.max(camera.zoom, 0.9); // labels draw above 0.35; this is comfortably readable
+  // Sit the node in the upper part of the view so the detail panel (bottom 40%) never covers it or its label.
+  targetCamera = { x: node.x, y: node.y + (rect.height * 0.14) / zoom, zoom };
+  if (reducedMotion()) camera = { ...targetCamera };
+  openNodeDetail(node);
   scheduleFrame(0);
 }
 
@@ -287,11 +501,19 @@ export async function renderDocumentMindMap(rootEl, documentId, opts = {}) {
   header.innerHTML = `
     <button class="back-btn" id="dmmBack" aria-label="Back">←</button>
     <div class="app-header-title">Mind Map</div>
-    <div style="width:48px;"></div>
+    <button type="button" class="dmm-view-toggle" id="dmmViewToggle" disabled></button>
   `;
   wrap.appendChild(header);
   header.querySelector('#dmmBack').addEventListener('click', () => {
     if (onExitCb) onExitCb(); else history.back();
+  });
+  viewToggleBtn = header.querySelector('#dmmViewToggle');
+  viewToggleBtn.addEventListener('click', () => {
+    if (currentView === 'map') showOutlineView();
+    else if (currentView === 'outline') {
+      cameraFitted = false; // the Map button shows the whole map; "Show on map" is the way to a single topic
+      showMapView();
+    }
   });
 
   const body = document.createElement('div');
@@ -314,14 +536,7 @@ export async function renderDocumentMindMap(rootEl, documentId, opts = {}) {
   currentDeckId = doc.deckId || null;
 
   if (existing && existing.mindMap) {
-    setupCanvasView(body);
-    if (existing.source === 'summary-fallback') {
-      const badge = document.createElement('div');
-      badge.style.cssText = 'position:absolute; top:8px; left:50%; transform:translateX(-50%); background:var(--surface); color:var(--ink-muted); font-size:11px; padding:4px 10px; border-radius:999px; box-shadow:var(--shadow-sm);';
-      badge.textContent = 'Generated from summary \u00b7 lower detail than a fresh upload';
-      body.appendChild(badge);
-    }
-    loadResolvedMap(existing.mindMap);
+    presentMap(body, existing.mindMap, { fallbackBadge: existing.source === 'summary-fallback' });
     return destroy;
   }
 
@@ -367,12 +582,7 @@ async function startGeneration(body, doc, documentId, retryOfError) {
   const result = await generateMindMap(doc.summary, documentId, 'summary-fallback', retryOfError);
 
   if (result.mindMap) {
-    setupCanvasView(body);
-    const badge = document.createElement('div');
-    badge.style.cssText = 'position:absolute; top:8px; left:50%; transform:translateX(-50%); background:var(--surface); color:var(--ink-muted); font-size:11px; padding:4px 10px; border-radius:999px; box-shadow:var(--shadow-sm);';
-    badge.textContent = 'Generated from summary \u00b7 lower detail than a fresh upload';
-    body.appendChild(badge);
-    loadResolvedMap(result.mindMap);
+    presentMap(body, result.mindMap, { fallbackBadge: true });
     return;
   }
 
@@ -395,10 +605,7 @@ async function startGeneration(body, doc, documentId, retryOfError) {
       'summary-fallback',
       doc.filename,
       (res) => {
-        if (res.mindMap) {
-          setupCanvasView(body);
-          loadResolvedMap(res.mindMap);
-        }
+        if (res.mindMap) presentMap(body, res.mindMap);
       },
       () => renderGenerateCTA(body, doc, documentId)
     );

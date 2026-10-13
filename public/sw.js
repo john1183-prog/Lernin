@@ -47,6 +47,7 @@ const SHELL_ASSETS = [
   '/mind-map-doc.js',
   '/mind-map-doc-api.js',
   '/mind-map-doc-manual-import.js',
+  '/mind-map-outline.js',
   '/onboarding-script.json',
   '/onboarding-script-light.json',
   '/icons/icon-192.png',
