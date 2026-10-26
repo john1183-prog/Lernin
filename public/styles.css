@@ -123,6 +123,14 @@ body {
   }
 }
 
+/* Calm: the same rules, switched on by the Calm setting (motion-pref.js keeps data-calm="1" on <html>
+   for the setting AND for the OS reduced-motion preference). */
+[data-calm="1"] *, [data-calm="1"] *::before, [data-calm="1"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
 /* ---------- Animations ---------- */
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -3014,6 +3022,24 @@ input, textarea, select {
   .help-card {
     transition: none;
   }
+}
+
+/* The same, for the Calm setting */
+[data-calm="1"] .help-view,
+[data-calm="1"] .help-hero-kicker,
+[data-calm="1"] .help-hero-title,
+[data-calm="1"] .help-hero-lead,
+[data-calm="1"] .help-toc,
+[data-calm="1"] .help-card,
+[data-calm="1"] .help-philosophy-list li,
+[data-calm="1"] .help-details,
+[data-calm="1"] .help-details-body,
+[data-calm="1"] .help-closer {
+  animation: none !important;
+}
+[data-calm="1"] .help-toc a,
+[data-calm="1"] .help-card {
+  transition: none;
 }
 
 /* ---------- Feature Grid (Encarta-Kids Style, §3.5) ---------- */

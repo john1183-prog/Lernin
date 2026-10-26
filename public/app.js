@@ -31,6 +31,8 @@ import { startStudySession, teardownStudySession } from './study.js';
 import { countSessionCards } from './study-session-core.js';
 import { initCanvasView, openDeckOnMap, destroyCanvasView } from './canvas.js';
 import { setSoundEnabledCache, initSoundSetting, playNavigate, playIdentityChord, playTileHover } from './sound.js';
+import { initCalm, setCalm, isCalm, isCalmManual, CALM_STORAGE_KEY } from './motion-pref.js';
+import { initStage, setStageRoute } from './stage.js';
 import { renderMindMap } from './mind-map.js';
 import { renderMindMazeView } from './mind-maze.js';
 import { renderDocumentMindMap } from './mind-map-doc.js';
@@ -163,6 +165,21 @@ function applyFont(fontKey) {
   document.documentElement.style.setProperty('--font-body', option.stack);
 }
 
+/* ---------- Calm (reduced motion) ---------- */
+// The switch is stored in IndexedDB (`calmMode`) with a localStorage boot cache that index.html reads
+// before first paint. The OS reduce-motion setting is honoured on its own, with or without the switch.
+async function initCalmSetting() {
+  let cached = false;
+  try { cached = localStorage.getItem(CALM_STORAGE_KEY) === '1'; } catch (err) { /* no storage */ }
+  initCalm(cached);
+  try {
+    const saved = await getSetting('calmMode');
+    if ((saved === true || saved === false) && saved !== cached) initCalm(saved);
+  } catch (err) {
+    console.error('Failed to init Calm:', err);
+  }
+}
+
 /* ---------- KaTeX Helper ---------- */
 export function renderMath(rootEl) {
   if (window.renderMathInElement) {
@@ -262,6 +279,10 @@ let homeScrollY = 0;
 async function handleRoute() {
   const path = window.location.hash.slice(1) || '/';
   const [_, route, id] = path.split('/');
+
+  // The living backdrop follows the route: on for most screens, off for the full-canvas ones
+  // (Map, deck map, document map, Maze, Motion Studio), held still behind the study card.
+  setStageRoute(route);
 
   // Skip the sound on the very first call (cold app open) — a sound
   // firing before the person has done anything reads as an ad
@@ -613,6 +634,12 @@ export async function renderDeckList() {
   `;
   root.appendChild(header);
 
+  // Everything under the header lives in one centred column, so wide screens show a column on the
+  // stage instead of full-width rows (stage.css caps it at 960 px).
+  const column = document.createElement('main');
+  column.className = 'home-column';
+  root.appendChild(column);
+
   header.querySelector('#themeToggle').addEventListener('click', cycleTheme);
 
   const overflowBtn = header.querySelector('#overflowBtn');
@@ -705,7 +732,7 @@ export async function renderDeckList() {
       <div class="hero-cta-sub">${subText}</div>
       <button class="hero-cta-btn" id="heroStudy">Study now</button>
     `;
-    root.appendChild(hero);
+    column.appendChild(hero);
     hero.querySelector('#heroStudy').addEventListener('click', () => navigate('/study/all'));
   } else if (decks.length > 0) {
     const hero = document.createElement('div');
@@ -715,7 +742,7 @@ export async function renderDeckList() {
       <div class="hero-cta-title">All caught up for today! 🌿</div>
       <div class="hero-cta-sub" style="margin-bottom:0;">${streakPrefix} · No cards due right now. Enjoy your rest or explore below.</div>
     `;
-    root.appendChild(hero);
+    column.appendChild(hero);
   }
 
   if (dueToday > 0 || streak > 0 || (stats.weekTotal || 0) > 0) {
@@ -727,7 +754,7 @@ export async function renderDeckList() {
       ${freezes > 0 ? `<button class="stat-freeze-btn" id="homeFreezeBtn" title="Use a streak freeze to protect today"><span class="stat-value">🧊${freezes}</span> freeze${freezes !== 1 ? 's' : ''}</button>` : ''}
       <a href="#" class="stat-link" id="viewStats">View full statistics →</a>
     `;
-    root.appendChild(strip);
+    column.appendChild(strip);
     strip.querySelector('#viewStats').addEventListener('click', (e) => {
       e.preventDefault();
       navigate('/stats');
@@ -801,7 +828,7 @@ export async function renderDeckList() {
 
     grid.appendChild(tileBtn);
   }
-  root.appendChild(grid);
+  column.appendChild(grid);
 
   // Secondary Decks Section Header (§3.5)
   const sectionHeader = document.createElement('div');
@@ -814,7 +841,7 @@ export async function renderDeckList() {
       </button>
     </div>
   `;
-  root.appendChild(sectionHeader);
+  column.appendChild(sectionHeader);
 
   sectionHeader.querySelector('#deckViewToggle').addEventListener('click', () => {
     const modes = ['list', 'grid', 'horizontal'];
@@ -826,7 +853,7 @@ export async function renderDeckList() {
 
   const list = document.createElement('div');
   list.className = 'deck-list';
-  root.appendChild(list);
+  column.appendChild(list);
 
   if (decks.length === 0) {
     if (archivedDecks.length > 0) {
@@ -943,7 +970,7 @@ export async function renderDeckList() {
 
     archivedContainer.appendChild(toggle);
     archivedContainer.appendChild(subList);
-    root.appendChild(archivedContainer);
+    column.appendChild(archivedContainer);
   }
 
   const newBtn = document.createElement('button');
@@ -951,7 +978,7 @@ export async function renderDeckList() {
   newBtn.style.cssText = 'margin: var(--space-md); width: calc(100% - var(--space-md)*2);';
   newBtn.innerHTML = '+ New deck';
   newBtn.addEventListener('click', () => renderNewDeckForm());
-  root.appendChild(newBtn);
+  column.appendChild(newBtn);
 
   renderMath(root);
   if (keepY) window.scrollTo({ top: keepY, behavior: 'instant' });
@@ -1508,6 +1535,53 @@ export async function renderSettings() {
       await setTheme(value, true);
       showToast('Theme updated.');
     });
+  });
+
+  const calmLabel = document.createElement('div');
+  calmLabel.style.cssText = 'font-size:13px; font-weight:600; color:var(--ink-secondary); margin-bottom:8px;';
+  calmLabel.textContent = 'Calm';
+  appearanceSection.appendChild(calmLabel);
+
+  const calmIntro = document.createElement('p');
+  calmIntro.style.cssText = 'font-size:13px; color:var(--ink-muted); margin-bottom:12px; line-height:1.5;';
+  calmIntro.textContent = 'Keeps everything still: the drifting backdrop and the gentle motion on the maps stop, and you can study without anything moving. Lernin also follows your device\u2019s reduce-motion setting on its own.';
+  appearanceSection.appendChild(calmIntro);
+
+  const calmRow = document.createElement('label');
+  calmRow.style.cssText = 'display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border-radius:var(--radius-md); cursor:pointer; box-shadow:var(--shadow-sm); margin-bottom:var(--space-md);';
+  const calmToggle = document.createElement('input');
+  calmToggle.type = 'checkbox';
+  calmToggle.id = 'calmToggle';
+  calmToggle.checked = isCalmManual();
+  calmRow.appendChild(calmToggle);
+  calmRow.appendChild(document.createTextNode(' Keep things still (Calm)'));
+  appearanceSection.appendChild(calmRow);
+
+  const calmNote = document.createElement('p');
+  calmNote.id = 'calmNote';
+  calmNote.style.cssText = 'font-size:13px; color:var(--ink-muted); margin:-8px 0 var(--space-md); line-height:1.5;';
+  const syncCalmNote = () => {
+    calmNote.textContent = isCalm() && !isCalmManual()
+      ? 'Your device\u2019s reduce-motion setting is on, so Lernin is already calm.'
+      : '';
+    calmNote.hidden = !calmNote.textContent;
+  };
+  syncCalmNote();
+  appearanceSection.appendChild(calmNote);
+
+  calmToggle.addEventListener('change', async () => {
+    const on = calmToggle.checked;
+    setCalm(on);   // takes effect at once and refreshes the boot cache
+    syncCalmNote();
+    try {
+      await saveSetting('calmMode', on);
+      showToast(on ? 'Calm on. Everything holds still.' : 'Calm off.');
+    } catch (err) {
+      showToast('Failed to save setting.', 4000);
+      calmToggle.checked = !on;
+      setCalm(!on);
+      syncCalmNote();
+    }
   });
 
   const fontLabel = document.createElement('div');
@@ -2171,6 +2245,14 @@ function renderHelp() {
       `
     },
     {
+      title: 'The backdrop and Calm',
+      body: `
+        <p>Behind Home, your lists and the study card there is a quiet landscape: a sky, a few hills, grass and the odd seed drifting past. It follows your device's clock, so it is dawn, day, dusk or night wherever you are, in your light or dark theme. On a wide screen your content sits in a centred column with the landscape on either side.</p>
+        <p>It is only a backdrop. Everything you read sits on a plain panel, so no line of text is ever harder to read because of it, and screen readers skip it. It holds still while you are on a study card, and on a phone it rests behind full-screen pages such as Settings. If your device ever struggles to keep up, Lernin notices within a few seconds and holds the backdrop still for the rest of that visit. The Territory Map, the Mind Maps, MindMaze and Motion Studio draw their own scenes instead.</p>
+        <p><strong>Calm</strong> — Settings → Appearance → <em>Keep things still (Calm)</em>. Calm stops the drifting backdrop and the gentle motion on the maps, so everything stays a still picture; you can still drag and tap as always. Lernin also follows your device's own "reduce motion" setting without you doing anything, so you don't need to switch Calm on as well.</p>
+      `
+    },
+    {
       title: 'Getting cards in (PDF, AI, manual)',
       body: `
         <p>Two honest paths:</p>
@@ -2333,6 +2415,10 @@ function renderHelp() {
     {
       q: 'Can I study offline?',
       a: 'Yes. The app shell is cached by a service worker; your data is local. AI generation needs network. Spatial and classic review do not.'
+    },
+    {
+      q: 'Can I turn the moving backdrop off?',
+      a: 'Yes. Settings → Appearance → Keep things still (Calm) stops the backdrop and the gentle motion on the maps. If your device is already set to reduce motion, Lernin is calm without you doing anything.'
     },
     {
       q: 'What is Teach-it for?',
@@ -4985,6 +5071,8 @@ export function initServiceWorker() {
 window.addEventListener('hashchange', handleRoute);
 initTheme();
 initFont();
+initCalmSetting();
+initStage();
 initGenerationListeners();
 initSoundSetting();
 initServiceWorker();

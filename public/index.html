@@ -19,6 +19,13 @@
         }
       } catch (e) {}
       try {
+        // Calm (reduced motion): the Settings switch is cached here, and the OS setting is honoured
+        // automatically, so data-calm is on <html> before first paint. motion-pref.js keeps it current.
+        var calm = localStorage.getItem('lernin-calm') === '1' ||
+          !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        document.documentElement.setAttribute('data-calm', calm ? '1' : '0');
+      } catch (e) {}
+      try {
         var font = localStorage.getItem('lernin_font') || 'default';
         var FONT_STACKS = {
           'default': "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -36,9 +43,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/stage.css" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
+  <!-- The stage: a decorative living backdrop. A sibling BEFORE #root (screens replace root.innerHTML). -->
+  <div id="stage" aria-hidden="true"></div>
   <div id="root"></div>
 
   <script defer src="/vendor/katex/katex.min.js"></script>

@@ -16,6 +16,7 @@ import {
 } from './db.js';
 import { startStudySession } from './study.js';
 import { isNearMapSecret, hasFoundMapSecret, markMapSecretFound, MAP_SECRET_SPOT } from './secrets.js';
+import { isCalm, ambientAllowed, ambientNow, onAmbientChange } from './motion-pref.js';
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -43,6 +44,18 @@ let ctx = null;
 let onExitCallback = null;
 let rafId = null;
 let idleTimeoutId = null;
+
+// Motion preferences (motion-pref.js): the idle ticks below are ambient, so they stop in Calm and in a
+// hidden tab; the hooks restart (and redraw into the still state) when that changes.
+let offAmbient = null;
+function ensureMotionHooks() {
+  if (offAmbient || !canvasEl) return;
+  offAmbient = onAmbientChange(() => scheduleFrame(0));
+}
+function dropMotionHooks() {
+  if (offAmbient) offAmbient();
+  offAmbient = null;
+}
 
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
@@ -153,6 +166,7 @@ export async function initCanvasView(targetContainer, opts = {}) {
 }
 
 export function destroyCanvasView() {
+  dropMotionHooks();
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   if (idleTimeoutId) clearTimeout(idleTimeoutId);
@@ -536,6 +550,7 @@ function rectIntersects(a, b) {
  * double-scheduling if something is already pending.
  */
 function scheduleFrame(delayMs) {
+  ensureMotionHooks();
   if (delayMs === 0) {
     // Urgent — cancel any pending slow idle tick and go immediate.
     if (idleTimeoutId !== null) {
@@ -547,7 +562,9 @@ function scheduleFrame(delayMs) {
     }
     return;
   }
-  // Throttled idle tick — only schedule if nothing is already pending.
+  // Throttled idle tick — only schedule if nothing is already pending, and only when ambient
+  // motion is allowed (not Calm, not a hidden tab). The scene then stays a still picture.
+  if (!ambientAllowed()) return;
   if (rafId !== null || idleTimeoutId !== null) return;
   idleTimeoutId = setTimeout(() => {
     idleTimeoutId = null;
@@ -558,9 +575,11 @@ function scheduleFrame(delayMs) {
 function renderLoop() {
   rafId = null;
 
-  camera.x += (targetCamera.x - camera.x) * 0.12;
-  camera.y += (targetCamera.y - camera.y) * 0.12;
-  camera.zoom += (targetCamera.zoom - camera.zoom) * 0.12;
+  // Calm: the camera goes straight to where it is headed (no easing, no slow zoom-in)
+  const ease = isCalm() ? 1 : 0.12;
+  camera.x += (targetCamera.x - camera.x) * ease;
+  camera.y += (targetCamera.y - camera.y) * ease;
+  camera.zoom += (targetCamera.zoom - camera.zoom) * ease;
 
   if (!ctx || !canvasEl) return;
   const rect = canvasEl.getBoundingClientRect();
@@ -627,7 +646,7 @@ function renderL1() {
  */
 function drawMapSecret() {
   const s = worldToScreen(MAP_SECRET_SPOT.x, MAP_SECRET_SPOT.y);
-  const sway = Math.sin(Date.now() / 900) * 3;
+  const sway = Math.sin(ambientNow() / 900) * 3;
   const scale = camera.zoom;
 
   ctx.save();
@@ -882,8 +901,8 @@ function drawIslandGlow(island, radius, vitality) {
 function drawIsland(island, territory) {
   // --- Step 7: per-island sinusoidal sway (idle motion) ---
   const phase = hashToUnit(island.id) * Math.PI * 2;
-  const swayX = Math.sin(Date.now() / 2400 + phase) * 1.2;
-  const swayY = Math.cos(Date.now() / 3100 + phase * 1.3) * 0.8;
+  const swayX = Math.sin(ambientNow() / 2400 + phase) * 1.2;
+  const swayY = Math.cos(ambientNow() / 3100 + phase * 1.3) * 0.8;
   const s = worldToScreen(island.pos.x + swayX, island.pos.y + swayY);
 
   const radius = ISLAND_RADIUS_BASE * camera.zoom;

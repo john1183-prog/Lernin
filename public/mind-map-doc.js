@@ -24,6 +24,7 @@ import { getDocument, getMindMapForDocument, getApiConfig } from './db.js';
 import { generateMindMap } from './mind-map-doc-api.js';
 import { renderMindMapManualImport } from './mind-map-doc-manual-import.js';
 import { MOTION_PREFILL_KEY } from './motion-studio.js';
+import { isCalm, ambientAllowed, onAmbientChange } from './motion-pref.js';
 import { depthColor, shouldStartAsOutline, buildOutlineTree } from './mind-map-outline.js';
 
 function escapeHtmlLocal(str) {
@@ -38,6 +39,25 @@ let nodes = [], nodeById = new Map();
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
 let rafId = null, idleTimeoutId = null;
+
+// Motion preferences (motion-pref.js): the idle ticks below are ambient, so they stop in Calm and in a
+// hidden tab; the hooks restart (and redraw into the still state) when that changes.
+let offAmbient = null;
+let themeObserver = null;
+function ensureMotionHooks() {
+  if (offAmbient || !canvasEl) return;
+  offAmbient = onAmbientChange(() => scheduleFrame(0));
+  if (typeof MutationObserver === 'function') {
+    themeObserver = new MutationObserver(() => scheduleFrame(0));
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+}
+function dropMotionHooks() {
+  if (offAmbient) offAmbient();
+  offAmbient = null;
+  if (themeObserver) themeObserver.disconnect();
+  themeObserver = null;
+}
 let dpr = 1;
 let hoveredNode = null;
 let pointerDownNode = null;
@@ -57,11 +77,13 @@ let fallbackBadgeOn = false;
 let cameraFitted = false;
 
 function scheduleFrame(delayMs) {
+  ensureMotionHooks();
   if (delayMs === 0) {
     if (idleTimeoutId !== null) { clearTimeout(idleTimeoutId); idleTimeoutId = null; }
     if (rafId === null) rafId = requestAnimationFrame(renderLoop);
     return;
   }
+  if (!ambientAllowed()) return;   // Calm or a hidden tab: no idle ticks, the scene stays still
   if (rafId !== null || idleTimeoutId !== null) return;
   idleTimeoutId = setTimeout(() => { idleTimeoutId = null; rafId = requestAnimationFrame(renderLoop); }, delayMs);
 }
@@ -198,9 +220,10 @@ function openNodeDetail(node) {
 
 function renderLoop() {
   rafId = null;
-  camera.x += (targetCamera.x - camera.x) * 0.18;
-  camera.y += (targetCamera.y - camera.y) * 0.18;
-  camera.zoom += (targetCamera.zoom - camera.zoom) * 0.18;
+  const ease = isCalm() ? 1 : 0.18;   // Calm: no easing
+  camera.x += (targetCamera.x - camera.x) * ease;
+  camera.y += (targetCamera.y - camera.y) * ease;
+  camera.zoom += (targetCamera.zoom - camera.zoom) * ease;
 
   if (!ctx || !canvasEl) return;
   const rect = canvasEl.getBoundingClientRect();
@@ -265,6 +288,7 @@ function renderLoop() {
 
 /** Everything the canvas face owns: the frame loop, the listeners and the detail panel. Safe to call twice. */
 function stopCanvas() {
+  dropMotionHooks();
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   if (idleTimeoutId) clearTimeout(idleTimeoutId);
@@ -314,8 +338,9 @@ function setupCanvasView(target) {
 const LIST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>';
 const MAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10.84 7.32L6.66 15.68M13.16 7.32L17.34 15.68"/><circle cx="12" cy="5" r="2.6"/><circle cx="5.5" cy="18" r="2.6"/><circle cx="18.5" cy="18" r="2.6"/></svg>';
 
+// Reduced motion is now "Calm": the OS setting OR the Calm switch (motion-pref.js).
 function reducedMotion() {
-  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
+  return isCalm();
 }
 
 function makeFallbackBadge(inline) {

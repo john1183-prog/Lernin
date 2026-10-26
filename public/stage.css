@@ -1,0 +1,252 @@
+/* ============================================
+   The stage: a living backdrop behind every screen
+   (liveliness phase 1; see stage.js and stage-core.js)
+
+   - #stage sits before #root in index.html, fixed, behind everything (z-index -1)
+   - every moving part uses transform or opacity only
+   - nothing moves smoothly: every animation steps (steps()), and every step lasts a whole number of
+     50 ms beats (BEAT_MS in stage-core.js), so all the layers change in the same frames and the
+     browser redraws nothing in between. Smooth, the same motion redraws the screen on every frame,
+     which was most of the stage's cost. The steps are far finer than the eye follows (a hill moves
+     about a tenth of a pixel per step on a phone), so the picture is the same. test_stage.mjs fails
+     if an animation goes back to a smooth easing or a step stops being a whole number of beats.
+   - the colours come from script (time of day, theme); the static values below are only the
+     first-paint fallback and the registered properties that let the sky cross-fade
+   - nothing here carries meaning, and the stage is aria-hidden
+   ============================================ */
+
+@property --sky-top { syntax: '<color>'; inherits: true; initial-value: #DEF0F3; }
+@property --sky-bottom { syntax: '<color>'; inherits: true; initial-value: #F3F8F4; }
+
+#stage {
+  --sun: transparent;
+  --sun-x: 80%;
+  --sun-y: 14%;
+  --hill-far: #E9F3EA;
+  --hill-near: #E5F0E5;
+  --grass: #E0EEDC;
+  --seed: rgba(255, 255, 255, 0.85);
+  --stars: 0;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint;
+  opacity: 0;
+  background: linear-gradient(180deg, var(--sky-top), var(--sky-bottom) 72%);
+}
+[data-theme="dark"] #stage {
+  --sky-top: #122D29;
+  --sky-bottom: #0F1810;
+  --hill-far: #1A2E24;
+  --hill-near: #14241B;
+  --grass: #204125;
+  --seed: rgba(237, 239, 241, 0.10);
+}
+
+/* off on the full-canvas screens (they paint their own sky); fades in once the palette is applied */
+html[data-stage="off"] #stage { display: none; }
+html[data-stage="on"] #stage[data-ready] {
+  opacity: 1;
+  transition: --sky-top 0.9s ease, --sky-bottom 0.9s ease, opacity 0.5s ease;
+}
+
+.stage-glow {
+  position: absolute;
+  inset: -10%;
+  background: radial-gradient(circle at var(--sun-x) var(--sun-y), var(--sun) 0, transparent 36%);
+  animation: stage-breathe 16s steps(40, end) infinite alternate;   /* 0.4 s a step: 8 beats */
+}
+
+.stage-stars {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 56%;
+  opacity: var(--stars, 0);
+  animation: stage-twinkle 7s steps(28, end) infinite alternate;    /* 0.25 s a step: 5 beats */
+}
+#stage[data-stars] .stage-stars { display: block; }
+.stage-stars svg { display: block; width: 100%; height: 100%; }
+
+.stage-hill {
+  position: absolute;
+  left: -4%;
+  width: 108%;
+  bottom: 0;
+  display: block;
+}
+/* 0.5 s a step: 10 beats */
+.stage-hill-far { height: min(46%, 400px); fill: var(--hill-far); animation: stage-drift 90s steps(180, end) infinite alternate; }
+.stage-hill-near { height: min(30%, 280px); fill: var(--hill-near); animation: stage-drift 60s steps(120, end) infinite alternate-reverse; }
+
+.stage-grass {
+  position: absolute;
+  left: -2%;
+  width: 104%;
+  bottom: -2px;
+  height: 86px;
+}
+.stage-grass svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: var(--grass);
+  transform-origin: 50% 100%;
+}
+/* 0.25 s a step: 5 beats */
+.stage-grass svg:nth-child(1) { animation: stage-sway 7s steps(28, end) infinite alternate; opacity: 0.8; }
+.stage-grass svg:nth-child(2) { animation: stage-sway 9s steps(36, end) -3s infinite alternate-reverse; opacity: 0.92; }
+.stage-grass svg:nth-child(3) { animation: stage-sway 6s steps(24, end) -1.5s infinite alternate; }
+
+.stage-seeds { position: absolute; inset: 0; }
+.stage-seed {
+  position: absolute;
+  left: 0;
+  top: var(--y);
+  width: var(--s);
+  height: var(--s);
+  color: var(--seed);
+  opacity: 0;
+  will-change: transform;
+  /* one step a beat: --n steps in each quarter of the crossing, --m in each fade (stage.js writes both from seedSpecs) */
+  animation:
+    stage-seed var(--d) steps(var(--n), end) var(--delay) infinite,
+    stage-seed-fade var(--d) steps(var(--m), end) var(--delay) infinite;
+}
+.stage-seed svg { width: 100%; height: 100%; overflow: visible; }
+
+@keyframes stage-breathe { from { opacity: 0.55; } to { opacity: 1; } }
+@keyframes stage-twinkle { from { opacity: calc(var(--stars, 0) * 0.55); } to { opacity: var(--stars, 0); } }
+@keyframes stage-drift { from { transform: translate3d(-1.6%, 0, 0); } to { transform: translate3d(1.6%, 0, 0); } }
+@keyframes stage-sway { from { transform: skewX(-1.8deg); } to { transform: skewX(1.8deg); } }
+/* the path (four equal quarters, so every quarter has the same whole number of beats) and, separately, the fade */
+@keyframes stage-seed {
+  0%   { transform: translate3d(-6vw, 0, 0) rotate(0deg); }
+  25%  { transform: translate3d(22vw, -26px, 0) rotate(70deg); }
+  50%  { transform: translate3d(50vw, 12px, 0) rotate(160deg); }
+  75%  { transform: translate3d(78vw, -24px, 0) rotate(250deg); }
+  100% { transform: translate3d(106vw, 0, 0) rotate(330deg); }
+}
+@keyframes stage-seed-fade {
+  0%   { opacity: 0; }
+  6%   { opacity: 1; }
+  94%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* paused, not hidden: the study card (decision 9) and the frame watchdog hold the scene still */
+#stage[data-paused], #stage[data-paused] * { animation-play-state: paused !important; }
+
+/* Calm (the OS setting or the switch in Settings): the backdrop is a still picture, no seeds at all */
+html[data-calm="1"] #stage, html[data-calm="1"] #stage * { animation: none !important; transition: none !important; }
+html[data-calm="1"] .stage-seeds { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  #stage, #stage * { animation: none !important; }
+  .stage-seeds { display: none; }
+}
+
+/* ---------- screens on the stage ---------- */
+
+/*
+ * Soft panels. The design rule is "text sits on opaque panels; decoration never lowers contrast".
+ * So nothing the person reads sits straight on the stage: Home's cards, the sheet behind every text
+ * screen, the title bar, the study bands and the few loose labels all wear the page colour, opaque.
+ * Text keeps exactly the contrast it has on the plain page, whatever colour the stage is, which is
+ * what leaves the stage free to be as rich as the Sketchbook's. (The panels are "soft" in shape:
+ * rounded, lifted by a shadow, inset from the edges. A 96 % panel was tried and dropped: the 4 % of
+ * stage it let through bought no depth you could see and put text on tinted buttons within reach of
+ * the 4.5:1 line.) test_stage.mjs and the browser audit both fail if text can sit on the bare stage.
+ */
+html[data-stage="on"] { --sheet: var(--bg); }
+
+/* the sticky title bar is a panel too (nothing scrolling under it shows through) */
+html[data-stage="on"] .app-header { background: var(--sheet); }
+
+/* Text screens (Settings, Help, Stats, the card lists, forms): every screen is one wrapper under #root,
+   with the sticky header inside it. The page is a sheet on the stage. */
+html[data-stage="on"] #root:not(.study-session) > div:not(.study-session) { background: var(--sheet); }
+@media (max-width: 759px) {
+  /* phones: the sheet is full width; a short page ends in a soft rounded edge with a little stage below it */
+  html[data-stage="on"] #root:not(.study-session) > div:not(.app-header):not(.study-session) {
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+}
+@media (min-width: 760px) {
+  /* wide screens: the sheet is a centred column, full height, with the stage on both sides */
+  html[data-stage="on"] #root:not(.study-session) > div:not(.app-header):not(.study-session) {
+    min-height: 100dvh;
+    box-shadow: var(--shadow-lg);
+  }
+  html[data-stage="on"] #root > .manual-import-view { max-width: 640px; margin-inline: auto; }
+}
+
+/* Home: one centred column (hero, strip, tiles, decks) on the living stage; its cards are the panels */
+html[data-stage="on"] #root > .home-column {
+  max-width: 960px;
+  margin-inline: auto;
+}
+/* the tiles and the "Your Decks" header used to stop at 800 px; inside the column they use its full width */
+html[data-stage="on"] .home-column .feature-grid,
+html[data-stage="on"] .home-column .deck-section-header {
+  max-width: none;
+}
+/* the sticky header keeps full width but lines its content up with the column on wide screens */
+html[data-stage="on"][data-screen="home"] #root > .app-header {
+  padding-inline: max(var(--space-md), calc((100% - 960px) / 2 + var(--space-md)));
+}
+/* the few loose bits of text on Home sit on small soft panels (the text keeps lining up with the cards) */
+html[data-stage="on"] .home-column .deck-section-title {
+  background: var(--sheet);
+  border-radius: 999px;
+  padding: 3px 12px;
+  margin-left: -12px;
+}
+html[data-stage="on"] .home-column .archived-decks-toggle {
+  background: var(--sheet);
+  border-radius: 999px;
+  padding: 8px 12px;
+  margin-left: -12px;
+}
+html[data-stage="on"] .home-column .empty-state {
+  background: var(--sheet);
+  border-radius: var(--radius-lg);
+}
+/* archived deck tiles are drawn at 72 % opacity (styles.css), which on their own would let 28 % of the stage
+   through their text; while the archive is open they sit on a soft panel, and so keep their plain-page contrast */
+html[data-stage="on"] .home-column .archived-deck-list {
+  background: var(--sheet);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm);
+  margin-inline: calc(-1 * var(--space-sm));
+}
+
+/* Study: the session covers the screen with a transparent layer so the stage shows around the card
+   (held still). The title, context and button bands are soft panels; the card area stays open.
+   Flip, Explain and the four grade buttons stop at 720 px, centred. */
+html[data-stage="on"] .study-session { background: transparent; }
+html[data-stage="on"] .study-header,
+html[data-stage="on"] .study-context-bar,
+html[data-stage="on"] .study-controls { background: var(--sheet); }
+@media (min-width: 760px) and (min-height: 481px) {
+  html[data-stage="on"] .study-header,
+  html[data-stage="on"] .study-context-bar,
+  html[data-stage="on"] .study-controls {
+    padding-inline: max(var(--space-md), calc((100% - 720px) / 2));
+  }
+}
+/* the centred messages inside a study session (nothing due, empty deck) and the end-of-session summary */
+html[data-stage="on"] .study-session > .empty-state,
+html[data-stage="on"] .session-summary {
+  background: var(--sheet);
+  border-radius: var(--radius-lg);
+}
+@media (min-width: 760px) {
+  /* like the study bands and buttons, the summary stops at 720 px and is centred, a little below the top edge */
+  html[data-stage="on"] .session-summary { max-width: 720px; margin: var(--space-lg) auto 0; }
+}

@@ -26,6 +26,7 @@ import {
   playMazeFogLift,
   playSessionComplete
 } from './sound.js';
+import { isCalm, ambientAllowed, onAmbientChange } from './motion-pref.js';
 
 export const MAZE_MAX_CHAMBERS = 12;
 export const MAZE_MAX_ATTEMPTS = 200;
@@ -896,6 +897,7 @@ function traceSmoothPolygon(ctx, points) {
  * @param {object} [opts]
  * @param {'light'|'dark'|null} [opts.theme]
  * @param {number} [opts.nowMs=Date.now()]
+ * @param {boolean} [opts.calm=false] Calm: the mist holds still (no drift)
  * @param {string|null} [opts.hoveredNodeId=null]
  * @param {Map<string, string>|Object} [opts.cardLabelsById]
  * @returns {{ renderedNodes: number, renderedEdges: number, statusCounts: { FOGGED: number, FRONTIER: number, CLEARED: number } }}
@@ -1114,8 +1116,9 @@ export function drawMindMazeFrame(ctx, graph, viewport = { width: 800, height: 6
     const sn = worldToScreen(node.x, node.y);
     const nr = Math.max(12, node.r * cam.zoom);
     const phase = hashToUnit(`fog:${node.id}`) * Math.PI * 2;
-    const driftX = Math.sin(nowMs / 1100 + phase) * 5 * cam.zoom;
-    const driftY = Math.cos(nowMs / 1400 + phase) * 4 * cam.zoom;
+    const driftNow = opts.calm ? 0 : nowMs;   // Calm: the mist holds still
+    const driftX = Math.sin(driftNow / 1100 + phase) * 5 * cam.zoom;
+    const driftY = Math.cos(driftNow / 1400 + phase) * 4 * cam.zoom;
     const fogR = nr * 2.85;
 
     ctx.save();
@@ -1672,7 +1675,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
 
     if (res.outcome === 'soft-fail') {
       playAgain();
-      shimmerByNodeId.set(node.id, Date.now());
+      if (!isCalm()) shimmerByNodeId.set(node.id, Date.now());   // Calm: no shake
       showMazeToast('The mist holds for a moment — try an adjacent path or step back in whenever you’re ready.');
       renderFrameNow();
       return res;
@@ -1683,13 +1686,16 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       else if (res.grade === 'easy') playEasy();
       else playGood();
 
-      unlockRipples.push({
-        x: node.x,
-        y: node.y,
-        r: node.r,
-        startMs: Date.now(),
-        durationMs: 550
-      });
+      if (!isCalm()) {   // Calm: no ripple
+        unlockRipples.push({
+          x: node.x,
+          y: node.y,
+          r: node.r,
+          startMs: Date.now(),
+          durationMs: 550
+        });
+      }
+      kick();
 
       if (res.allCleared) {
         playSessionComplete();
@@ -1908,6 +1914,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     } else if (node.status === 'FRONTIER' || node.status === 'CLEARED') {
       targetCamera.x = node.x;
       targetCamera.y = node.y;
+      kick();
       openGateModalForNode(node);
     }
     return node;
@@ -1958,6 +1965,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       const hit = hitTestChamber(sx, sy);
       hoveredNodeId = hit ? hit.id : null;
       canvasEl.style.cursor = hit ? 'pointer' : 'grab';
+      kick();
       return;
     }
     const dx = e.clientX - lastPtr.x;
@@ -1970,6 +1978,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       camera.y = targetCamera.y;
     }
     lastPtr = { x: e.clientX, y: e.clientY };
+    kick();
   }
 
   function onPointerUp() {
@@ -1978,6 +1987,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     }
     pointerDown = false;
     downChamber = null;
+    kick();
   }
 
   function onWheel(e) {
@@ -1985,6 +1995,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
     const factor = 1 - e.deltaY * 0.001;
     const nextZoom = Math.max(0.4, Math.min(2.6, targetCamera.zoom * factor));
     targetCamera.zoom = nextZoom;
+    kick();
   }
 
   function renderFrameNow() {
@@ -1997,19 +2008,43 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
       ctx,
       graph,
       { width: w, height: h, camera },
-      { hoveredNodeId, cardLabelsById, unlockRipples, shimmerByNodeId }
+      { hoveredNodeId, cardLabelsById, unlockRipples, shimmerByNodeId, calm: isCalm() }
     );
   }
 
-  function renderTick() {
-    if (isDestroyed) return;
-    camera.x += (targetCamera.x - camera.x) * 0.14;
-    camera.y += (targetCamera.y - camera.y) * 0.14;
-    camera.zoom += (targetCamera.zoom - camera.zoom) * 0.14;
-
-    renderFrameNow();
-    rafId = requestAnimationFrame(renderTick);
+  // The frame loop runs while something is moving (the camera easing, a ripple or shake) or while ambient
+  // motion is allowed (the drifting mist: not in Calm, not in a hidden tab). Otherwise the scene is a still
+  // picture and nothing is scheduled; every handler that changes what is drawn calls kick().
+  let lastDrawMs = 0;
+  function effectsActive(now) {
+    for (const r of unlockRipples) if (now - r.startMs < (r.durationMs || 550)) return true;
+    for (const t of shimmerByNodeId.values()) if (now - t < 320) return true;
+    return false;
   }
+  function renderTick() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }   // one loop only (resize used to start another)
+    if (isDestroyed) return;
+    const ease = isCalm() ? 1 : 0.14;   // Calm: the camera goes straight to where it is headed
+    camera.x += (targetCamera.x - camera.x) * ease;
+    camera.y += (targetCamera.y - camera.y) * ease;
+    camera.zoom += (targetCamera.zoom - camera.zoom) * ease;
+    const moving = Math.abs(targetCamera.x - camera.x) > 0.4 || Math.abs(targetCamera.y - camera.y) > 0.4 ||
+      Math.abs(targetCamera.zoom - camera.zoom) > 0.0015;
+    const now = Date.now();
+    const effects = effectsActive(now);
+    // mist-only frames need about 25 fps, not 60
+    if (moving || effects || !lastDrawMs || now - lastDrawMs >= 38 || !ambientAllowed()) {
+      lastDrawMs = now;
+      renderFrameNow();
+    }
+    if (moving || effects || ambientAllowed()) rafId = requestAnimationFrame(renderTick);
+  }
+  /** Something changed (pointer, wheel, resize, a grade, Calm switched): draw, and keep going if needed. */
+  function kick() {
+    if (isDestroyed) return;
+    if (!rafId) rafId = requestAnimationFrame(renderTick);
+  }
+  const offAmbient = onAmbientChange(() => { lastDrawMs = 0; kick(); });
 
   let themeObserver = null;
   if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.documentElement) {
@@ -2031,6 +2066,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   });
   header.querySelector('#mmzFitBtn')?.addEventListener('click', () => {
     fitCameraToGraph();
+    kick();
   });
 
   canvasEl.addEventListener('pointerdown', onPointerDown);
@@ -2050,6 +2086,7 @@ export async function renderMindMazeView(containerEl, deckId, opts = {}) {
   const controller = {
     destroy() {
       isDestroyed = true;
+      offAmbient();
       closeGateModal();
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;

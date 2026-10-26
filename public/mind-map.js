@@ -24,6 +24,7 @@
 import { getCardsByDeck, getRelationshipsFrom, getDeck, getDocumentsByDeck, MASTERY_STABILITY_DAYS } from './db.js';
 import { cardQuickActions } from './study.js';
 import { MOTION_PREFILL_KEY } from './motion-studio.js';
+import { isCalm, ambientAllowed, onAmbientChange } from './motion-pref.js';
 import {
   resolveCardMotionTopic,
   composeCardMotionFinalTopic,
@@ -221,6 +222,25 @@ let nodes = [], edges = [];
 let camera = { x: 0, y: 0, zoom: 1 };
 let targetCamera = { x: 0, y: 0, zoom: 1 };
 let rafId = null, idleTimeoutId = null;
+
+// Motion preferences (motion-pref.js): the idle ticks below are ambient, so they stop in Calm and in a
+// hidden tab; the hooks restart (and redraw into the still state) when that changes.
+let offAmbient = null;
+let themeObserver = null;
+function ensureMotionHooks() {
+  if (offAmbient || !canvasEl) return;
+  offAmbient = onAmbientChange(() => scheduleFrame(0));
+  if (typeof MutationObserver === 'function') {
+    themeObserver = new MutationObserver(() => scheduleFrame(0));
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+}
+function dropMotionHooks() {
+  if (offAmbient) offAmbient();
+  offAmbient = null;
+  if (themeObserver) themeObserver.disconnect();
+  themeObserver = null;
+}
 let dpr = 1;
 let hoveredNode = null, draggedNode = null;
 let pointerDownNode = null;
@@ -234,11 +254,13 @@ let currentDocSummary = '';
 const DRAG_THRESHOLD = 4;
 
 function scheduleFrame(delayMs) {
+  ensureMotionHooks();
   if (delayMs === 0) {
     if (idleTimeoutId !== null) { clearTimeout(idleTimeoutId); idleTimeoutId = null; }
     if (rafId === null) rafId = requestAnimationFrame(renderLoop);
     return;
   }
+  if (!ambientAllowed()) return;   // Calm or a hidden tab: no idle ticks, the scene stays still
   if (rafId !== null || idleTimeoutId !== null) return;
   idleTimeoutId = setTimeout(() => { idleTimeoutId = null; rafId = requestAnimationFrame(renderLoop); }, delayMs);
 }
@@ -662,9 +684,10 @@ function escapeHtmlLocal(str) {
 
 function renderLoop() {
   rafId = null;
-  camera.x += (targetCamera.x - camera.x) * 0.15;
-  camera.y += (targetCamera.y - camera.y) * 0.15;
-  camera.zoom += (targetCamera.zoom - camera.zoom) * 0.15;
+  const ease = isCalm() ? 1 : 0.15;   // Calm: no easing
+  camera.x += (targetCamera.x - camera.x) * ease;
+  camera.y += (targetCamera.y - camera.y) * ease;
+  camera.zoom += (targetCamera.zoom - camera.zoom) * ease;
 
   if (!ctx || !canvasEl) return;
   const rect = canvasEl.getBoundingClientRect();
@@ -776,6 +799,7 @@ function getConnectedNeighborCards(targetNode, maxNeighbors = 3) {
 }
 
 function destroy() {
+  dropMotionHooks();
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   if (idleTimeoutId) clearTimeout(idleTimeoutId);
